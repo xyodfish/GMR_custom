@@ -42,6 +42,7 @@ add_library(gmr_retarget_core STATIC
   src/retarget/retargeter.cpp
   src/retarget/retargeter_pinocchio.cpp
   src/retarget/retargeter_mujoco.cpp
+  src/retarget/retargeter_mujoco_legacy.cpp
 )
 
 target_include_directories(gmr_retarget_core PUBLIC

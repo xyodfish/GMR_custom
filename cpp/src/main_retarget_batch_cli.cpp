@@ -15,42 +15,42 @@
 
 namespace {
 
-std::string getArg(int argc, char** argv, const std::string& name, const std::string& defaultValue = "") {
-    for (int i = 1; i + 1 < argc; ++i) {
-        if (name == argv[i]) {
-            return argv[i + 1];
+    std::string getArg(int argc, char** argv, const std::string& name, const std::string& defaultValue = "") {
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (name == argv[i]) {
+                return argv[i + 1];
+            }
         }
+        return defaultValue;
     }
-    return defaultValue;
-}
 
-bool hasFlag(int argc, char** argv, const std::string& flag) {
-    for (int i = 1; i < argc; ++i) {
-        if (flag == argv[i]) {
-            return true;
+    bool hasFlag(int argc, char** argv, const std::string& flag) {
+        for (int i = 1; i < argc; ++i) {
+            if (flag == argv[i]) {
+                return true;
+            }
         }
+        return false;
     }
-    return false;
-}
 
-void printUsage() {
-    std::cout << "Usage:\n"
-              << "  gmr_retarget_batch_cli"
-              << " --gmr_root <path_to_GMR_root>"
-              << " --robot <robot_name>"
-              << " [--backend <pinocchio|mujoco>]"
-              << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
-              << " --human_frame_json <single_or_multi_frame_json>"
-              << " [--actual_human_height <float>]"
-              << " [--damping <float>]"
-              << " [--max_iter <int>]"
-              << " [--integration_timestep <float>]"
-              << " [--use_velocity_limit]"
-              << " [--offset_to_ground]"
-              << " [--max_frames <int, 0=all>]"
-              << " --out_json <path>"
-              << "\n";
-}
+    void printUsage() {
+        std::cout << "Usage:\n"
+                  << "  gmr_retarget_batch_cli"
+                  << " --gmr_root <path_to_GMR_root>"
+                  << " --robot <robot_name>"
+                  << " [--backend <pin_ik|mujoco_se3|mujoco_jacobian_legacy>]"
+                  << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
+                  << " --human_frame_json <single_or_multi_frame_json>"
+                  << " [--actual_human_height <float>]"
+                  << " [--damping <float>]"
+                  << " [--max_iter <int>]"
+                  << " [--integration_timestep <float>]"
+                  << " [--use_velocity_limit]"
+                  << " [--offset_to_ground]"
+                  << " [--max_frames <int, 0=all>]"
+                  << " --out_json <path>"
+                  << "\n";
+    }
 
 }  // namespace
 
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
 
         const std::filesystem::path gmrRoot(getArg(argc, argv, "--gmr_root"));
         const std::string robot       = getArg(argc, argv, "--robot");
-        const std::string backendName = getArg(argc, argv, "--backend", "mujoco");
+        const std::string backendName = getArg(argc, argv, "--backend", "mujoco_se3");
         const std::string srcHuman    = getArg(argc, argv, "--src_human", "smplx");
         const std::filesystem::path humanFrameJson(getArg(argc, argv, "--human_frame_json"));
         const std::string outJsonPath = getArg(argc, argv, "--out_json");
@@ -77,10 +77,10 @@ int main(int argc, char** argv) {
         const int maxFramesInput           = std::stoi(getArg(argc, argv, "--max_frames", "0"));
 
         gmr::RetargetOptions opts;
-        opts.damping          = std::stod(getArg(argc, argv, "--damping", "0.5"));
-        opts.maxIterations    = std::stoi(getArg(argc, argv, "--max_iter", "10"));
+        opts.damping             = std::stod(getArg(argc, argv, "--damping", "0.5"));
+        opts.maxIterations       = std::stoi(getArg(argc, argv, "--max_iter", "10"));
         opts.integrationTimestep = std::stod(getArg(argc, argv, "--integration_timestep", "0.01"));
-        opts.useVelocityLimit = hasFlag(argc, argv, "--use_velocity_limit");
+        opts.useVelocityLimit    = hasFlag(argc, argv, "--use_velocity_limit");
 
         const std::filesystem::path robotModelPath =
             (backend == gmr::RetargetBackend::kPinocchio) ? gmr::resolveRobotUrdf(gmrRoot, robot) : gmr::resolveRobotXml(gmrRoot, robot);
@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
         gmr::IkConfig ikConfig             = gmr::loadIkConfig(ikPath, actualHumanHeight);
 
         std::unique_ptr<gmr::Retargeter> retargeter = gmr::createRetargeter(backend, robotModelPath, std::move(ikConfig), opts);
-        const gmr::HumanFrameSequence sequence       = gmr::loadHumanFrameSequence(humanFrameJson);
+        const gmr::HumanFrameSequence sequence      = gmr::loadHumanFrameSequence(humanFrameJson);
         if (sequence.frames.empty()) {
             throw std::runtime_error("No frame in human_frame_json.");
         }
@@ -113,22 +113,22 @@ int main(int argc, char** argv) {
         nlohmann::json scalarCoords = nlohmann::json::array();
         for (const auto& coord : retargeter->scalarJointCoordinates()) {
             nlohmann::json item;
-            item["q_index"] = coord.qIndex;
-            item["v_index"] = coord.vIndex;
+            item["q_index"]    = coord.qIndex;
+            item["v_index"]    = coord.vIndex;
             item["joint_name"] = coord.jointName;
             scalarCoords.push_back(item);
         }
 
         nlohmann::json out;
-        out["robot"] = robot;
-        out["backend"] = gmr::toString(backend);
-        out["src_human"] = srcHuman;
-        out["fps"] = sequence.fps;
-        out["num_frames"] = frameCount;
-        out["nq"] = retargeter->currentQpos().size();
-        out["has_root_free_flyer"] = retargeter->hasRootFreeFlyer();
+        out["robot"]                    = robot;
+        out["backend"]                  = gmr::toString(backend);
+        out["src_human"]                = srcHuman;
+        out["fps"]                      = sequence.fps;
+        out["num_frames"]               = frameCount;
+        out["nq"]                       = retargeter->currentQpos().size();
+        out["has_root_free_flyer"]      = retargeter->hasRootFreeFlyer();
         out["scalar_joint_coordinates"] = scalarCoords;
-        out["qpos_frames"] = qposFrames;
+        out["qpos_frames"]              = qposFrames;
 
         std::ofstream ofs(outJsonPath);
         ofs << out.dump(2) << std::endl;

@@ -37,7 +37,7 @@ namespace {
                   << "  gmr_retarget_cli"
                   << " --gmr_root <path_to_GMR_root>"
                   << " --robot <robot_name>"
-                  << " [--backend <pinocchio|mujoco>]"
+                  << " [--backend <pin_ik|mujoco_se3|mujoco_jacobian_legacy>]"
                   << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
                   << " --human_frame_json <single_or_multi_frame_json>"
                   << " [--actual_human_height <float>]"
@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
 
         const std::filesystem::path gmrRoot(getArg(argc, argv, "--gmr_root"));
         const std::string robot       = getArg(argc, argv, "--robot");
-        const std::string backendName = getArg(argc, argv, "--backend", "pinocchio");
+        const std::string backendName = getArg(argc, argv, "--backend", "pin_ik");
         const std::string srcHuman    = getArg(argc, argv, "--src_human", "smplx");
         const std::filesystem::path humanFrameJson(getArg(argc, argv, "--human_frame_json"));
 

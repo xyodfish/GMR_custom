@@ -22,7 +22,7 @@
 struct ViewerConfig {
     std::string gmrRoot;
     std::string robot;
-    std::string backend  = "pinocchio";
+    std::string backend  = "pin_ik";
     std::string srcHuman = "smplx";
     std::string humanFrameJson;
     double actualHumanHeight = 0.0;
@@ -446,7 +446,7 @@ void printUsage() {
               << " [--config <viewer_config.yaml>]"
               << " [--gmr_root <path_to_GMR_root>]"
               << " [--robot <robot_name>]"
-              << " [--backend <pinocchio|mujoco>]"
+              << " [--backend <pin_ik|mujoco_se3|mujoco_jacobian_legacy>]"
               << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
               << " [--human_frame_json <single_or_multi_frame_json>]"
               << " [--actual_human_height <float>]"
@@ -535,8 +535,9 @@ int main(int argc, char** argv) {
         if (!renderData) {
             throw std::runtime_error("Failed to allocate MuJoCo render data.");
         }
-        const RenderQposMap qposMap = buildRenderQposMap(*retargeter, renderModel.get(), static_cast<int>(retargeter->currentQpos().size()),
-                                                         backend == gmr::RetargetBackend::kMujoco);
+        const RenderQposMap qposMap =
+            buildRenderQposMap(*retargeter, renderModel.get(), static_cast<int>(retargeter->currentQpos().size()),
+                               backend == gmr::RetargetBackend::kMujoco || backend == gmr::RetargetBackend::kMujocoLegacy);
         syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
 
         const double humanPointScale         = 0.1;

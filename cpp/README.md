@@ -38,7 +38,7 @@ cmake --build cpp/build -j
 ## Run retarget and print/save qpos
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_cli \
-  --backend pinocchio \
+  --backend pin_ik \
   --gmr_root /data/open_src_code/GMR_custom \
   --robot unitree_g1 \
   --human_frame_json /data/open_src_code/GMR_custom/cpp/examples/human_frame_smplx_g1_example.json \
@@ -52,9 +52,14 @@ cmake --build cpp/build -j
 ## Run viewer with YAML config (default realtime)
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_viewer \
-  --backend pinocchio \
+  --backend pin_ik \
   --config /data/open_src_code/GMR_custom/cpp/examples/retarget_viewer_config.yaml
 ```
+
+Backend names:
+- `pin_ik` (aliases: `pinocchio`, `pinocchio_ik`)
+- `mujoco_se3` (aliases: `mujoco`, `se3`)
+- `mujoco_jacobian_legacy` (aliases: `mujoco_legacy`, `legacy`)
 
 Command-line options override YAML values, for example:
 ```bash

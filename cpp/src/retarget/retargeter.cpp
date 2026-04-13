@@ -9,21 +9,27 @@ namespace gmr {
 
     RetargetBackend parseRetargetBackend(const std::string& backendName) {
         const std::string lowered = retarget_internal::toLower(backendName);
-        if (lowered == "pinocchio") {
+        if (lowered == "pin_ik" || lowered == "pinocchio_ik" || lowered == "pinocchio") {
             return RetargetBackend::kPinocchio;
         }
-        if (lowered == "mujoco") {
+        if (lowered == "mujoco_se3" || lowered == "mujoco" || lowered == "se3") {
             return RetargetBackend::kMujoco;
         }
-        throw std::runtime_error("Unsupported backend: " + backendName + ". Expected pinocchio or mujoco.");
+        if (lowered == "mujoco_jacobian_legacy" || lowered == "mujoco_legacy" || lowered == "legacy" || lowered == "mujoco-old" ||
+            lowered == "mujoco_old") {
+            return RetargetBackend::kMujocoLegacy;
+        }
+        throw std::runtime_error("Unsupported backend: " + backendName + ". Expected pin_ik, mujoco_se3, or mujoco_jacobian_legacy.");
     }
 
     const char* toString(RetargetBackend backend) {
         switch (backend) {
             case RetargetBackend::kPinocchio:
-                return "pinocchio";
+                return "pin_ik";
             case RetargetBackend::kMujoco:
-                return "mujoco";
+                return "mujoco_se3";
+            case RetargetBackend::kMujocoLegacy:
+                return "mujoco_jacobian_legacy";
         }
         return "unknown";
     }
@@ -35,6 +41,9 @@ namespace gmr {
         }
         if (backend == RetargetBackend::kMujoco) {
             return std::make_unique<MujocoRetargetBackend>(robotModelPath, std::move(ikConfig), options);
+        }
+        if (backend == RetargetBackend::kMujocoLegacy) {
+            return std::make_unique<MujocoLegacyRetargetBackend>(robotModelPath, std::move(ikConfig), options);
         }
         throw std::runtime_error("Unsupported retarget backend.");
     }
