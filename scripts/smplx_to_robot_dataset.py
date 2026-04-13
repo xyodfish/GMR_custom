@@ -180,6 +180,12 @@ def main():
     
     parser.add_argument("--override", default=False, action="store_true")
     parser.add_argument("--num_cpus", default=4, type=int)
+    parser.add_argument(
+        "--body_model_dir",
+        type=str,
+        default=str((HERE / ".." / "assets" / "body_models").resolve()),
+        help="SMPL-X body model root folder containing the smplx subfolder.",
+    )
     args = parser.parse_args()
     
     # print the total number of cpus and gpus
@@ -189,7 +195,7 @@ def main():
     src_folder = args.src_folder
     tgt_folder = args.tgt_folder
 
-    SMPLX_FOLDER = HERE / ".." / "assets" / "body_models"
+    SMPLX_FOLDER = pathlib.Path(args.body_model_dir)
     hard_motions_folder = HERE / ".." / "assets" / "hard_motions"
 
     verbose = False

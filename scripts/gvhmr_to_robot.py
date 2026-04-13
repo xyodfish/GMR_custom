@@ -38,6 +38,13 @@ if __name__ == "__main__":
         default=None,
         help="Path to save the robot motion.",
     )
+
+    parser.add_argument(
+        "--body_model_dir",
+        type=str,
+        default=str((HERE / ".." / "assets" / "body_models").resolve()),
+        help="SMPL-X body model root folder containing the smplx subfolder.",
+    )
     
     parser.add_argument(
         "--loop",
@@ -63,7 +70,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
 
-    SMPLX_FOLDER = HERE / ".." / "assets" / "body_models"
+    SMPLX_FOLDER = pathlib.Path(args.body_model_dir)
     
     
     # Load SMPLX trajectory

@@ -1,6 +1,10 @@
 import numpy as np
 import smplx
 import torch
+from pathlib import Path
+import hashlib
+import tempfile
+import warnings
 from scipy.spatial.transform import Rotation as R
 from smplx.joint_names import JOINT_NAMES
 from scipy.interpolate import interp1d
@@ -11,12 +15,108 @@ def load_smpl_file(smpl_file):
     smpl_data = np.load(smpl_file, allow_pickle=True)
     return smpl_data
 
+def _normalize_gender(gender_value):
+    if isinstance(gender_value, np.ndarray):
+        gender_value = gender_value.item()
+    if isinstance(gender_value, bytes):
+        return gender_value.decode("utf-8").strip().lower()
+    return str(gender_value).strip().lower()
+
+def _resolve_smplx_model_root(smplx_body_model_path):
+    model_root = Path(smplx_body_model_path).expanduser().resolve()
+    smplx_dir = model_root / "smplx"
+
+    if model_root.name.lower() == "smplx" and model_root.is_dir():
+        model_root = model_root.parent
+        smplx_dir = model_root / "smplx"
+
+    if not smplx_dir.is_dir():
+        raise FileNotFoundError(
+            "SMPL-X body model directory is missing. Expected "
+            f"'{smplx_dir}'. Download SMPL-X models and place them at "
+            "'assets/body_models/smplx/'."
+        )
+
+    has_pkl = any(smplx_dir.glob("SMPLX_*.pkl"))
+    has_npz = any(smplx_dir.glob("SMPLX_*.npz"))
+    if not has_pkl and not has_npz:
+        raise FileNotFoundError(
+            "No SMPL-X model files found under "
+            f"'{smplx_dir}'. Expected files like SMPLX_NEUTRAL.pkl."
+        )
+
+    model_ext = "pkl" if has_pkl else "npz"
+    return str(model_root), model_ext
+
+def _resolve_model_file_by_gender(model_root, model_ext, gender):
+    smplx_dir = Path(model_root) / "smplx"
+    preferred_name = f"SMPLX_{gender.upper()}.{model_ext}"
+    preferred_path = smplx_dir / preferred_name
+    if preferred_path.is_file():
+        return preferred_path
+
+    neutral_path = smplx_dir / f"SMPLX_NEUTRAL.{model_ext}"
+    if neutral_path.is_file():
+        return neutral_path
+
+    raise FileNotFoundError(
+        f"Missing SMPL-X model file for gender '{gender}'. "
+        f"Expected '{preferred_path}' or '{neutral_path}'."
+    )
+
+def _build_compatible_smplx_npz_if_needed(model_file):
+    model_file = Path(model_file).resolve()
+    npz_data = np.load(model_file, allow_pickle=True)
+    required_keys = (
+        "hands_componentsl",
+        "hands_componentsr",
+        "hands_meanl",
+        "hands_meanr",
+        "lmk_faces_idx",
+        "lmk_bary_coords",
+    )
+    missing = [key for key in required_keys if key not in npz_data.files]
+    if not missing:
+        return str(model_file)
+
+    warnings.warn(
+        "Detected compact SMPL-X npz without hand/landmark buffers; "
+        "building a compatibility copy for smplx runtime.",
+        RuntimeWarning,
+    )
+
+    file_sig = f"{model_file}:{model_file.stat().st_size}:{model_file.stat().st_mtime_ns}"
+    cache_key = hashlib.md5(file_sig.encode("utf-8")).hexdigest()[:16]
+    compat_dir = Path(tempfile.gettempdir()) / "gmr_smplx_compat" / cache_key
+    compat_file = compat_dir / model_file.name
+    if compat_file.is_file():
+        return str(compat_file)
+
+    compat_dir.mkdir(parents=True, exist_ok=True)
+    model_dict = {key: npz_data[key] for key in npz_data.files}
+    model_dict.setdefault("hands_componentsl", np.zeros((6, 45), dtype=np.float32))
+    model_dict.setdefault("hands_componentsr", np.zeros((6, 45), dtype=np.float32))
+    model_dict.setdefault("hands_meanl", np.zeros((45,), dtype=np.float32))
+    model_dict.setdefault("hands_meanr", np.zeros((45,), dtype=np.float32))
+    model_dict.setdefault("lmk_faces_idx", np.array([0], dtype=np.int64))
+    model_dict.setdefault("lmk_bary_coords", np.array([[1.0, 0.0, 0.0]], dtype=np.float32))
+    np.savez(compat_file, **model_dict)
+    return str(compat_file)
+
 def load_smplx_file(smplx_file, smplx_body_model_path):
     smplx_data = np.load(smplx_file, allow_pickle=True)
+    gender = _normalize_gender(smplx_data["gender"])
+    model_root, model_ext = _resolve_smplx_model_root(smplx_body_model_path)
+    if model_ext == "npz":
+        model_file = _resolve_model_file_by_gender(model_root, model_ext, gender)
+        model_path_for_create = _build_compatible_smplx_npz_if_needed(model_file)
+    else:
+        model_path_for_create = model_root
     body_model = smplx.create(
-        smplx_body_model_path,
-        "smplx",
-        gender=str(smplx_data["gender"]),
+        model_path=model_path_for_create,
+        model_type="smplx",
+        gender=gender,
+        ext=model_ext,
         use_pca=False,
     )
     # print(smplx_data["pose_body"].shape)
@@ -72,10 +172,17 @@ def load_gvhmr_pred_file(gvhmr_pred_file, smplx_body_model_path):
         "mocap_frame_rate": torch.tensor(30),
     }
 
+    model_root, model_ext = _resolve_smplx_model_root(smplx_body_model_path)
+    if model_ext == "npz":
+        model_file = _resolve_model_file_by_gender(model_root, model_ext, "neutral")
+        model_path_for_create = _build_compatible_smplx_npz_if_needed(model_file)
+    else:
+        model_path_for_create = model_root
     body_model = smplx.create(
-        smplx_body_model_path,
-        "smplx",
+        model_path=model_path_for_create,
+        model_type="smplx",
         gender="neutral",
+        ext=model_ext,
         use_pca=False,
     )
     
