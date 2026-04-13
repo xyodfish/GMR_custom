@@ -8,101 +8,98 @@
 #include <vector>
 
 #include <Eigen/Geometry>
-#include <mujoco/mujoco.h>
 
 #include "gmr/retarget/ik_config.h"
 
 namespace gmr {
 
-struct HumanBodyState {
-  Eigen::Vector3d position = Eigen::Vector3d::Zero();
-  Eigen::Quaterniond orientation =
-      Eigen::Quaterniond::Identity(); // world frame, wxyz semantics
-};
+    struct HumanBodyState {
+        Eigen::Vector3d position       = Eigen::Vector3d::Zero();
+        Eigen::Quaterniond orientation = Eigen::Quaterniond::Identity();  // world frame, wxyz semantics
+    };
 
-using HumanFrame = std::unordered_map<std::string, HumanBodyState>;
+    using HumanFrame = std::unordered_map<std::string, HumanBodyState>;
 
-struct RetargetOptions {
-  std::string solverName = "qpoases";
-  double damping = 5e-1;
-  int maxIterations = 100;
-  bool useVelocityLimit = false;
-  double velocityLimit = 3.0 * M_PI;
-  double progressThreshold = 1e-3;
-};
+    struct RetargetOptions {
+        std::string solverName     = "qpoases";
+        double damping             = 5e-1;
+        double integrationTimestep = 1e-2;
+        int maxIterations          = 100;
+        bool useVelocityLimit      = false;
+        double velocityLimit       = 3.0 * M_PI;
+        double progressThreshold   = 1e-3;
+    };
 
-class MujocoRetargeter {
-public:
-  MujocoRetargeter(const std::filesystem::path &robotXmlPath, IkConfig ikConfig,
-                   RetargetOptions options = {});
-  ~MujocoRetargeter();
+    struct ScalarJointCoordinate {
+        int qIndex = -1;
+        int vIndex = -1;
+        std::string jointName;
+    };
 
-  MujocoRetargeter(const MujocoRetargeter &) = delete;
-  MujocoRetargeter &operator=(const MujocoRetargeter &) = delete;
+    enum class RetargetBackend {
+        kPinocchio,
+        kMujoco,
+    };
 
-  Eigen::VectorXd retargetFrame(const HumanFrame &humanFrame,
-                                bool offsetToGround = false);
-  HumanFrame prepareHumanFrame(const HumanFrame &humanFrame,
-                               bool offsetToGround = false) const;
-  void setQpos(const Eigen::VectorXd &qpos);
+    RetargetBackend parseRetargetBackend(const std::string& backendName);
+    const char* toString(RetargetBackend backend);
 
-  const Eigen::VectorXd &currentQpos() const { return qpos_; }
-  const mjModel *model() const { return model_.get(); }
-  const mjData *data() const { return data_.get(); }
-  mjData *mutableData() { return data_.get(); }
+    class Retargeter {
+       public:
+        virtual ~Retargeter() = default;
 
-private:
-  struct TaskRuntime {
-    int bodyId = -1;
-    std::string humanBodyName;
-    double posWeight = 0.0;
-    double rotWeight = 0.0;
-    Eigen::Vector3d posOffset = Eigen::Vector3d::Zero();
-    Eigen::Quaterniond rotOffset = Eigen::Quaterniond::Identity();
+        virtual Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false)      = 0;
+        virtual HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const = 0;
+        virtual void setQpos(const Eigen::VectorXd& qpos)                                                     = 0;
 
-    Eigen::Vector3d targetPos = Eigen::Vector3d::Zero();
-    Eigen::Quaterniond targetRot = Eigen::Quaterniond::Identity();
-  };
+        virtual const Eigen::VectorXd& currentQpos() const                               = 0;
+        virtual bool hasRootFreeFlyer() const                                            = 0;
+        virtual const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const = 0;
+    };
 
-  struct ModelDeleter {
-    void operator()(mjModel *p) const {
-      if (p != nullptr) {
-        mj_deleteModel(p);
-      }
-    }
-  };
+    class PinocchioRetargetBackend final : public Retargeter {
+       public:
+        PinocchioRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig, RetargetOptions options = {});
+        ~PinocchioRetargetBackend() override;
 
-  struct DataDeleter {
-    void operator()(mjData *p) const {
-      if (p != nullptr) {
-        mj_deleteData(p);
-      }
-    }
-  };
+        PinocchioRetargetBackend(const PinocchioRetargetBackend&) = delete;
+        PinocchioRetargetBackend& operator=(const PinocchioRetargetBackend&) = delete;
 
-  std::unique_ptr<mjModel, ModelDeleter> model_;
-  std::unique_ptr<mjData, DataDeleter> data_;
+        Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
+        HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
+        void setQpos(const Eigen::VectorXd& qpos) override;
 
-  IkConfig ikConfig_;
-  RetargetOptions options_;
+        const Eigen::VectorXd& currentQpos() const override;
+        bool hasRootFreeFlyer() const override;
+        const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
 
-  std::vector<TaskRuntime> tasks1_;
-  std::vector<TaskRuntime> tasks2_;
-  std::unordered_map<std::string, Eigen::Vector3d> table1PosOffsets_;
-  std::unordered_map<std::string, Eigen::Quaterniond> table1RotOffsets_;
+       private:
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
 
-  Eigen::VectorXd qpos_;
-  Eigen::VectorXd qvel_;
+    class MujocoRetargetBackend final : public Retargeter {
+       public:
+        MujocoRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig, RetargetOptions options = {});
+        ~MujocoRetargetBackend() override;
 
-  HumanFrame scaleAndOffsetHumanFrame(const HumanFrame &frame,
-                                      bool offsetToGround) const;
-  void updateTaskTargets(const HumanFrame &frame);
-  double computeTaskError(const std::vector<TaskRuntime> &tasks) const;
-  void solveTaskSet(const std::vector<TaskRuntime> &tasks);
-  Eigen::Vector3d
-  computeOrientationErrorWorld(const Eigen::Quaterniond &current,
-                               const Eigen::Quaterniond &target) const;
-  void syncDataFromQpos();
-};
+        MujocoRetargetBackend(const MujocoRetargetBackend&) = delete;
+        MujocoRetargetBackend& operator=(const MujocoRetargetBackend&) = delete;
 
-} // namespace gmr
+        Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
+        HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
+        void setQpos(const Eigen::VectorXd& qpos) override;
+
+        const Eigen::VectorXd& currentQpos() const override;
+        bool hasRootFreeFlyer() const override;
+        const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
+
+       private:
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
+
+    std::unique_ptr<Retargeter> createRetargeter(RetargetBackend backend, const std::filesystem::path& robotModelPath, IkConfig ikConfig,
+                                                 RetargetOptions options = {});
+
+}  // namespace gmr

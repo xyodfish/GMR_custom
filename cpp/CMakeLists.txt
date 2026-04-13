@@ -15,6 +15,7 @@ set(CMAKE_INSTALL_RPATH "${GMR_THIRDPARTY_PREFIX}/lib;${GMR_MUJOCO_PREFIX}/lib")
 
 find_package(Eigen3 REQUIRED)
 find_package(qpOASES REQUIRED)
+find_package(pinocchio REQUIRED)
 find_package(mujoco REQUIRED)
 find_package(glfw3 QUIET)
 if(NOT glfw3_FOUND)
@@ -50,6 +51,7 @@ target_include_directories(gmr_retarget_core PUBLIC
 target_link_libraries(gmr_retarget_core PUBLIC
   Eigen3::Eigen
   qpOASES
+  pinocchio::pinocchio
   mujoco::mujoco
 )
 
@@ -68,11 +70,13 @@ add_executable(gmr_retarget_viewer
 if(glfw3_FOUND)
   target_link_libraries(gmr_retarget_viewer PRIVATE
     gmr_retarget_core
+    mujoco::mujoco
     glfw
   )
 else()
   target_link_libraries(gmr_retarget_viewer PRIVATE
     gmr_retarget_core
+    mujoco::mujoco
     ${GLFW_LIBRARY}
   )
 endif()

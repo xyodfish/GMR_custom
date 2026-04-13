@@ -3,12 +3,16 @@
 This directory is a C++ baseline for GMR retargeting.
 
 ## What is implemented
-- MuJoCo-based full-body IK retarget loop in C++ (`MujocoRetargeter`)
+- Backend-agnostic `Retargeter` base class that outputs target joint coordinates (`qpos` stream).
+- Two concrete retarget backends:
+  - `PinocchioRetargetBackend`
+  - `MujocoRetargetBackend`
+- Backend selection is independent from renderer target (MuJoCo / ROS / other GUI).
 - Reuse of optimization-style QP solver structure from `whole_body_control`
   - `qp_solver` / `hqp_solver` / `qp_data`
 - IK config reuse from existing `general_motion_retargeting/ik_configs/*.json`
 - A CLI for single-frame retargeting: `gmr_retarget_cli`
-- A MuJoCo viewer with YAML runtime config: `gmr_retarget_viewer`
+- A MuJoCo viewer with YAML runtime config: `gmr_retarget_viewer` (render-only)
 
 ## Dependencies
 Expected prefix (default):
@@ -17,6 +21,7 @@ Expected prefix (default):
 Required packages:
 - `Eigen3`
 - `qpOASES`
+- `pinocchio`
 - `mujoco`
 - `nlohmann_json` header (`nlohmann/json.hpp`)
 - `yaml-cpp` (`yaml-cpp/yaml.h`)
@@ -33,6 +38,7 @@ cmake --build cpp/build -j
 ## Run retarget and print/save qpos
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_cli \
+  --backend pinocchio \
   --gmr_root /data/open_src_code/GMR_custom \
   --robot unitree_g1 \
   --human_frame_json /data/open_src_code/GMR_custom/cpp/examples/human_frame_smplx_g1_example.json \
@@ -46,6 +52,7 @@ cmake --build cpp/build -j
 ## Run viewer with YAML config (default realtime)
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_viewer \
+  --backend pinocchio \
   --config /data/open_src_code/GMR_custom/cpp/examples/retarget_viewer_config.yaml
 ```
 

@@ -31,6 +31,26 @@ inline const std::unordered_map<std::string, std::string>& robotXmlMap() {
   return kMap;
 }
 
+inline const std::unordered_map<std::string, std::string>& robotUrdfMap() {
+  static const std::unordered_map<std::string, std::string> kMap = {
+      {"unitree_g1", "assets/unitree_g1/g1_custom_collision_29dof.urdf"},
+      {"unitree_g1_with_hands", "assets/unitree_g1/g1_custom_collision_29dof.urdf"},
+      {"unitree_h1", "assets/unitree_h1/h1.urdf"},
+      {"unitree_h1_2", "assets/unitree_h1_2/h1_2_handless.urdf"},
+      {"booster_t1", "assets/booster_t1/T1_serial.urdf"},
+      {"stanford_toddy", "assets/stanford_toddy/assemblies/toddlerbot_active/toddlerbot_active.urdf"},
+      {"kuavo_s45", "assets/kuavo_s45/biped_s45.urdf"},
+      {"hightorque_hi", "assets/hightorque_hi/hi_25dof.urdf"},
+      {"galaxea_r1pro", "assets/galaxea_r1pro/r1_pro_with_gripper.urdf"},
+      {"berkeley_humanoid_lite", "assets/berkeley_humanoid_lite/berkeley_humanoid_lite_biped.urdf"},
+      {"booster_k1", "assets/booster_k1/K1_serial.urdf"},
+      {"pnd_adam_lite", "assets/pnd_adam_lite/adam_lite.urdf"},
+      {"tienkung", "assets/tienkung/urdf/tienkung2_lite.urdf"},
+      {"fourier_gr3", "assets/fourier_gr3v2_1_1/basic_urdf/gr3v2_1_1_dummy_hand.urdf"},
+  };
+  return kMap;
+}
+
 inline const std::unordered_map<std::string, std::string>& smplxIkConfigMap() {
   static const std::unordered_map<std::string, std::string> kMap = {
       {"unitree_g1", "general_motion_retargeting/ik_configs/smplx_to_g1.json"},
@@ -79,6 +99,17 @@ inline std::filesystem::path resolveRobotXml(const std::filesystem::path& gmrRoo
   auto it = map.find(robot);
   if (it == map.end()) {
     throw std::runtime_error("Unsupported robot: " + robot);
+  }
+  return gmrRoot / it->second;
+}
+
+inline std::filesystem::path resolveRobotUrdf(const std::filesystem::path& gmrRoot, const std::string& robot) {
+  const auto& map = robotUrdfMap();
+  auto it = map.find(robot);
+  if (it == map.end()) {
+    throw std::runtime_error(
+        "Unsupported robot for Pinocchio URDF map: " + robot +
+        ". Add it to robotUrdfMap() in cpp/include/gmr/retarget/repo_paths.h");
   }
   return gmrRoot / it->second;
 }
