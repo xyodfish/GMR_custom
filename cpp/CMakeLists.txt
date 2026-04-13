@@ -40,6 +40,8 @@ add_library(gmr_retarget_core STATIC
   src/retarget/ik_config.cpp
   src/retarget/human_frame_io.cpp
   src/retarget/retargeter.cpp
+  src/retarget/retargeter_pinocchio.cpp
+  src/retarget/retargeter_mujoco.cpp
 )
 
 target_include_directories(gmr_retarget_core PUBLIC
@@ -60,6 +62,14 @@ add_executable(gmr_retarget_cli
 )
 
 target_link_libraries(gmr_retarget_cli PRIVATE
+  gmr_retarget_core
+)
+
+add_executable(gmr_retarget_batch_cli
+  src/main_retarget_batch_cli.cpp
+)
+
+target_link_libraries(gmr_retarget_batch_cli PRIVATE
   gmr_retarget_core
 )
 

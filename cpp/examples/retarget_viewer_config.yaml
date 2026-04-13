@@ -1,8 +1,8 @@
 gmr_root: /data/open_src_code/GMR_custom
-robot: unitree_g1
+robot: pal_talos
 src_human: bvh_lafan1
 # human_frame_json: /data/open_src_code/GMR_custom/tmp/pushAndStumble1_subject2_retarget_frames.json
-human_frame_json: /data/open_src_code/GMR_custom/assets/xsens_bvh_test/251021_04_boxing_120Hz_cm_3DsMax_retarget_frame.json
+human_frame_json: /home/yuxia/Downloads/lafan1/fight1_subject5_retarget_frame.json
 actual_human_height: 1.75
 
 damping: 0.5

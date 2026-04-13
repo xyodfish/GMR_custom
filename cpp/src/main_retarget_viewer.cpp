@@ -60,6 +60,7 @@ struct MjDataDeleter {
 struct RenderQposMap {
     std::vector<int> retargetIdxToRenderQposAdr;
     std::vector<double> scale;
+    bool useDirectQposCopy                 = false;
     bool hasFreeJoint                      = false;
     int freeJointQadr                      = -1;
     Eigen::Vector3d freeJointPosOffset     = Eigen::Vector3d::Zero();
@@ -317,10 +318,16 @@ void drawHumanOverlay(const gmr::HumanFrame& humanFrame, mjvScene* scene, double
     }
 }
 
-RenderQposMap buildRenderQposMap(const gmr::Retargeter& retargeter, const mjModel* renderModel, int retargetNq) {
+RenderQposMap buildRenderQposMap(const gmr::Retargeter& retargeter, const mjModel* renderModel, int retargetNq, bool preferDirectQposCopy) {
     RenderQposMap map;
     map.retargetIdxToRenderQposAdr.assign(retargetNq, -1);
     map.scale.assign(retargetNq, 1.0);
+
+    if (preferDirectQposCopy && retargetNq == renderModel->nq) {
+        map.useDirectQposCopy = true;
+        std::cout << "qpos map built: direct qpos copy (mujoco backend, same nq)." << std::endl;
+        return map;
+    }
 
     int freeJointId = -1;
     for (int j = 0; j < renderModel->njnt; ++j) {
@@ -387,6 +394,12 @@ void syncRenderDataFromQpos(const Eigen::VectorXd& qpos, const mjModel* model, m
     }
     if (static_cast<int>(map.retargetIdxToRenderQposAdr.size()) != qpos.size()) {
         throw std::runtime_error("Render qpos map size mismatch.");
+    }
+
+    if (map.useDirectQposCopy) {
+        mju_copy(data->qpos, qpos.data(), model->nq);
+        mj_forward(model, data);
+        return;
     }
 
     mju_copy(data->qpos, model->qpos0, model->nq);
@@ -522,8 +535,8 @@ int main(int argc, char** argv) {
         if (!renderData) {
             throw std::runtime_error("Failed to allocate MuJoCo render data.");
         }
-        const RenderQposMap qposMap =
-            buildRenderQposMap(*retargeter, renderModel.get(), static_cast<int>(retargeter->currentQpos().size()));
+        const RenderQposMap qposMap = buildRenderQposMap(*retargeter, renderModel.get(), static_cast<int>(retargeter->currentQpos().size()),
+                                                         backend == gmr::RetargetBackend::kMujoco);
         syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
 
         const double humanPointScale         = 0.1;
@@ -566,15 +579,24 @@ int main(int argc, char** argv) {
             syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
         }
 
-        std::cout << "Starting playback at " << sequence.fps << " FPS (" << (config.realtime ? "realtime IK" : "precomputed") << ")"
-                  << std::endl;
-
         std::size_t frameIdx             = 0;
-        auto lastStep                    = std::chrono::steady_clock::now();
-        auto playbackStart               = std::chrono::steady_clock::now();
         std::size_t shownIdx             = std::numeric_limits<std::size_t>::max();
         bool playbackFinished            = false;
         gmr::HumanFrame visualHumanFrame = retargeter->prepareHumanFrame(sequence.frames.front(), config.offsetToGround);
+
+        if (config.realtime) {
+            retargeter->retargetFrame(sequence.frames.front(), config.offsetToGround);
+            syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
+            if (sequence.frames.size() > 1) {
+                frameIdx = 1;
+            }
+        }
+
+        std::cout << "Starting playback at " << sequence.fps << " FPS (" << (config.realtime ? "realtime IK" : "precomputed") << ")"
+                  << std::endl;
+
+        auto lastStep      = std::chrono::steady_clock::now();
+        auto playbackStart = std::chrono::steady_clock::now();
 
         while (!glfwWindowShouldClose(window)) {
             auto now = std::chrono::steady_clock::now();
