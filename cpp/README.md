@@ -1,32 +1,34 @@
-# GMR C++ Retargeting (Experimental)
+# GMR C++ Retargeting（实验版）
 
-This directory is a C++ baseline for GMR retargeting.
+这个目录是 GMR retargeting 的 C++ baseline 实现。
 
-## What is implemented
-- Backend-agnostic `Retargeter` base class that outputs target joint coordinates (`qpos` stream).
-- Two concrete retarget backends:
+## 已实现内容
+- 与 Backend 解耦的 `Retargeter` 基类，输出目标关节坐标（`qpos` stream）。
+- 四个具体 retarget Backend：
   - `PinocchioRetargetBackend`
+  - `PinocchioLegacyRetargetBackend`
   - `MujocoRetargetBackend`
-- Backend selection is independent from renderer target (MuJoCo / ROS / other GUI).
-- Reuse of optimization-style QP solver structure from `whole_body_control`
+  - `MujocoLegacyRetargetBackend`
+- Backend 选择与渲染目标解耦（MuJoCo / ROS / 其他 GUI）。
+- 复用 `whole_body_control` 中优化风格的 QP solver 结构：
   - `qp_solver` / `hqp_solver` / `qp_data`
-- IK config reuse from existing `general_motion_retargeting/ik_configs/*.json`
-- A CLI for single-frame retargeting: `gmr_retarget_cli`
-- A MuJoCo viewer with YAML runtime config: `gmr_retarget_viewer` (render-only)
+- 复用现有 `general_motion_retargeting/ik_configs/*.json` 的 IK config。
+- 单帧 retarget CLI：`gmr_retarget_cli`。
+- 带 YAML 运行配置的 MuJoCo viewer：`gmr_retarget_viewer`（仅渲染）。
 
-## Dependencies
-Expected prefix (default):
+## 依赖
+默认 prefix：
 - `/opt/galbot/devel/x86_64-Linux-GNU-9.4.0`
 
-Required packages:
+必需 package：
 - `Eigen3`
 - `qpOASES`
 - `pinocchio`
 - `mujoco`
-- `nlohmann_json` header (`nlohmann/json.hpp`)
-- `yaml-cpp` (`yaml-cpp/yaml.h`)
+- `nlohmann_json` header（`nlohmann/json.hpp`）
+- `yaml-cpp`（`yaml-cpp/yaml.h`）
 
-## Build
+## 编译
 ```bash
 cd /data/open_src_code/GMR_custom
 cmake -S cpp -B cpp/build \
@@ -35,7 +37,7 @@ cmake -S cpp -B cpp/build \
 cmake --build cpp/build -j
 ```
 
-## Run retarget and print/save qpos
+## 运行 retarget，并打印/保存 qpos
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_cli \
   --backend pin_ik \
@@ -49,26 +51,27 @@ cmake --build cpp/build -j
   --out_json /data/open_src_code/GMR_custom/tmp/gmr_cpp_qpos.json
 ```
 
-## Run viewer with YAML config (default realtime)
+## 用 YAML config 运行 viewer（默认 realtime）
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_viewer \
   --backend pin_ik \
   --config /data/open_src_code/GMR_custom/cpp/examples/retarget_viewer_config.yaml
 ```
 
-Backend names:
-- `pin_ik` (aliases: `pinocchio`, `pinocchio_ik`)
-- `mujoco_se3` (aliases: `mujoco`, `se3`)
-- `mujoco_jacobian_legacy` (aliases: `mujoco_legacy`, `legacy`)
+Backend 名称：
+- `pin_ik`（aliases: `pinocchio`, `pinocchio_ik`）
+- `pin_ik_jacobian_legacy`（aliases: `pinocchio_legacy`, `pin_legacy`）
+- `mujoco_se3`（aliases: `mujoco`, `se3`）
+- `mujoco_jacobian_legacy`（aliases: `mujoco_legacy`, `legacy`）
 
-Command-line options override YAML values, for example:
+命令行参数会覆盖 YAML 配置，例如：
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_viewer \
   --config /data/open_src_code/GMR_custom/cpp/examples/retarget_viewer_config.yaml \
   --precompute
 ```
 
-## Current scope
-- CLI uses the first frame in a multi-frame JSON.
-- Current target domain is SMPL-X style human body names (matching existing IK json).
-- This is the first drop intended for iterative development (batch mode / pybind / parity tests can be added next).
+## 当前范围
+- CLI 在多帧 JSON 输入时只使用第一帧。
+- 当前目标域是 SMPL-X 风格的人体 body name（与现有 IK json 对齐）。
+- 当前版本是第一版落地，后续可继续迭代 batch mode / pybind / parity tests。

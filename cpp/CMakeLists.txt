@@ -41,6 +41,7 @@ add_library(gmr_retarget_core STATIC
   src/retarget/human_frame_io.cpp
   src/retarget/retargeter.cpp
   src/retarget/retargeter_pinocchio.cpp
+  src/retarget/retargeter_pinocchio_legacy.cpp
   src/retarget/retargeter_mujoco.cpp
   src/retarget/retargeter_mujoco_legacy.cpp
 )

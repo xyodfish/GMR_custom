@@ -37,7 +37,7 @@ namespace {
                   << "  gmr_retarget_cli"
                   << " --gmr_root <path_to_GMR_root>"
                   << " --robot <robot_name>"
-                  << " [--backend <pin_ik|mujoco_se3|mujoco_jacobian_legacy>]"
+                  << " [--backend <pin_ik|pin_ik_jacobian_legacy|mujoco_se3|mujoco_jacobian_legacy>]"
                   << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
                   << " --human_frame_json <single_or_multi_frame_json>"
                   << " [--actual_human_height <float>]"
@@ -76,8 +76,9 @@ int main(int argc, char** argv) {
         opts.maxIterations    = std::stoi(getArg(argc, argv, "--max_iter", "10"));
         opts.useVelocityLimit = hasFlag(argc, argv, "--use_velocity_limit");
 
+        const bool pinBackend = backend == gmr::RetargetBackend::kPinocchio || backend == gmr::RetargetBackend::kPinocchioLegacy;
         const std::filesystem::path robotModelPath =
-            (backend == gmr::RetargetBackend::kPinocchio) ? gmr::resolveRobotUrdf(gmrRoot, robot) : gmr::resolveRobotXml(gmrRoot, robot);
+            pinBackend ? gmr::resolveRobotUrdf(gmrRoot, robot) : gmr::resolveRobotXml(gmrRoot, robot);
         const std::filesystem::path ikPath = gmr::resolveIkConfig(gmrRoot, srcHuman, robot);
         gmr::IkConfig ikConfig             = gmr::loadIkConfig(ikPath, actualHumanHeight);
 

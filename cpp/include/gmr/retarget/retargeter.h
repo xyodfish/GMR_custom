@@ -38,6 +38,7 @@ namespace gmr {
 
     enum class RetargetBackend {
         kPinocchio,
+        kPinocchioLegacy,
         kMujoco,
         kMujocoLegacy,
     };
@@ -86,6 +87,27 @@ namespace gmr {
 
         MujocoRetargetBackend(const MujocoRetargetBackend&) = delete;
         MujocoRetargetBackend& operator=(const MujocoRetargetBackend&) = delete;
+
+        Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
+        HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
+        void setQpos(const Eigen::VectorXd& qpos) override;
+
+        const Eigen::VectorXd& currentQpos() const override;
+        bool hasRootFreeFlyer() const override;
+        const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
+
+       private:
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
+
+    class PinocchioLegacyRetargetBackend final : public Retargeter {
+       public:
+        PinocchioLegacyRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig, RetargetOptions options = {});
+        ~PinocchioLegacyRetargetBackend() override;
+
+        PinocchioLegacyRetargetBackend(const PinocchioLegacyRetargetBackend&) = delete;
+        PinocchioLegacyRetargetBackend& operator=(const PinocchioLegacyRetargetBackend&) = delete;
 
         Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
