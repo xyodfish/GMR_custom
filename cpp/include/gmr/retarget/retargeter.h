@@ -42,6 +42,8 @@ public:
 
   Eigen::VectorXd retargetFrame(const HumanFrame &humanFrame,
                                 bool offsetToGround = false);
+  HumanFrame prepareHumanFrame(const HumanFrame &humanFrame,
+                               bool offsetToGround = false) const;
   void setQpos(const Eigen::VectorXd &qpos);
 
   const Eigen::VectorXd &currentQpos() const { return qpos_; }

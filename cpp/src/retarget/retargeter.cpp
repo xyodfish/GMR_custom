@@ -324,6 +324,11 @@ Eigen::VectorXd MujocoRetargeter::retargetFrame(const HumanFrame &humanFrame,
   return qpos_;
 }
 
+HumanFrame MujocoRetargeter::prepareHumanFrame(const HumanFrame &humanFrame,
+                                               bool offsetToGround) const {
+  return scaleAndOffsetHumanFrame(humanFrame, offsetToGround);
+}
+
 void MujocoRetargeter::setQpos(const Eigen::VectorXd &qpos) {
   if (qpos.size() != qpos_.size()) {
     throw std::runtime_error("setQpos size mismatch.");

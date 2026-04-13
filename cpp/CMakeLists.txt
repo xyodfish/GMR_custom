@@ -21,6 +21,18 @@ if(NOT glfw3_FOUND)
   find_library(GLFW_LIBRARY NAMES glfw REQUIRED)
 endif()
 
+find_package(yaml-cpp QUIET)
+if(NOT yaml-cpp_FOUND)
+  find_path(YAML_CPP_INCLUDE_DIR
+    NAMES yaml-cpp/yaml.h
+    PATHS "${GMR_THIRDPARTY_PREFIX}/include" "${GMR_MUJOCO_PREFIX}/include"
+    REQUIRED)
+  find_library(YAML_CPP_LIBRARY
+    NAMES yaml-cpp
+    PATHS "${GMR_THIRDPARTY_PREFIX}/lib" "${GMR_MUJOCO_PREFIX}/lib"
+    REQUIRED)
+endif()
+
 add_library(gmr_retarget_core STATIC
   src/solver/qp_solver.cpp
   src/solver/hqp_solver.cpp
@@ -63,4 +75,17 @@ else()
     gmr_retarget_core
     ${GLFW_LIBRARY}
   )
+endif()
+
+if(yaml-cpp_FOUND)
+  if(TARGET yaml-cpp::yaml-cpp)
+    target_link_libraries(gmr_retarget_viewer PRIVATE yaml-cpp::yaml-cpp)
+  elseif(TARGET yaml-cpp)
+    target_link_libraries(gmr_retarget_viewer PRIVATE yaml-cpp)
+  else()
+    target_link_libraries(gmr_retarget_viewer PRIVATE yaml-cpp)
+  endif()
+else()
+  target_include_directories(gmr_retarget_viewer PRIVATE ${YAML_CPP_INCLUDE_DIR})
+  target_link_libraries(gmr_retarget_viewer PRIVATE ${YAML_CPP_LIBRARY})
 endif()
