@@ -25,6 +25,11 @@
 - Carefully tuned for good performance of RL tracking policies.
 - Support multiple humanoid robots and multiple human motion data formats (See our table below).
 
+#### Key features in this repository fork:
+- Built on top of upstream GMR and extended with an experimental C++ retargeting pipeline under [`cpp/`](cpp/).
+- Decoupled C++ retarget backends and rendering targets (MuJoCo / ROS / custom viewers).
+- Reuse of existing GMR IK configs in `general_motion_retargeting/ik_configs/*.json` to keep Python/C++ setup aligned.
+
 > [!NOTE]
 > If you want this repo to support a new robot or a new human motion data format, send the robot files (`.xml`, `.urdf`, and meshes) / human motion data to <a href="mailto:lastyanjieze@gmail.com">Yanjie Ze</a> or create an issue, we will support it as soon as possible. And please make sure the robot files you sent can be open-sourced in this repo.
 
@@ -32,6 +37,7 @@ This repo is licensed under the [MIT License](LICENSE).
 
 
 # News & Updates
+- **2026-04-15:** This repository adds an experimental C++ retargeting feature set based on GMR. See the new "C++ Feature (Experimental)" section and [`cpp/README.md`](cpp/README.md).
 - **2026-01-21:** GMR now supports [Xsens](https://www.xsens.com/) BVH offline data.
 - **2026-01-12:** GMR now supports [Fourier GR3](https://www.fftai.com/), the 17th humanoid robot in the repo.
 - **2025-12-02:** GMR now supports [TWIST2](https://yanjieze.com/TWIST2), which utilizes [XRoboToolkit SDK](https://github.com/XR-Robotics/XRoboToolkit-PC-Service).
@@ -203,6 +209,67 @@ And to resolve some possible rendering issues:
 ```bash
 conda install -c conda-forge libstdcxx-ng -y
 ```
+
+## C++ Feature (Experimental)
+
+This repository includes an experimental C++ retargeting implementation in [`cpp/`](cpp/) as a baseline extension of GMR.
+
+### What is included
+- A backend-decoupled `Retargeter` interface that outputs retargeted robot `qpos`.
+- Four backend implementations:
+  - `PinocchioRetargetBackend`
+  - `PinocchioLegacyRetargetBackend`
+  - `MujocoRetargetBackend`
+  - `MujocoLegacyRetargetBackend`
+- QP/HQP solver stack reused from `whole_body_control`-style structure (`qp_solver`, `hqp_solver`, `qp_data`).
+- CLI for one-frame retargeting: `gmr_retarget_cli`.
+- MuJoCo viewer with YAML config: `gmr_retarget_viewer`.
+
+### C++ dependencies
+- `Eigen3`
+- `qpOASES`
+- `pinocchio`
+- `mujoco`
+- `nlohmann_json` headers
+- `yaml-cpp`
+
+### Build
+```bash
+cd /data/open_src_code/GMR_custom
+cmake -S cpp -B cpp/build \
+  -DGMR_THIRDPARTY_PREFIX=/opt/galbot/devel/x86_64-Linux-GNU-9.4.0 \
+  -DGMR_MUJOCO_PREFIX=/opt/galbot/devel_control/x86_64-Linux-GNU-9.4.0
+cmake --build cpp/build -j
+```
+
+### Quick run
+```bash
+/data/open_src_code/GMR_custom/cpp/build/gmr_retarget_cli \
+  --backend pin_ik \
+  --gmr_root /data/open_src_code/GMR_custom \
+  --robot unitree_g1 \
+  --human_frame_json /data/open_src_code/GMR_custom/cpp/examples/human_frame_smplx_g1_example.json \
+  --actual_human_height 1.7 \
+  --damping 0.5 \
+  --max_iter 10 \
+  --use_velocity_limit \
+  --out_json /data/open_src_code/GMR_custom/tmp/gmr_cpp_qpos.json
+```
+
+### Viewer run
+```bash
+/data/open_src_code/GMR_custom/cpp/build/gmr_retarget_viewer \
+  --backend pin_ik \
+  --config /data/open_src_code/GMR_custom/cpp/examples/retarget_viewer_config.yaml
+```
+
+### Backend names
+- `pin_ik` (aliases: `pinocchio`, `pinocchio_ik`)
+- `pin_ik_jacobian_legacy` (aliases: `pinocchio_legacy`, `pin_legacy`)
+- `mujoco_se3` (aliases: `mujoco`, `se3`)
+- `mujoco_jacobian_legacy` (aliases: `mujoco_legacy`, `legacy`)
+
+For full details and latest C++ notes, see [`cpp/README.md`](cpp/README.md).
 
 ## Data Preparation
 
