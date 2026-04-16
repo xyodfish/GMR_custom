@@ -18,7 +18,7 @@
 
 ## 依赖
 默认 prefix：
-- `/opt/galbot/devel/x86_64-Linux-GNU-9.4.0`
+- `/opt/robot/devel/x86_64-Linux-GNU-9.4.0`
 
 必需 package：
 - `Eigen3`
@@ -32,8 +32,8 @@
 ```bash
 cd /data/open_src_code/GMR_custom
 cmake -S cpp -B cpp/build \
-  -DGMR_THIRDPARTY_PREFIX=/opt/galbot/devel/x86_64-Linux-GNU-9.4.0 \
-  -DGMR_MUJOCO_PREFIX=/opt/galbot/devel_control/x86_64-Linux-GNU-9.4.0
+  -DGMR_THIRDPARTY_PREFIX=/opt/robot/devel/x86_64-Linux-GNU-9.4.0 \
+  -DGMR_MUJOCO_PREFIX=/opt/robot/devel_control/x86_64-Linux-GNU-9.4.0
 cmake --build cpp/build -j
 ```
 

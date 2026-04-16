@@ -5,8 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(GMR_THIRDPARTY_PREFIX "/opt/galbot/devel/x86_64-Linux-GNU-9.4.0" CACHE PATH "Third-party install prefix")
-set(GMR_MUJOCO_PREFIX "/opt/galbot/devel_control/x86_64-Linux-GNU-9.4.0" CACHE PATH "MuJoCo install prefix")
+set(GMR_THIRDPARTY_PREFIX "/opt/robot/devel/x86_64-Linux-GNU-9.4.0" CACHE PATH "Third-party install prefix")
+set(GMR_MUJOCO_PREFIX "/opt/robot/devel_control/x86_64-Linux-GNU-9.4.0" CACHE PATH "MuJoCo install prefix")
 list(PREPEND CMAKE_PREFIX_PATH "${GMR_THIRDPARTY_PREFIX}")
 list(PREPEND CMAKE_PREFIX_PATH "${GMR_MUJOCO_PREFIX}")
 
