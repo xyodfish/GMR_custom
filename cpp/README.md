@@ -54,7 +54,7 @@ cmake --build cpp/build -j
 ## 用 YAML config 运行 viewer（默认 realtime）
 ```bash
 /data/open_src_code/GMR_custom/cpp/build/gmr_retarget_viewer \
-  --backend pin_ik \
+  --backend mujoco_se3 \
   --config /data/open_src_code/GMR_custom/cpp/examples/retarget_viewer_config.yaml
 ```
 
