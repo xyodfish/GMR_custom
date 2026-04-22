@@ -157,29 +157,29 @@ This repo is licensed under the [MIT License](LICENSE).
 
 
 
-| Assigned ID | Robot/Data Format | Robot DoF | SMPLX ([AMASS](https://amass.is.tue.mpg.de/), [OMOMO](https://github.com/lijiaman/omomo_release)) | BVH [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset)| FBX ([OptiTrack](https://www.optitrack.com/)) |  BVH [Nokov](https://www.nokov.com/) | PICO ([XRoboToolkit](https://github.com/XR-Robotics/XRoboToolkit-PC-Service)) | More formats coming soon | 
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0 | Unitree G1 `unitree_g1` | Leg (2\*6) + Waist (3) + Arm (2\*7) = 29 | ✅ | ✅ | ✅ |  ✅ | ✅ |
-| 1 | Unitree G1 with Hands `unitree_g1_with_hands` | Leg (2\*6) + Waist (3) + Arm (2\*7) + Hand (2\*7) = 43 | ✅ | ✅ | ✅ | TBD | TBD |
-| 2 | Unitree H1 `unitree_h1` | Leg (2\*5) + Waist (1) + Arm (2\*4) = 19 | ✅ | TBD | TBD | TBD | TBD |
-| 3 | Unitree H1 2 `unitree_h1_2` | Leg (2\*6) + Waist (1) + Arm (2\*7) = 27 | ✅ | TBD | TBD | TBD | TBD |
-| 4 | Booster T1 `booster_t1` | TBD | ✅ |  TBD  | TBD | TBD |
-| 5 | Booster T1 29dof `booster_t1_29dof` | TBD | ✅ |  ✅  | TBD | TBD |
-| 6 | Booster K1 `booster_k1` | Neck (2) + Arm (2\*4) + Leg (2\*6) = 22 | ✅ | TBD | TBD | TBD |
-| 7 | Stanford ToddlerBot `stanford_toddy` | TBD | ✅ | ✅ | TBD | TBD |
-| 8 | Fourier N1 `fourier_n1` | TBD | ✅ | ✅ | TBD | TBD |
-| 9 | ENGINEAI PM01 `engineai_pm01` | TBD | ✅ | ✅ | TBD | TBD |
-| 10 | HighTorque Hi `hightorque_hi` | Head (2) + Arm (2\*5) + Waist (1) + Leg (2\*6) = 25 | ✅ | TBD | TBD | TBD |
-| 11 | Galaxea R1 Pro `galaxea_r1pro` (this is a wheeled robot!) |  Base (6) + Torso (4) + Arm (2*7) = 24 | ✅ | TBD | TBD | TBD |
-| 12 | Kuavo `kuavo_s45` |  Head (2) + Arm (2\*7) + Leg (2\*6) = 28 | ✅ | TBD | TBD | TBD |
-| 13 | Berkeley Humanoid Lite `berkeley_humanoid_lite` (need further tuning) | Leg (2\*6) + Arm (2\*5) = 22 | ✅ | TBD | TBD | TBD |
-| 14 | PND Adam Lite `pnd_adam_lite`  | Leg (2\*6) + Waist (3) + Arm (2\*5) = 25 | ✅ | TBD | TBD | TBD |
-| 15 | Tienkung `tienkung`  | Leg (2\*6) + Arm (2\*4) = 20 | ✅ | TBD | TBD | TBD |
-| 16 | PAL Robotics' Talos `pal_talos`  | Head (2) + Arm (2\*7) + Waist (2) + Leg (2\*6) = 30 | ✅ | TBD | TBD | TBD |
-| 17 | Fourier GR3 `fourier_gr3`  | Head (2) + Arm (2\*7) + Waist (3) + Leg (2\*6) = 31 | ✅ | TBD | TBD | TBD |
+| Assigned ID               | Robot/Data Format                                                     | Robot DoF                                              | SMPLX ([AMASS](https://amass.is.tue.mpg.de/), [OMOMO](https://github.com/lijiaman/omomo_release)) | BVH [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset) | FBX ([OptiTrack](https://www.optitrack.com/)) | BVH [Nokov](https://www.nokov.com/) | PICO ([XRoboToolkit](https://github.com/XR-Robotics/XRoboToolkit-PC-Service)) | More formats coming soon |
+| ------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------- | ------------------------ |
+| 0                         | Unitree G1 `unitree_g1`                                               | Leg (2\*6) + Waist (3) + Arm (2\*7) = 29               | ✅                                                                                                 | ✅                                                                          | ✅                                             | ✅                                   | ✅                                                                             |
+| 1                         | Unitree G1 with Hands `unitree_g1_with_hands`                         | Leg (2\*6) + Waist (3) + Arm (2\*7) + Hand (2\*7) = 43 | ✅                                                                                                 | ✅                                                                          | ✅                                             | TBD                                 | TBD                                                                           |
+| 2                         | Unitree H1 `unitree_h1`                                               | Leg (2\*5) + Waist (1) + Arm (2\*4) = 19               | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 | TBD                                                                           |
+| 3                         | Unitree H1 2 `unitree_h1_2`                                           | Leg (2\*6) + Waist (1) + Arm (2\*7) = 27               | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 | TBD                                                                           |
+| 4                         | Booster T1 `booster_t1`                                               | TBD                                                    | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 5                         | Booster T1 29dof `booster_t1_29dof`                                   | TBD                                                    | ✅                                                                                                 | ✅                                                                          | TBD                                           | TBD                                 |
+| 6                         | Booster K1 `booster_k1`                                               | Neck (2) + Arm (2\*4) + Leg (2\*6) = 22                | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 7                         | Stanford ToddlerBot `stanford_toddy`                                  | TBD                                                    | ✅                                                                                                 | ✅                                                                          | TBD                                           | TBD                                 |
+| 8                         | Fourier N1 `fourier_n1`                                               | TBD                                                    | ✅                                                                                                 | ✅                                                                          | TBD                                           | TBD                                 |
+| 9                         | ENGINEAI PM01 `engineai_pm01`                                         | TBD                                                    | ✅                                                                                                 | ✅                                                                          | TBD                                           | TBD                                 |
+| 10                        | HighTorque Hi `hightorque_hi`                                         | Head (2) + Arm (2\*5) + Waist (1) + Leg (2\*6) = 25    | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 11                        | Galaxea R1 Pro `galaxea_r1pro` (this is a wheeled robot!)             | Base (6) + Torso (4) + Arm (2*7) = 24                  | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 12                        | Kuavo `kuavo_s45`                                                     | Head (2) + Arm (2\*7) + Leg (2\*6) = 28                | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 13                        | Berkeley Humanoid Lite `berkeley_humanoid_lite` (need further tuning) | Leg (2\*6) + Arm (2\*5) = 22                           | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 14                        | PND Adam Lite `pnd_adam_lite`                                         | Leg (2\*6) + Waist (3) + Arm (2\*5) = 25               | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 15                        | Tienkung `tienkung`                                                   | Leg (2\*6) + Arm (2\*4) = 20                           | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 16                        | PAL Robotics' Talos `pal_talos`                                       | Head (2) + Arm (2\*7) + Waist (2) + Leg (2\*6) = 30    | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
+| 17                        | Fourier GR3 `fourier_gr3`                                             | Head (2) + Arm (2\*7) + Waist (3) + Leg (2\*6) = 31    | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
 | More robots coming soon ! |
-| 18 | AgiBot A2 `agibot_a2` | TBD | TBD | TBD | TBD | TBD |
-| 19 | OpenLoong `openloong` | TBD | TBD | TBD | TBD | TBD |
+| 18                        | AgiBot A2 `agibot_a2`                                                 | TBD                                                    | TBD                                                                                               | TBD                                                                        | TBD                                           | TBD                                 |
+| 19                        | OpenLoong `openloong`                                                 | TBD                                                    | TBD                                                                                               | TBD                                                                        | TBD                                           | TBD                                 |
 
 
 
@@ -237,8 +237,8 @@ This repository includes an experimental C++ retargeting implementation in [`cpp
 ```bash
 cd /data/open_src_code/GMR_custom
 cmake -S cpp -B cpp/build \
-  -DGMR_THIRDPARTY_PREFIX=/opt/galbot/devel/x86_64-Linux-GNU-9.4.0 \
-  -DGMR_MUJOCO_PREFIX=/opt/galbot/devel_control/x86_64-Linux-GNU-9.4.0
+  -DGMR_THIRDPARTY_PREFIX=/opt/robot/devel/x86_64-Linux-GNU-9.4.0 \
+  -DGMR_MUJOCO_PREFIX=/opt/robot/devel_control/x86_64-Linux-GNU-9.4.0
 cmake --build cpp/build -j
 ```
 
@@ -516,20 +516,20 @@ pip install xsens_mvn_robot_python-*-cp310-*.whl
 
 Launch **Xsens MVN Software** on either Windows or Linux. You can stream from a live recording session while wearing the Xsens Link / Awinda suit, or replay a previously recorded `.mvn` file.
 
-| Step | Action |
-|---|---|
-| 1 | Click **Options → Network Streamer** |
-| 2 | In the pop-up window, click **Add** to create a new stream destination |
-| 3 | Set the **Host Address** (see table below) |
-| 4 | Under Network Streamer Options, tick **Position + Orientation (Quaternion)** only |
-| 5 | No other data sources are needed for GMR retargeting |
-| 6 | Click **OK** — confirm green status on the streamer |
+| Step | Action                                                                            |
+| ---- | --------------------------------------------------------------------------------- |
+| 1    | Click **Options → Network Streamer**                                              |
+| 2    | In the pop-up window, click **Add** to create a new stream destination            |
+| 3    | Set the **Host Address** (see table below)                                        |
+| 4    | Under Network Streamer Options, tick **Position + Orientation (Quaternion)** only |
+| 5    | No other data sources are needed for GMR retargeting                              |
+| 6    | Click **OK** — confirm green status on the streamer                               |
 
 **Host Address Reference:**
 
-| Scenario | Host Address Setting |
-|---|---|
-| MVN on the same Linux machine (MVN Linux) | `127.0.0.1` (localhost) |
+| Scenario                                        | Host Address Setting                   |
+| ----------------------------------------------- | -------------------------------------- |
+| MVN on the same Linux machine (MVN Linux)       | `127.0.0.1` (localhost)                |
 | MVN on Windows → streaming to Ubuntu (same LAN) | Ubuntu IP address, e.g. `192.168.1.10` |
 
 > **Important:** When streaming from a Windows PC to an Ubuntu computer, ensure both machines are on the same LAN. Disable Windows Firewall for the MVN application or create an inbound UDP rule on the MVN default port (`9763`).
@@ -615,11 +615,11 @@ After launching the MuJoCo visualization window and clicking on it, you can use 
 
 ## Speed Benchmark
 
-| CPU | Retargeting Speed |
-| --- | --- |
-| AMD Ryzen Threadripper 7960X 24-Cores | 60~70 FPS |
-| 13th Gen Intel Core i9-13900K 24-Cores | 35~45 FPS |
-| TBD | TBD |
+| CPU                                    | Retargeting Speed |
+| -------------------------------------- | ----------------- |
+| AMD Ryzen Threadripper 7960X 24-Cores  | 60~70 FPS         |
+| 13th Gen Intel Core i9-13900K 24-Cores | 35~45 FPS         |
+| TBD                                    | TBD               |
 
 ## Citation
 
