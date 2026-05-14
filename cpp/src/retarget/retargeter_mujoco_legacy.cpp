@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <stdexcept>
 
 #include <mujoco/mujoco.h>
 
+#include "gmr/retarget/mujoco_collision_limit.h"
 #include "gmr/solver/qp_solver.h"
 #include "retargeter_internal_utils.h"
 
@@ -56,6 +58,8 @@ namespace gmr {
         std::vector<ScalarJointCoordinate> scalarJointCoordinates;
         Eigen::VectorXd qpos;
         Eigen::VectorXd qvel;
+
+        std::unique_ptr<MujocoCollisionLimit> collisionLimit;
 
         Impl(const std::filesystem::path& robotModelPath, IkConfig ikConfigIn, RetargetOptions optionsIn)
             : ikConfig(std::move(ikConfigIn)), options(std::move(optionsIn)) {
@@ -125,6 +129,10 @@ namespace gmr {
                 table1RotOffsets[task.humanBodyName] = task.rotOffset;
             }
 
+            if (ikConfig.collisionAvoidance.enabled) {
+                collisionLimit = std::make_unique<MujocoCollisionLimit>(model.get(), ikConfig.collisionAvoidance);
+            }
+
             mju_copy(data->qpos, model->qpos0, model->nq);
             mju_zero(data->qvel, model->nv);
             mj_forward(model.get(), data.get());
@@ -191,17 +199,24 @@ namespace gmr {
             std::vector<mjtNum> jacp(3 * nv);
             std::vector<mjtNum> jacr(3 * nv);
 
-            for (int iter = 0; iter < options.maxIterations; ++iter) {
-                solver::QPData qp;
-                qp.reset(nv, nv);
+            const int nCollisionRows = (collisionLimit != nullptr) ? collisionLimit->maxRows() : 0;
 
-                qp.CI.setIdentity();
+            for (int iter = 0; iter < options.maxIterations; ++iter) {
+                mj_forward(model.get(), data.get());
+
+                solver::QPData qp;
+                qp.reset(nv, nv + nCollisionRows);
+
+                qp.CI.topRows(nv).setIdentity();
+                if (nCollisionRows > 0) {
+                    qp.CI.bottomRows(nCollisionRows).setZero();
+                }
                 qp.ciLb.setConstant(-1e9);
                 qp.ciUb.setConstant(1e9);
 
                 if (options.useVelocityLimit) {
-                    qp.ciLb.setConstant(-options.velocityLimit);
-                    qp.ciUb.setConstant(options.velocityLimit);
+                    qp.ciLb.head(nv).setConstant(-options.velocityLimit);
+                    qp.ciUb.head(nv).setConstant(options.velocityLimit);
                 }
 
                 for (int j = 0; j < model->njnt; ++j) {
@@ -252,6 +267,10 @@ namespace gmr {
                 }
 
                 qp.H.diagonal().array() += options.damping;
+
+                if (nCollisionRows > 0 && collisionLimit != nullptr) {
+                    collisionLimit->fillRows(data.get(), dt, invDt, qp.CI, qp.ciLb, qp.ciUb, nv);
+                }
 
                 const solver::QPOutput& out = solver.solve(qp);
                 if (out.status != solver::QPStatus::kOptimal) {

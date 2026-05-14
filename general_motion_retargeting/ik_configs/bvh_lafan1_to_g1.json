@@ -8,14 +8,12 @@
     "human_scale_table": {
         "Hips": 0.9,
         "Spine2": 0.9,
-
         "LeftUpLeg": 0.9,
         "RightUpLeg": 0.9,
         "LeftLeg": 0.9,
         "RightLeg": 0.9,
         "LeftFootMod": 0.9,
         "RightFootMod": 0.9,
-
         "LeftArm": 0.75,
         "RightArm": 0.75,
         "LeftForeArm": 0.75,
@@ -23,7 +21,6 @@
         "LeftHand": 0.75,
         "RightHand": 0.75
     },
-
     "ik_match_table1": {
         "pelvis": [
             "Hips",
@@ -473,6 +470,139 @@
                 0.70710678,
                 0.0,
                 0.0
+            ]
+        ]
+    },
+    "collision_avoidance": {
+        "enabled": true,
+        "min_distance": 0.005,
+        "detection_distance": 0.15,
+        "gain": 0.85,
+        "bound_relaxation": 0.0,
+        "self_collision_pairs": [
+            [
+                [
+                    "left_elbow_yaw_collision",
+                    "left_wrist_collision",
+                    "left_hand_collision"
+                ],
+                [
+                    "torso_collision",
+                    "pelvis_collision"
+                ]
+            ],
+            [
+                [
+                    "right_elbow_yaw_collision",
+                    "right_wrist_collision",
+                    "right_hand_collision"
+                ],
+                [
+                    "torso_collision",
+                    "pelvis_collision"
+                ]
+            ],
+            [
+                [
+                    "left_elbow_yaw_collision",
+                    "left_wrist_collision",
+                    "left_hand_collision"
+                ],
+                [
+                    "right_elbow_yaw_collision",
+                    "right_wrist_collision",
+                    "right_hand_collision"
+                ]
+            ],
+            [
+                [
+                    "left_wrist_collision",
+                    "left_hand_collision"
+                ],
+                [
+                    "left_thigh_collision",
+                    "left_shin_collision"
+                ]
+            ],
+            [
+                [
+                    "right_wrist_collision",
+                    "right_hand_collision"
+                ],
+                [
+                    "right_thigh_collision",
+                    "right_shin_collision"
+                ]
+            ],
+            [
+                [
+                    "left_wrist_collision",
+                    "left_hand_collision"
+                ],
+                [
+                    "right_thigh_collision",
+                    "right_shin_collision"
+                ]
+            ],
+            [
+                [
+                    "right_wrist_collision",
+                    "right_hand_collision"
+                ],
+                [
+                    "left_thigh_collision",
+                    "left_shin_collision"
+                ]
+            ],
+            [
+                [
+                    "left_thigh_collision",
+                    "left_shin_collision"
+                ],
+                [
+                    "right_thigh_collision",
+                    "right_shin_collision"
+                ]
+            ],
+            [
+                [
+                    "left_foot1_collision",
+                    "left_foot2_collision",
+                    "left_foot3_collision",
+                    "left_foot4_collision",
+                    "left_foot5_collision",
+                    "left_foot6_collision",
+                    "left_foot7_collision"
+                ],
+                [
+                    "right_foot1_collision",
+                    "right_foot2_collision",
+                    "right_foot3_collision",
+                    "right_foot4_collision",
+                    "right_foot5_collision",
+                    "right_foot6_collision",
+                    "right_foot7_collision"
+                ]
+            ],
+            [
+                [
+                    "left_elbow_yaw_collision",
+                    "left_wrist_collision",
+                    "left_hand_collision"
+                ],
+                [
+                    "head_collision"
+                ]
+            ],
+            [
+                [
+                    "right_elbow_yaw_collision",
+                    "right_wrist_collision",
+                    "right_hand_collision"
+                ],
+                [
+                    "head_collision"
+                ]
             ]
         ]
     }

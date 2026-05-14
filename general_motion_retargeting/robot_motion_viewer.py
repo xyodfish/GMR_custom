@@ -9,6 +9,10 @@ from loop_rate_limiters import RateLimiter
 import numpy as np
 from rich import print
 
+def quat_wxyz_to_xyzw(quat_wxyz):
+    quat_wxyz = np.asarray(quat_wxyz)
+    return quat_wxyz[[1, 2, 3, 0]]
+
 
 def draw_frame(
     pos,
@@ -136,7 +140,7 @@ class RobotMotionViewer:
             for human_body_name, (pos, rot) in human_motion_data.items():
                 draw_frame(
                     pos,
-                    R.from_quat(rot, scalar_first=True).as_matrix(),
+                    R.from_quat(quat_wxyz_to_xyzw(rot)).as_matrix(),
                     self.viewer,
                     human_point_scale,
                     pos_offset=human_pos_offset,

@@ -5,7 +5,8 @@ IK_CONFIG_ROOT = HERE / "ik_configs"
 ASSET_ROOT = HERE / ".." / "assets"
 
 ROBOT_XML_DICT = {
-    "unitree_g1": ASSET_ROOT / "unitree_g1" / "g1_mocap_29dof.xml",
+    # "unitree_g1": ASSET_ROOT / "unitree_g1" / "g1_mocap_29dof.xml",
+    "unitree_g1": ASSET_ROOT / "unitree_g1" / "g1.xml",
     "unitree_g1_with_hands": ASSET_ROOT / "unitree_g1" / "g1_mocap_29dof_with_hands.xml",
     "unitree_h1": ASSET_ROOT / "unitree_h1" / "h1.xml",
     "unitree_h1_2": ASSET_ROOT / "unitree_h1_2" / "h1_2_handless.xml",

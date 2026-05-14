@@ -7,6 +7,88 @@ from scipy.spatial.transform import Rotation as R
 from .params import ROBOT_XML_DICT, IK_CONFIG_DICT
 from rich import print
 
+G1_SELF_COLLISION_PAIRS = [
+    # left arm vs torso / pelvis
+    (
+        ["left_elbow_yaw_collision", "left_wrist_collision", "left_hand_collision"],
+        ["torso_collision", "pelvis_collision"],
+    ),
+
+    # right arm vs torso / pelvis
+    (
+        ["right_elbow_yaw_collision", "right_wrist_collision", "right_hand_collision"],
+        ["torso_collision", "pelvis_collision"],
+    ),
+
+    # left arm vs right arm
+    (
+        ["left_elbow_yaw_collision", "left_wrist_collision", "left_hand_collision"],
+        ["right_elbow_yaw_collision", "right_wrist_collision", "right_hand_collision"],
+    ),
+
+    # left hand / wrist vs left leg
+    (
+        ["left_wrist_collision", "left_hand_collision"],
+        ["left_thigh_collision", "left_shin_collision"],
+    ),
+
+    # right hand / wrist vs right leg
+    (
+        ["right_wrist_collision", "right_hand_collision"],
+        ["right_thigh_collision", "right_shin_collision"],
+    ),
+
+    # left hand / wrist vs right leg, for cross-body motion
+    (
+        ["left_wrist_collision", "left_hand_collision"],
+        ["right_thigh_collision", "right_shin_collision"],
+    ),
+
+    # right hand / wrist vs left leg, for cross-body motion
+    (
+        ["right_wrist_collision", "right_hand_collision"],
+        ["left_thigh_collision", "left_shin_collision"],
+    ),
+
+    # left leg vs right leg
+    (
+        ["left_thigh_collision", "left_shin_collision"],
+        ["right_thigh_collision", "right_shin_collision"],
+    ),
+
+    # left foot vs right foot
+    (
+        [
+            "left_foot1_collision",
+            "left_foot2_collision",
+            "left_foot3_collision",
+            "left_foot4_collision",
+            "left_foot5_collision",
+            "left_foot6_collision",
+            "left_foot7_collision",
+        ],
+        [
+            "right_foot1_collision",
+            "right_foot2_collision",
+            "right_foot3_collision",
+            "right_foot4_collision",
+            "right_foot5_collision",
+            "right_foot6_collision",
+            "right_foot7_collision",
+        ],
+    ),
+
+    # hand / arm vs head
+    (
+        ["left_elbow_yaw_collision", "left_wrist_collision", "left_hand_collision"],
+        ["head_collision"],
+    ),
+    (
+        ["right_elbow_yaw_collision", "right_wrist_collision", "right_hand_collision"],
+        ["head_collision"],
+    ),
+]
+
 class GeneralMotionRetargeting:
     """General Motion Retargeting (GMR).
     """
@@ -20,6 +102,7 @@ class GeneralMotionRetargeting:
         verbose: bool=True,
         use_velocity_limit: bool=False,
     ) -> None:
+        self.verbose = verbose
 
         # load the robot model
         self.xml_file = str(ROBOT_XML_DICT[tgt_robot])
@@ -99,7 +182,33 @@ class GeneralMotionRetargeting:
         if use_velocity_limit:
             VELOCITY_LIMITS = {k: 3*np.pi for k in self.robot_motor_names.keys()}
             self.ik_limits.append(mink.VelocityLimit(self.model, VELOCITY_LIMITS)) 
-            
+
+        collision_cfg = ik_config.get("collision_avoidance", {})
+        collision_enabled = bool(collision_cfg.get("enabled", False))
+        collision_pairs = collision_cfg.get("self_collision_pairs", [])
+
+        # unitree_g1: use collision pairs from IK JSON when present; else built-in list (legacy configs).
+        if tgt_robot == "unitree_g1" and not collision_pairs:
+            collision_pairs = G1_SELF_COLLISION_PAIRS
+            collision_enabled = True
+
+        if collision_enabled:
+            valid_collision_pairs = self._filter_valid_collision_pairs(collision_pairs)
+            if valid_collision_pairs:
+                collision_avoidance_limit = mink.CollisionAvoidanceLimit(
+                    model=self.model,
+                    geom_pairs=valid_collision_pairs,  # type: ignore
+                    minimum_distance_from_collisions=collision_cfg.get("min_distance", 0.005),
+                    collision_detection_distance=collision_cfg.get("detection_distance", 0.15),
+                    gain=collision_cfg.get("gain", 0.85),
+                    bound_relaxation=collision_cfg.get("bound_relaxation", 0.0),
+                )
+
+                print("[GMR] collision pairs",collision_pairs)
+                self.ik_limits.append(collision_avoidance_limit)
+            elif self.verbose:
+                print("[GMR] Collision avoidance enabled but no valid geom pairs were found. Skip this limit.")
+
         self.setup_retarget_configuration()
         
         self.ground_offset = 0.0
@@ -123,7 +232,7 @@ class GeneralMotionRetargeting:
                 self.human_body_to_task1[body_name] = task
                 self.pos_offsets1[body_name] = np.array(pos_offset) - self.ground
                 self.rot_offsets1[body_name] = R.from_quat(
-                    rot_offset, scalar_first=True
+                    self._quat_wxyz_to_xyzw(rot_offset)
                 )
                 self.tasks1.append(task)
                 self.task_errors1[task] = []
@@ -141,10 +250,59 @@ class GeneralMotionRetargeting:
                 self.human_body_to_task2[body_name] = task
                 self.pos_offsets2[body_name] = np.array(pos_offset) - self.ground
                 self.rot_offsets2[body_name] = R.from_quat(
-                    rot_offset, scalar_first=True
+                    self._quat_wxyz_to_xyzw(rot_offset)
                 )
                 self.tasks2.append(task)
                 self.task_errors2[task] = []
+
+    @staticmethod
+    def _quat_wxyz_to_xyzw(quat):
+        quat = np.asarray(quat)
+        return quat[[1, 2, 3, 0]]
+
+    @staticmethod
+    def _quat_xyzw_to_wxyz(quat):
+        quat = np.asarray(quat)
+        return quat[[3, 0, 1, 2]]
+
+    def _filter_valid_collision_pairs(self, collision_pairs):
+        geom_name_set = set()
+        for i in range(self.model.ngeom):
+            geom_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_GEOM, i)
+            if geom_name is not None:
+                geom_name_set.add(geom_name)
+
+        def normalize_geom_group(group):
+            if isinstance(group, (list, tuple)):
+                return list(group)
+            return [group]
+
+        def is_valid_geom_ref(geom_ref):
+            if isinstance(geom_ref, int):
+                return 0 <= geom_ref < self.model.ngeom
+            if isinstance(geom_ref, str):
+                return geom_ref in geom_name_set
+            return False
+
+        valid_pairs = []
+        for pair in collision_pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                if self.verbose:
+                    print(f"[GMR] Skip invalid collision pair format: {pair}")
+                continue
+
+            left_group = normalize_geom_group(pair[0])
+            right_group = normalize_geom_group(pair[1])
+
+            missing = [g for g in left_group + right_group if not is_valid_geom_ref(g)]
+            if missing:
+                if self.verbose:
+                    print(f"[GMR] Skip collision pair with missing geoms: {missing}")
+                continue
+
+            valid_pairs.append((left_group, right_group))
+
+        return valid_pairs
 
   
     def update_targets(self, human_data, offset_to_ground=False):
@@ -272,12 +430,13 @@ class GeneralMotionRetargeting:
             pos, quat = human_data[body_name]
             offset_human_data[body_name] = [pos, quat]
             # apply rotation offset first
-            updated_quat = (R.from_quat(quat, scalar_first=True) * rot_offsets[body_name]).as_quat(scalar_first=True)
+            updated_rot = R.from_quat(self._quat_wxyz_to_xyzw(quat)) * rot_offsets[body_name]
+            updated_quat = self._quat_xyzw_to_wxyz(updated_rot.as_quat())
             offset_human_data[body_name][1] = updated_quat
             
             local_offset = pos_offsets[body_name]
             # compute the global position offset using the updated rotation
-            global_pos_offset = R.from_quat(updated_quat, scalar_first=True).apply(local_offset)
+            global_pos_offset = R.from_quat(self._quat_wxyz_to_xyzw(updated_quat)).apply(local_offset)
             
             offset_human_data[body_name][0] = pos + global_pos_offset
            
