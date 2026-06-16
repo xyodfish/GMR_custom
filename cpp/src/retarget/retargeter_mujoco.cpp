@@ -14,6 +14,8 @@
 #include "gmr/solver/qp_solver.h"
 #include "retargeter_internal_utils.h"
 
+#include "glog/logging.h"
+
 namespace gmr {
 
     struct MujocoTaskRuntime {
@@ -325,6 +327,7 @@ namespace gmr {
     MujocoRetargetBackend::~MujocoRetargetBackend() = default;
 
     Eigen::VectorXd MujocoRetargetBackend::retargetFrame(const HumanFrame& humanFrame, bool offsetToGround) {
+        auto t_now          = std::chrono::steady_clock::now();
         HumanFrame prepared = impl_->prepareHumanFrame(humanFrame, offsetToGround);
         impl_->updateTaskTargets(prepared);
         if (impl_->ikConfig.useTable1) {
@@ -333,6 +336,9 @@ namespace gmr {
         if (impl_->ikConfig.useTable2) {
             impl_->solveTaskSet(impl_->tasks2);
         }
+
+        LOG(INFO) << "Retargeting took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t_now).count() << " ms";
         return impl_->qpos;
     }
 
@@ -352,9 +358,13 @@ namespace gmr {
         impl_->syncQposFromData();
     }
 
-    const Eigen::VectorXd& MujocoRetargetBackend::currentQpos() const { return impl_->qpos; }
+    const Eigen::VectorXd& MujocoRetargetBackend::currentQpos() const {
+        return impl_->qpos;
+    }
 
-    bool MujocoRetargetBackend::hasRootFreeFlyer() const { return impl_->hasRootFreeFlyer; }
+    bool MujocoRetargetBackend::hasRootFreeFlyer() const {
+        return impl_->hasRootFreeFlyer;
+    }
 
     const std::vector<ScalarJointCoordinate>& MujocoRetargetBackend::scalarJointCoordinates() const {
         return impl_->scalarJointCoordinates;

@@ -13,6 +13,7 @@ list(PREPEND CMAKE_PREFIX_PATH "${GMR_MUJOCO_PREFIX}")
 set(CMAKE_BUILD_RPATH "${GMR_THIRDPARTY_PREFIX}/lib;${GMR_MUJOCO_PREFIX}/lib")
 set(CMAKE_INSTALL_RPATH "${GMR_THIRDPARTY_PREFIX}/lib;${GMR_MUJOCO_PREFIX}/lib")
 
+find_package(glog REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(qpOASES REQUIRED)
 find_package(pinocchio REQUIRED)
@@ -58,6 +59,7 @@ target_link_libraries(gmr_retarget_core PUBLIC
   qpOASES
   pinocchio::pinocchio
   mujoco::mujoco
+  glog::glog
 )
 
 add_executable(gmr_retarget_cli

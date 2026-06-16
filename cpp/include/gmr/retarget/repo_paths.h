@@ -9,7 +9,11 @@ namespace gmr {
 
     inline const std::unordered_map<std::string, std::string>& robotXmlMap() {
         static const std::unordered_map<std::string, std::string> kMap = {
-            {"unitree_g1", "assets/unitree_g1/g1_mocap_29dof.xml"},
+            // {"unitree_g1", "assets/unitree_g1/g1.xml"},
+            {"unitree_g1", "assets/unitree_g1/g1_collision_mocap_limits.xml"},
+
+            // {"unitree_g1", "assets/unitree_g1/g1_mocap_29dof.xml"},
+
             {"unitree_g1_with_hands", "assets/unitree_g1/g1_mocap_29dof_with_hands.xml"},
             {"unitree_h1", "assets/unitree_h1/h1.xml"},
             {"unitree_h1_2", "assets/unitree_h1_2/h1_2_handless.xml"},

@@ -61,10 +61,11 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--rate_limit",
-        default=False,
-        action="store_true",
-        help="Limit the rate of the retargeted robot motion to keep the same as the human motion.",
+        "--no-rate-limit",
+        dest="rate_limit",
+        default=True,
+        action="store_false",
+        help="Disable realtime playback limiting and render as fast as possible.",
     )
 
     args = parser.parse_args()

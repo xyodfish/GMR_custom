@@ -5,6 +5,8 @@
 #include <set>
 #include <utility>
 
+#include <glog/logging.h>
+
 namespace gmr {
 
     namespace {
@@ -105,10 +107,12 @@ namespace gmr {
         geomIdPairs_ = constructGeomIdPairs(model_, cfg_.selfCollisionPairs);
         jac1_.assign(static_cast<size_t>(3 * nv_), 0.0);
         jac2_.assign(static_cast<size_t>(3 * nv_), 0.0);
+
+        LOG(INFO) << "Constructing mujoco collision limit with " << geomIdPairs_.size() << " pairs";
     }
 
-void MujocoCollisionLimit::fillRows(mjData* data, double dt, double inequalityScale, Eigen::Ref<RowMajorMatrixXd> CI,
-                                      Eigen::Ref<Eigen::VectorXd> ciLb, Eigen::Ref<Eigen::VectorXd> ciUb, int rowOffset) const {
+    void MujocoCollisionLimit::fillRows(mjData* data, double dt, double inequalityScale, Eigen::Ref<RowMajorMatrixXd> CI,
+                                        Eigen::Ref<Eigen::VectorXd> ciLb, Eigen::Ref<Eigen::VectorXd> ciUb, int rowOffset) const {
         if (geomIdPairs_.empty() || dt <= 1e-15) {
             return;
         }

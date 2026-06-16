@@ -84,6 +84,10 @@ namespace gmr {
                     }
                 }
             }
+
+            if (cfg.enabled) {
+                std::cout << "Collision avoidance enabled" << std::endl;
+            }
             return cfg;
         }
 
@@ -118,7 +122,6 @@ namespace gmr {
         const auto colIt = root.find("collision_avoidance");
         if (colIt != root.end() && colIt->is_object()) {
             config.collisionAvoidance = parseCollisionAvoidance(*colIt);
-            std::cout << "Collision avoidance enabled" << std::endl;
         }
 
         return config;
