@@ -57,6 +57,15 @@ struct MjDataDeleter {
     }
 };
 
+struct MouseCameraState {
+    const mjModel* model = nullptr;
+    const mjvScene* scn  = nullptr;
+    mjvCamera* cam       = nullptr;
+    double lastX         = 0.0;
+    double lastY         = 0.0;
+    bool cameraTracking  = true;
+};
+
 struct RenderQposMap {
     std::vector<int> retargetIdxToRenderQposAdr;
     std::vector<double> scale;
@@ -87,6 +96,66 @@ bool hasArg(int argc, char** argv, const std::string& name) {
 
 bool hasFlag(int argc, char** argv, const std::string& flag) {
     return hasArg(argc, argv, flag);
+}
+
+MouseCameraState* getMouseCameraState(GLFWwindow* window) {
+    return static_cast<MouseCameraState*>(glfwGetWindowUserPointer(window));
+}
+
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    (void)button;
+    (void)mods;
+    MouseCameraState* state = getMouseCameraState(window);
+    if (state == nullptr) {
+        return;
+    }
+
+    glfwGetCursorPos(window, &state->lastX, &state->lastY);
+    if (action == GLFW_PRESS) {
+        state->cameraTracking = false;
+    }
+}
+
+void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+    MouseCameraState* state = getMouseCameraState(window);
+    if (state == nullptr || state->model == nullptr || state->scn == nullptr || state->cam == nullptr) {
+        return;
+    }
+
+    const bool left = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+    const bool right = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    if (!left && !right) {
+        state->lastX = xpos;
+        state->lastY = ypos;
+        return;
+    }
+
+    int width = 0;
+    int height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    if (height <= 0) {
+        return;
+    }
+
+    const double dx = xpos - state->lastX;
+    const double dy = ypos - state->lastY;
+    state->lastX = xpos;
+    state->lastY = ypos;
+
+    const bool shift = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    const int action = right ? (shift ? mjMOUSE_MOVE_H : mjMOUSE_MOVE_V) : (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V);
+    mjv_moveCamera(state->model, action, dx / static_cast<double>(height), dy / static_cast<double>(height), state->scn, state->cam);
+}
+
+void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    (void)xoffset;
+    MouseCameraState* state = getMouseCameraState(window);
+    if (state == nullptr || state->model == nullptr || state->scn == nullptr || state->cam == nullptr) {
+        return;
+    }
+
+    state->cameraTracking = false;
+    mjv_moveCamera(state->model, mjMOUSE_ZOOM, 0.0, -0.05 * yoffset, state->scn, state->cam);
 }
 
 template <typename T>
@@ -548,6 +617,15 @@ int main(int argc, char** argv) {
         mjv_makeScene(renderModel.get(), &scn, 5000);
         mjr_makeContext(renderModel.get(), &con, mjFONTSCALE_150);
 
+        MouseCameraState mouseCamera;
+        mouseCamera.model = renderModel.get();
+        mouseCamera.scn   = &scn;
+        mouseCamera.cam   = &cam;
+        glfwSetWindowUserPointer(window, &mouseCamera);
+        glfwSetMouseButtonCallback(window, mouseButtonCallback);
+        glfwSetCursorPosCallback(window, cursorPosCallback);
+        glfwSetScrollCallback(window, scrollCallback);
+
         const std::string cameraBodyName = resolveCameraBodyName(robot, ikConfig.robotRootName);
         int cameraBodyId                 = mj_name2id(renderModel.get(), mjOBJ_BODY, cameraBodyName.c_str());
         if (cameraBodyId < 0) {
@@ -635,12 +713,10 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (cameraBodyId >= 0) {
+            if (cameraBodyId >= 0 && mouseCamera.cameraTracking) {
                 cam.lookat[0] = renderData->xpos[3 * cameraBodyId + 0];
                 cam.lookat[1] = renderData->xpos[3 * cameraBodyId + 1];
                 cam.lookat[2] = renderData->xpos[3 * cameraBodyId + 2];
-                cam.distance  = cameraDistance;
-                cam.elevation = -10.0;
             }
 
             mjrRect viewport = {0, 0, 0, 0};

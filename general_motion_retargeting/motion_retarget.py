@@ -3,8 +3,10 @@ import mink
 import mujoco as mj
 import numpy as np
 import json
+from typing import Optional
 from scipy.spatial.transform import Rotation as R
 from .params import ROBOT_XML_DICT, IK_CONFIG_DICT
+from .contact_ground import ContactGroundPipeline
 from rich import print
 
 G1_SELF_COLLISION_PAIRS = [
@@ -101,6 +103,8 @@ class GeneralMotionRetargeting:
         damping: float=5e-1, # change from 1e-1 to 1e-2.
         verbose: bool=True,
         use_velocity_limit: bool=False,
+        contact_ground: Optional[bool] = None,
+        motion_fps: float = 30.0,
     ) -> None:
         self.verbose = verbose
 
@@ -213,6 +217,22 @@ class GeneralMotionRetargeting:
         
         self.ground_offset = 0.0
 
+        contact_ground_cfg = dict(ik_config.get("contact_ground", {}))
+        if contact_ground is not None:
+            contact_ground_cfg["enabled"] = bool(contact_ground)
+        self.contact_ground = ContactGroundPipeline(
+            contact_ground_cfg,
+            self.model,
+            fps=motion_fps,
+        )
+        if self.verbose and self.contact_ground.enabled:
+            print(
+                "[GMR] contact_ground enabled: "
+                f"feet={self.contact_ground.foot_bodies}, "
+                f"foot_geoms={len(self.contact_ground.foot_geom_ids)}, "
+                f"foot_bodies={len(self.contact_ground.foot_body_ids)}"
+            )
+
     def setup_retarget_configuration(self):
         self.configuration = mink.Configuration(self.model)
     
@@ -311,7 +331,9 @@ class GeneralMotionRetargeting:
         human_data = self.scale_human_data(human_data, self.human_root_name, self.human_scale_table)
         human_data = self.offset_human_data(human_data, self.pos_offsets1, self.rot_offsets1)
         human_data = self.apply_ground_offset(human_data)
-        if offset_to_ground:
+        if self.contact_ground.enabled:
+            human_data = self.contact_ground.process_human_frame(human_data)
+        elif offset_to_ground:
             human_data = self.offset_human_data_to_ground(human_data)
         self.scaled_human_data = human_data
 
@@ -372,9 +394,15 @@ class GeneralMotionRetargeting:
                 
                 next_error = self.error2()
                 num_iter += 1
-                
-            
+
+        if self.contact_ground.enabled:
+            self.contact_ground.fix_robot_penetration(self.model, self.configuration.data)
+
         return self.configuration.data.qpos.copy()
+
+    def set_motion_fps(self, fps: float) -> None:
+        if self.contact_ground.enabled:
+            self.contact_ground.set_fps(fps)
 
 
     def error1(self):

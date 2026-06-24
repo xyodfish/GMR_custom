@@ -12,7 +12,7 @@ Behavior:
 
 Example:
   ./scripts/bvh_to_retargeting_frame.sh ~/Downloads/lafan1/fight1_subject5.bvh
-  ./scripts/bvh_to_retargeting_frame.sh ./demo.bvh --format nokov --motion_fps 60 --out_dir ./tmp
+  ./scripts/bvh_to_retargeting_frame.sh ./demo.bvh --format nokov --motion_fps 30 --out_dir ./tmp
 EOF
 }
 

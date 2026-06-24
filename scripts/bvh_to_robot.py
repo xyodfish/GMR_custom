@@ -70,6 +70,13 @@ if __name__ == "__main__":
         default=30,
         type=int,
     )
+
+    parser.add_argument(
+        "--contact_ground",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable streaming contact/ground fix (default: IK config contact_ground.enabled).",
+    )
     
     args = parser.parse_args()
     
@@ -89,9 +96,12 @@ if __name__ == "__main__":
         src_human=f"bvh_{args.format}",
         tgt_robot=args.robot,
         actual_human_height=actual_human_height,
+        contact_ground=args.contact_ground,
+        motion_fps=args.motion_fps,
     )
 
     motion_fps = args.motion_fps
+    retargeter.set_motion_fps(motion_fps)
     
     robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
                                             motion_fps=motion_fps,
