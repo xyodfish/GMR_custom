@@ -44,7 +44,7 @@ Download/
 assets/body_models/
 
 # Media files
-*.mp4
+# *.mp4
 *.avi
 *.mov
 *.wmv
@@ -96,7 +96,7 @@ dist/
 .cache/
 *.cache
 
-videos/
+# videos/
 PythonClient/
 
 TEST_MOTIONS_MY.md

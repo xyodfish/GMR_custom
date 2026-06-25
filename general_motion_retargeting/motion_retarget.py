@@ -7,6 +7,7 @@ from typing import Optional
 from scipy.spatial.transform import Rotation as R
 from .params import ROBOT_XML_DICT, IK_CONFIG_DICT
 from .contact_ground import ContactGroundPipeline
+from .contact_ground_config import build_contact_ground_config
 from rich import print
 
 G1_SELF_COLLISION_PAIRS = [
@@ -217,9 +218,11 @@ class GeneralMotionRetargeting:
         
         self.ground_offset = 0.0
 
-        contact_ground_cfg = dict(ik_config.get("contact_ground", {}))
-        if contact_ground is not None:
-            contact_ground_cfg["enabled"] = bool(contact_ground)
+        contact_ground_cfg = build_contact_ground_config(
+            ik_config,
+            tgt_robot,
+            cli_override=contact_ground,
+        )
         self.contact_ground = ContactGroundPipeline(
             contact_ground_cfg,
             self.model,
@@ -228,10 +231,18 @@ class GeneralMotionRetargeting:
         if self.verbose and self.contact_ground.enabled:
             print(
                 "[GMR] contact_ground enabled: "
+                f"robot={tgt_robot}, "
                 f"feet={self.contact_ground.foot_bodies}, "
                 f"foot_geoms={len(self.contact_ground.foot_geom_ids)}, "
+                f"trunk_geoms={len(self.contact_ground.trunk_geom_ids)}, "
+                f"leg_geoms={len(self.contact_ground.leg_geom_ids)}, "
                 f"foot_bodies={len(self.contact_ground.foot_body_ids)}"
             )
+            if self.contact_ground.missing_bodies:
+                print(
+                    "[GMR] contact_ground warning: unresolved bodies "
+                    f"{self.contact_ground.missing_bodies}"
+                )
 
     def setup_retarget_configuration(self):
         self.configuration = mink.Configuration(self.model)

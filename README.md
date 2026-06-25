@@ -1,24 +1,4 @@
-# GMR: General Motion Retargeting
-
-  <a href="https://arxiv.org/abs/2505.02833">
-    <img src="https://img.shields.io/badge/paper-arXiv%3A2505.02833-b31b1b.svg" alt="arXiv Paper"/>
-  </a> <a href="https://arxiv.org/abs/2510.02252">
-    <img src="https://img.shields.io/badge/paper-arXiv%3A2510.02252-b31b1b.svg" alt="arXiv Paper"/>
-  </a> <a href="https://opensource.org/licenses/MIT">
-    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/>
-  </a> <a href="https://github.com/YanjieZe/GMR/releases">
-    <img src="https://img.shields.io/badge/version-0.2.0-blue.svg" alt="Version"/>
-  </a> <a href="https://x.com/ZeYanjie/status/1952446745696469334">
-    <img src="https://img.shields.io/badge/twitter-ZeYanjie-blue.svg" alt="Twitter"/>
-  </a> <a href="https://yanjieze.github.io/humanoid-foundation/#GMR">
-    <img src="https://img.shields.io/badge/blog-GMR-blue.svg" alt="Blog"/>
-  </a> <a href="https://www.bilibili.com/video/BV1p1nazeEzC/?share_source=copy_web&vd_source=c76e3ab14ac3f7219a9006b96b4b0f76">
-    <img src="https://img.shields.io/badge/tutorial-BILIBILI-blue.svg" alt="Blog"/>
-  </a>
-
-![Banner for GMR](./assets/GMR.png)
-
-![GMR](./assets/GMR_pipeline.png)
+# GMR_custom: General Motion Retargeting with constraints and implementation with cpp
 
 #### Key features of GMR:
 - Real-time high-quality retargeting, unlock the potential of real-time whole-body teleoperation, i.e., [TWIST](https://github.com/YanjieZe/TWIST).
@@ -29,6 +9,7 @@
 - Built on top of upstream GMR and extended with an experimental C++ retargeting pipeline under [`cpp/`](cpp/).
 - Decoupled C++ retarget backends and rendering targets (MuJoCo / ROS / custom viewers).
 - Reuse of existing GMR IK configs in `general_motion_retargeting/ik_configs/*.json` to keep Python/C++ setup aligned.
+- Add self collision constraints and optimizaiton on foot slide problem with ground contact constraints. 
 
 > [!NOTE]
 > If you want this repo to support a new robot or a new human motion data format, send the robot files (`.xml`, `.urdf`, and meshes) / human motion data to <a href="mailto:lastyanjieze@gmail.com">Yanjie Ze</a> or create an issue, we will support it as soon as possible. And please make sure the robot files you sent can be open-sourced in this repo.
@@ -63,95 +44,6 @@ This repo is licensed under the [MIT License](LICENSE).
 - **2025-08-07:** GMR now supports [Galexea R1 Pro](https://galaxea-dynamics.com/) (this is a wheeled humanoid robot!) and [KUAVO](https://www.kuavo.ai/), the 7th and 8th humanoid robots in the repo.
 - **2025-08-06:** GMR now supports [HighTorque Hi](https://www.hightorquerobotics.com/hi/), the 6th humanoid robot in the repo.
 - **2025-08-04:** Initial release of GMR. Check our [twitter post](https://x.com/ZeYanjie/status/1952446745696469334).
-
-## Demos
-
-<table>
-  <tr>
-    <td align="center" width="20%">
-      <b>Demo 1</b><br>
-      Retargeting LAFAN1 dancing motion to 5 robots.<br>
-      <video src="https://github.com/user-attachments/assets/23566fa5-6335-46b9-957b-4b26aed11b9e" width="200" controls></video>
-    </td>
-    <td align="center" width="20%">
-      <b>Demo 2</b><br>
-      Galexea R1 Pro robot (view 1).<br>
-      <video src="https://github.com/user-attachments/assets/903ed0b0-0ac5-4226-8f82-5a88631e9b7c" width="200" controls></video>
-    </td>
-    <td align="center" width="20%">
-      <b>Demo 3</b><br>
-      Galexea R1 Pro robot (view 2).<br>
-      <video src="https://github.com/user-attachments/assets/deea0e64-f1c6-41bc-8661-351682006d5d" width="200" controls></video>
-    </td>
-    <td align="center" width="20%">
-      <b>Demo 4</b><br>
-      Switching robots by changing one argument.<br>
-      <video src="https://github.com/user-attachments/assets/03f10902-c541-40b1-8104-715a5759fd5e" width="200" controls></video>
-    </td>
-    <td align="center" width="20%">
-      <b>Demo 5</b><br>
-      HighTorque robot doing a twist dance.<br>
-      <video src="https://github.com/user-attachments/assets/1d3e663b-f29e-41b1-8e15-5c0deb6a4a5c" width="200" controls></video>
-    </td>
-  </tr>
-
-  <tr>
-    <td align="center">
-      <b>Demo 6</b><br>
-      Kuavo robot picking up a box.<br>
-      <video src="https://github.com/user-attachments/assets/02fc8f41-c363-484b-a329-4f4e83ed5b80" width="200" controls></video>
-    </td>
-    <td align="center">
-      <b>Demo 7</b><br>
-      Unitree H1 robot doing a ChaCha dance.<br>
-      <video src="https://github.com/user-attachments/assets/28ee6f0f-be30-42bb-8543-cf1152d97724" width="200" controls></video>
-    </td>
-    <td align="center">
-      <b>Demo 8</b><br>
-      Booster T1 robot jumping (view 1).<br>
-      <video src="https://github.com/user-attachments/assets/2c75a146-e28f-4327-930f-5281bfc2ca9c" width="200" controls></video>
-    </td>
-    <td align="center">
-      <b>Demo 9</b><br>
-      Booster T1 robot jumping (view 2).<br>
-      <video src="https://github.com/user-attachments/assets/ff10c7ef-4357-4789-9219-23c6db8dba6d" width="200" controls></video>
-    </td>
-    <td align="center">
-      <b>Demo 10</b><br>
-      Unitree H1-2 robot jumping.<br>
-      <video src="https://github.com/user-attachments/assets/2382d8ce-7902-432f-ab45-348a11eeb312" width="200" controls></video>
-    </td>
-  </tr>
-
-  <tr>
-    <td align="center">
-      <b>Demo 11</b><br>
-      PND Adam Lite robot.<br>
-      <video src="https://github.com/user-attachments/assets/a8ef1409-88f1-4393-9cd0-d2b14216d2a4" width="200" controls></video>
-    </td>
-    <td align="center">
-      <b>Demo 12</b><br>
-      Tienkung robot walking.<br>
-      <video src="https://github.com/user-attachments/assets/7a775ecc-4254-450c-a3eb-49e843b8e331" width="200" controls></video>
-    </td>
-    <td align="center">
-      <b>Demo 13</b><br>
-      Extracting human pose (GVHMR + GMR).<br>
-      <a href="https://www.bilibili.com/video/BV1Tnpmz9EaE">▶ Watch on Bilibili</a>
-    </td>
-    <td align="center">
-      <b>Demo 14</b><br>
-      PAL Robotics’ Talos robot fighting.<br>
-      <video src="https://github.com/user-attachments/assets/3ec0bf80-80c1-4181-a623-dc2b072c2ca2" width="200" controls></video>
-    </td>
-    <td align="center">
-      <b>Demo 15</b><br>
-      (Optional placeholder if you add a new one later!)<br>
-      <i>Coming soon...</i>
-    </td>
-  </tr>
-</table>
-
 
 ## Supported Robots and Data Formats
 
@@ -402,6 +294,7 @@ python scripts/bvh_to_robot.py --bvh_file <path_to_bvh_data> --robot <path_to_ro
 By default you should see the visualization of the retargeted robot motion in a mujoco window. 
 - `--rate_limit` is used to limit the rate of the retargeted robot motion to keep the same as the human motion. If you want it as fast as possible, remove `--rate_limit`.
 - `--format` is used to specify the format of the BVH data. Supported formats are `lafan1` and `nokov`.
+- Optional contact/ground penetration fix: `--contact_ground` / `--no-contact_ground`. Per-robot body presets and tuning are documented in [`docs/contact_ground.md`](docs/contact_ground.md). Compare OFF vs ON videos: `scripts/bvh_compare_contact_ground.py`.
 
 
 Retarget a folder of motions:

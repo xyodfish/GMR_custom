@@ -12,6 +12,8 @@ from typing import Any
 import mujoco as mj
 import numpy as np
 
+from .contact_ground_config import validate_contact_ground_config
+
 
 def _as_float(value: Any, default: float) -> float:
     try:
@@ -230,6 +232,70 @@ def measure_robot_foot_min_z(
     return min_z
 
 
+def measure_ground_penetration_depth(
+    model: mj.MjModel,
+    data: mj.MjData,
+    geom_ids: list[int],
+    floor_geom_name: str = "floor",
+    penetration_margin: float = 0.01,
+) -> float:
+    """Return how much root Z must be raised so all geoms clear the ground by margin."""
+    if not geom_ids:
+        return 0.0
+
+    mj.mj_forward(model, data)
+    floor_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, floor_geom_name)
+    if floor_id >= 0:
+        fromto = np.zeros(6, dtype=np.float64)
+        max_depth = 0.0
+        for geom_id in geom_ids:
+            dist = mj.mj_geomDistance(
+                model,
+                data,
+                geom_id,
+                floor_id,
+                10.0,
+                fromto,
+            )
+            if dist < penetration_margin:
+                max_depth = max(max_depth, penetration_margin - float(dist))
+        return max_depth
+
+    min_z = min(float(data.geom_xpos[geom_id, 2]) for geom_id in geom_ids)
+    return max(0.0, penetration_margin - min_z)
+
+
+def fix_robot_ground_penetration(
+    model: mj.MjModel,
+    data: mj.MjData,
+    geom_ids: list[int],
+    floor_geom_name: str = "floor",
+    penetration_margin: float = 0.01,
+    max_iterations: int = 3,
+) -> float:
+    """Lift free-flyer root Z until monitored geoms clear the ground plane."""
+    if model.nq < 3 or not geom_ids:
+        return 0.0
+
+    total_lift = 0.0
+    for _ in range(max(1, int(max_iterations))):
+        depth = measure_ground_penetration_depth(
+            model,
+            data,
+            geom_ids,
+            floor_geom_name=floor_geom_name,
+            penetration_margin=penetration_margin,
+        )
+        if depth <= 1e-9:
+            break
+        data.qpos[2] += depth
+        total_lift += depth
+
+    if total_lift > 0.0:
+        mj.mj_forward(model, data)
+    return total_lift
+
+
 def fix_robot_foot_penetration(
     model: mj.MjModel,
     data: mj.MjData,
@@ -239,26 +305,15 @@ def fix_robot_foot_penetration(
     penetration_margin: float = 0.01,
     max_iterations: int = 3,
 ) -> float:
-    """Lift free-flyer root Z until foot geoms/bodies clear the ground plane."""
-    if model.nq < 3:
-        return 0.0
-    if not foot_geom_ids and not foot_body_ids:
-        return 0.0
-
-    total_lift = 0.0
-    foot_body_ids = foot_body_ids or []
-
-    for _ in range(max(1, int(max_iterations))):
-        min_z = measure_robot_foot_min_z(model, data, foot_geom_ids, foot_body_ids)
-        if not np.isfinite(min_z) or min_z >= penetration_margin:
-            break
-        lift = penetration_margin - min_z
-        data.qpos[2] += lift
-        total_lift += lift
-
-    if total_lift > 0.0:
-        mj.mj_forward(model, data)
-    return total_lift
+    """Backward-compatible wrapper around fix_robot_ground_penetration."""
+    return fix_robot_ground_penetration(
+        model,
+        data,
+        foot_geom_ids,
+        floor_geom_name=floor_geom_name,
+        penetration_margin=penetration_margin,
+        max_iterations=max_iterations,
+    )
 
 
 class ContactGroundPipeline:
@@ -301,12 +356,60 @@ class ContactGroundPipeline:
                 ["left_ankle_roll_link", "right_ankle_roll_link"],
             )
         )
+        robot_trunk_bodies = list(
+            cfg.get(
+                "robot_trunk_bodies",
+                [
+                    "pelvis",
+                    "waist_yaw_link",
+                    "waist_roll_link",
+                    "waist_pitch_link",
+                    "torso_link",
+                ],
+            )
+        )
+        robot_leg_bodies = list(
+            cfg.get(
+                "robot_leg_bodies",
+                [
+                    "left_hip_pitch_link",
+                    "left_hip_roll_link",
+                    "left_hip_yaw_link",
+                    "left_knee_link",
+                    "right_hip_pitch_link",
+                    "right_hip_roll_link",
+                    "right_hip_yaw_link",
+                    "right_knee_link",
+                ],
+            )
+        )
+        self.human_root_name = str(cfg.get("human_root_name", "Hips"))
+        self.lying_hip_height_threshold = _as_float(
+            cfg.get("lying_hip_height_threshold", 0.35),
+            0.35,
+        )
+        self.lying_penetration_margin = _as_float(
+            cfg.get("lying_penetration_margin", 0.02),
+            0.02,
+        )
         self.foot_body_ids = resolve_foot_body_ids(model, robot_foot_bodies)
         subtree_body_ids = collect_foot_body_subtree(model, robot_foot_bodies)
         subtree_geom_ids = collect_geom_ids_for_bodies(model, subtree_body_ids)
+        trunk_body_ids = resolve_foot_body_ids(model, robot_trunk_bodies)
+        trunk_geom_ids = collect_geom_ids_for_bodies(model, trunk_body_ids)
+        leg_body_ids = resolve_foot_body_ids(model, robot_leg_bodies)
+        leg_geom_ids = collect_geom_ids_for_bodies(model, leg_body_ids)
         self.foot_geom_ids = sorted(set(explicit_geom_ids + subtree_geom_ids))
+        self.trunk_geom_ids = trunk_geom_ids
+        self.leg_geom_ids = leg_geom_ids
+        self.ground_geom_ids = sorted(set(self.foot_geom_ids + self.trunk_geom_ids))
+        self.lying_ground_geom_ids = sorted(
+            set(self.ground_geom_ids + self.leg_geom_ids)
+        )
         self.last_contacts: dict[str, bool] = {}
+        self.last_human_hip_z = np.inf
         self.last_root_lift = 0.0
+        self.missing_bodies = validate_contact_ground_config(cfg, model)
 
     def set_fps(self, fps: float) -> None:
         if fps > 0.0:
@@ -319,22 +422,30 @@ class ContactGroundPipeline:
 
         contacts = self.contact_detector.update(foot_positions)
         self.last_contacts = contacts
+        if self.human_root_name in human_data:
+            hip_pos = np.asarray(human_data[self.human_root_name][0], dtype=np.float64).reshape(3)
+            self.last_human_hip_z = float(hip_pos[2])
 
         aligned = self.ground_aligner.update(human_data, contacts, foot_positions)
         if self.enable_foot_lock:
             aligned = self.foot_locker.apply(aligned, contacts)
         return aligned
 
+    def _penetration_targets(self) -> tuple[list[int], float]:
+        if self.last_human_hip_z <= self.lying_hip_height_threshold:
+            return self.lying_ground_geom_ids, self.lying_penetration_margin
+        return self.ground_geom_ids, self.penetration_margin
+
     def fix_robot_penetration(self, model: mj.MjModel, data: mj.MjData) -> float:
         if not self.fix_penetration:
             return 0.0
-        self.last_root_lift = fix_robot_foot_penetration(
+        geom_ids, margin = self._penetration_targets()
+        self.last_root_lift = fix_robot_ground_penetration(
             model,
             data,
-            self.foot_geom_ids,
-            foot_body_ids=self.foot_body_ids,
+            geom_ids,
             floor_geom_name=self.floor_geom_name,
-            penetration_margin=self.penetration_margin,
+            penetration_margin=margin,
             max_iterations=self.penetration_max_iterations,
         )
         return self.last_root_lift

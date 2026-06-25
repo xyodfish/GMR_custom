@@ -475,5 +475,8 @@
                 0.5
             ]
         ]
+    },
+    "contact_ground": {
+        "enabled": false
     }
 }

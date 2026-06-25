@@ -607,24 +607,6 @@
         ]
     },
     "contact_ground": {
-        "enabled": true,
-        "foot_bodies": ["LeftFootMod", "RightFootMod"],
-        "vel_threshold": 0.5,
-        "height_threshold": 0.08,
-        "height_off_threshold": 0.12,
-        "vel_window": 6,
-        "ground_z": 0.0,
-        "ground_margin": 0.02,
-        "lpf_alpha": 0.3,
-        "enable_foot_lock": true,
-        "foot_lock_ema_alpha": 0.05,
-        "fix_robot_penetration": true,
-        "penetration_margin": 0.01,
-        "penetration_max_iterations": 3,
-        "airborne_height_threshold": 0.15,
-        "airborne_offset_decay": 0.85,
-        "floor_geom_name": "floor",
-        "foot_collision_geoms": [],
-        "robot_foot_bodies": ["left_ankle_roll_link", "right_ankle_roll_link"]
+        "enabled": true
     }
 }
