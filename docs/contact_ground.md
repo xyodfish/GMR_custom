@@ -132,13 +132,16 @@ G1 使用共享 preset 启用：
 | `enable_foot_lock` | `true` | 接触期间启用 EMA 脚锁定 |
 | `fix_robot_penetration` | `true` | IK 后抬高 root |
 | `penetration_margin` | `0.01` | 站立 / 正常姿态的安全距离（m） |
-| `lying_hip_height_threshold` | `0.35` | 人体髋 Z 低于此值 → 进入躺姿模式 |
-| `lying_penetration_margin` | `0.02` | 躺姿模式安全距离（m） |
+| `lying_hip_height_threshold` | `0.45` | 人体髋 Z 低于此值 → 低姿态模式 |
+| `low_pose_foot_height_threshold` | `0.20` | 脚较低且髋部不高时也可进入低姿态模式 |
+| `low_pose_max_hip_height` | `0.65` | 脚触地时允许进入低姿态的最大髋高 |
+| `lying_penetration_margin` | `0.02` | 低姿态模式安全距离（m） |
 | `penetration_max_iterations` | `5` | 每帧 root 抬升最大迭代次数 |
 | `floor_geom_name` | `"floor"` | MuJoCo 地面 geom 名称 |
 | `robot_foot_bodies` | 按机器人 | 脚部 link 根节点；会包含其子树 geom |
 | `robot_trunk_bodies` | 按机器人 | 骨盆 / 躯干 link，用于背部穿透 |
-| `robot_leg_bodies` | 按机器人 | 髋 / 膝 link，仅在躺姿模式使用 |
+| `robot_leg_bodies` | 按机器人 | 髋 / 膝 link，仅在低姿态模式使用 |
+| `robot_arm_bodies` | 按机器人（G1 已配置） | 肩 / 肘 / 腕 / 手，仅在低姿态模式使用 |
 | `foot_collision_geoms` | `[]` | 可选：显式 geom 名（为空则用 body 子树） |
 
 ## 各机器人 preset

@@ -79,6 +79,8 @@ namespace gmr {
             if (geomIds.empty()) {
                 return 0.0;
             }
+
+            // 把当前 qpos 转成最新的 MuJoCo 世界几何状态；
             mj_forward(model, data);
             if (floorGeomId < 0) {
                 double minZ = std::numeric_limits<double>::infinity();
@@ -107,6 +109,7 @@ namespace gmr {
             double totalLift     = 0.0;
             const int iterations = std::max(1, maxIterations);
             for (int iter = 0; iter < iterations; ++iter) {
+                //为了让所有被监控 geom 距离地面至少 penetrationMargin，需要把 root z 抬高多少
                 const double depth = measureGroundPenetrationDepth(model, data, geomIds, floorGeomId, penetrationMargin);
                 if (depth <= 1e-9) {
                     break;
@@ -136,14 +139,16 @@ namespace gmr {
         const std::vector<int> subtreeBodyIds = collectFootBodySubtree(model_, config_.robotFootBodies);
         const std::vector<int> trunkBodyIds   = resolveBodyIds(model_, config_.robotTrunkBodies);
         const std::vector<int> legBodyIds     = resolveBodyIds(model_, config_.robotLegBodies);
+        const std::vector<int> armBodyIds     = resolveBodyIds(model_, config_.robotArmBodies);
 
         const std::vector<int> explicitGeomIds = resolveExplicitFootGeomIds(model_, config_.footCollisionGeoms);
         const std::vector<int> subtreeGeomIds  = collectGeomIdsForBodies(model_, subtreeBodyIds);
         footGeomIds_                           = mergeUnique(explicitGeomIds, subtreeGeomIds);
         trunkGeomIds_                          = collectGeomIdsForBodies(model_, trunkBodyIds);
         legGeomIds_                            = collectGeomIdsForBodies(model_, legBodyIds);
+        armGeomIds_                            = collectGeomIdsForBodies(model_, armBodyIds);
         groundGeomIds_                         = mergeUnique(footGeomIds_, trunkGeomIds_);
-        lyingGroundGeomIds_                    = mergeUnique(groundGeomIds_, legGeomIds_);
+        lyingGroundGeomIds_                    = mergeUnique(mergeUnique(groundGeomIds_, legGeomIds_), armGeomIds_);
         floorGeomId_                           = mj_name2id(model_, mjOBJ_GEOM, config_.floorGeomName.c_str());
         footPosBuf_.clear();
     }
@@ -170,7 +175,6 @@ namespace gmr {
             return humanData;
         }
 
-        // 把来的数据加入footPos队列 保留长度为 velWindow
         const int velWindow = std::max(2, config_.velWindow);
         footPosBuf_.push_back(footPositions);
         while (static_cast<int>(footPosBuf_.size()) > velWindow) {
@@ -181,10 +185,8 @@ namespace gmr {
         const double dt = std::max((static_cast<double>(footPosBuf_.size()) - 1.0) / fps_, 1.0 / fps_);
         for (const auto& [name, pos] : footPositions) {
             const bool wasContact = lastContacts_.count(name) > 0 && lastContacts_.at(name);
-
-            //已经接触的脚，用更高一点的离地阈值，避免 contact 状态频繁抖动。
-            const double zLimit = wasContact ? config_.heightOffThreshold : config_.heightThreshold;
-            const bool zOk      = pos.z() <= zLimit;
+            const double zLimit   = wasContact ? config_.heightOffThreshold : config_.heightThreshold;
+            const bool zOk        = pos.z() <= zLimit;
 
             bool velOk = true;
             if (footPosBuf_.size() >= 2) {
@@ -195,8 +197,11 @@ namespace gmr {
             contacts[name] = zOk && velOk;
         }
         lastContacts_ = contacts;
+        lastMinFootZ_ = std::numeric_limits<double>::infinity();
+        for (const auto& [_, pos] : footPositions) {
+            lastMinFootZ_ = std::min(lastMinFootZ_, pos.z());
+        }
 
-        // 记录人 hip 高度
         auto hipIt = humanData.find(config_.humanRootName);
         if (hipIt != humanData.end()) {
             lastHumanHipZ_ = hipIt->second.position.z();
@@ -206,9 +211,6 @@ namespace gmr {
         for (const auto& [_, pos] : footPositions) {
             maxFootZ = std::max(maxFootZ, pos.z());
         }
-
-        // 如果双脚都明显离地，逐渐衰减 groundAlignOffset_
-        // 人在跳起 / 腾空时，不强行继续把脚压到地面，避免错误地拉低整个人体目标
         if (maxFootZ > config_.airborneHeightThreshold) {
             groundAlignOffset_ *= config_.airborneOffsetDecay;
         }
@@ -224,9 +226,6 @@ namespace gmr {
                 activeZ.push_back(it->second.position.z());
             }
         }
-
-        // 找到 activeZ中的z最低的脚，把它对齐到 groundZ + groundMargin 附近
-        // 使用低通滤波避免跳变抖动
         if (!activeZ.empty()) {
             const double targetZ   = config_.groundZ + config_.groundMargin;
             const double rawOffset = *std::min_element(activeZ.begin(), activeZ.end()) - targetZ;
@@ -234,9 +233,6 @@ namespace gmr {
             groundAlignOffset_     = alpha * rawOffset + (1.0 - alpha) * groundAlignOffset_;
         }
 
-        // 把整个人体 frame 沿 z 方向整体平移 offsetVec
-        // 接触中的脚会被锁在一个 EMA 平滑的位置上，减少 foot sliding。
-        // 脚一旦不再 contact，就从 lockedFeet_ 里删掉。
         const Eigen::Vector3d offsetVec(0.0, 0.0, groundAlignOffset_);
         HumanFrame aligned = humanData;
         for (auto& [bodyName, state] : aligned) {
@@ -256,15 +252,31 @@ namespace gmr {
         return aligned;
     }
 
+    bool ContactGroundPipeline::isLowPose() const {
+        // hip 很低
+        if (lastHumanHipZ_ <= config_.lyingHipHeightThreshold) {
+            return true;
+        }
+
+        // 脚比较低，同时 hip 也不高 能覆盖 蹲下 跪地 低位等动作
+        if (lastMinFootZ_ <= config_.lowPoseFootHeightThreshold) {
+            return lastHumanHipZ_ <= config_.lowPoseMaxHipHeight;
+        }
+        return false;
+    }
+
+    // IK / retarget 解完机器人姿态之后，检查机器人指定 geom 是否穿地；
+    // 如果穿地，就直接把机器人 root 的 z 方向 qpos[2] 抬高一点。
+    // 正常姿态：检查脚部 + 躯干 geom 是否穿地； 低姿态：额外检查腿部 + 手臂 geom 是否穿地。
     double ContactGroundPipeline::fixRobotPenetration(mjModel* model, mjData* data) {
         lastRootLift_ = 0.0;
         if (!config_.enabled || !config_.fixRobotPenetration || model == nullptr || data == nullptr) {
             return 0.0;
         }
 
-        const bool lying                = lastHumanHipZ_ <= config_.lyingHipHeightThreshold;
-        const std::vector<int>& geomIds = lying ? lyingGroundGeomIds_ : groundGeomIds_;
-        const double margin             = lying ? config_.lyingPenetrationMargin : config_.penetrationMargin;
+        const bool lowPose              = isLowPose();
+        const std::vector<int>& geomIds = lowPose ? lyingGroundGeomIds_ : groundGeomIds_;
+        const double margin             = lowPose ? config_.lyingPenetrationMargin : config_.penetrationMargin;
         lastRootLift_ = fixRobotGroundPenetration(model, data, geomIds, floorGeomId_, margin, config_.penetrationMaxIterations);
         return lastRootLift_;
     }

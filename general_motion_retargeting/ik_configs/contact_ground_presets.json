@@ -14,7 +14,9 @@
         "foot_lock_ema_alpha": 0.05,
         "fix_robot_penetration": true,
         "penetration_margin": 0.01,
-        "lying_hip_height_threshold": 0.35,
+        "lying_hip_height_threshold": 0.45,
+        "low_pose_foot_height_threshold": 0.20,
+        "low_pose_max_hip_height": 0.65,
         "lying_penetration_margin": 0.02,
         "penetration_max_iterations": 5,
         "airborne_height_threshold": 0.15,
@@ -44,6 +46,24 @@
             "right_hip_roll_link",
             "right_hip_yaw_link",
             "right_knee_link"
+        ],
+        "robot_arm_bodies": [
+            "left_shoulder_pitch_link",
+            "left_shoulder_roll_link",
+            "left_shoulder_yaw_link",
+            "left_elbow_link",
+            "left_wrist_roll_link",
+            "left_wrist_pitch_link",
+            "left_wrist_yaw_link",
+            "left_rubber_hand",
+            "right_shoulder_pitch_link",
+            "right_shoulder_roll_link",
+            "right_shoulder_yaw_link",
+            "right_elbow_link",
+            "right_wrist_roll_link",
+            "right_wrist_pitch_link",
+            "right_wrist_yaw_link",
+            "right_rubber_hand"
         ]
     },
     "unitree_g1_with_hands": {

@@ -28,7 +28,9 @@ namespace gmr {
         double footLockEmaAlpha = 0.05;
         bool fixRobotPenetration = true;
         double penetrationMargin = 0.01;
-        double lyingHipHeightThreshold = 0.35;
+        double lyingHipHeightThreshold = 0.45;
+        double lowPoseFootHeightThreshold = 0.20;
+        double lowPoseMaxHipHeight = 0.65;
         double lyingPenetrationMargin = 0.02;
         int penetrationMaxIterations = 5;
         double airborneHeightThreshold = 0.15;
@@ -38,6 +40,7 @@ namespace gmr {
         std::vector<std::string> robotFootBodies;
         std::vector<std::string> robotTrunkBodies;
         std::vector<std::string> robotLegBodies;
+        std::vector<std::string> robotArmBodies;
     };
 
     class ContactGroundPipeline {
@@ -60,6 +63,7 @@ namespace gmr {
         std::vector<int> footGeomIds_;
         std::vector<int> trunkGeomIds_;
         std::vector<int> legGeomIds_;
+        std::vector<int> armGeomIds_;
         std::vector<int> groundGeomIds_;
         std::vector<int> lyingGroundGeomIds_;
         int floorGeomId_ = -1;
@@ -69,7 +73,10 @@ namespace gmr {
         std::unordered_map<std::string, Eigen::Vector3d> lockedFeet_;
         double groundAlignOffset_ = 0.0;
         double lastHumanHipZ_ = std::numeric_limits<double>::infinity();
+        double lastMinFootZ_ = std::numeric_limits<double>::infinity();
         double lastRootLift_ = 0.0;
+
+        bool isLowPose() const;
     };
 
 }  // namespace gmr

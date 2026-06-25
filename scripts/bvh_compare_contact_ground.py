@@ -242,7 +242,7 @@ def main() -> None:
         motion_fps=args.motion_fps,
         video_width=args.video_width,
         video_height=args.video_height,
-        overlay_label="contact_ground: OFF",
+        overlay_label="contact_fix_off",
     )
     render_qpos_video(
         qpos_on,
@@ -251,7 +251,7 @@ def main() -> None:
         motion_fps=args.motion_fps,
         video_width=args.video_width,
         video_height=args.video_height,
-        overlay_label="contact_ground: ON",
+        overlay_label="contact_fix_on",
     )
 
     if args.side_by_side:

@@ -99,6 +99,8 @@ namespace gmr {
             cfg.fixRobotPenetration = j.value("fix_robot_penetration", cfg.fixRobotPenetration);
             cfg.penetrationMargin = j.value("penetration_margin", cfg.penetrationMargin);
             cfg.lyingHipHeightThreshold = j.value("lying_hip_height_threshold", cfg.lyingHipHeightThreshold);
+            cfg.lowPoseFootHeightThreshold = j.value("low_pose_foot_height_threshold", cfg.lowPoseFootHeightThreshold);
+            cfg.lowPoseMaxHipHeight = j.value("low_pose_max_hip_height", cfg.lowPoseMaxHipHeight);
             cfg.lyingPenetrationMargin = j.value("lying_penetration_margin", cfg.lyingPenetrationMargin);
             cfg.penetrationMaxIterations = j.value("penetration_max_iterations", cfg.penetrationMaxIterations);
             cfg.airborneHeightThreshold = j.value("airborne_height_threshold", cfg.airborneHeightThreshold);
@@ -108,6 +110,7 @@ namespace gmr {
             cfg.robotFootBodies = readStringArray(j, "robot_foot_bodies");
             cfg.robotTrunkBodies = readStringArray(j, "robot_trunk_bodies");
             cfg.robotLegBodies = readStringArray(j, "robot_leg_bodies");
+            cfg.robotArmBodies = readStringArray(j, "robot_arm_bodies");
             return cfg;
         }
 

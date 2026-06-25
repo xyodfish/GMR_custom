@@ -82,7 +82,7 @@ def validate_contact_ground_config(
     model: mj.MjModel,
 ) -> dict[str, list[str]]:
     missing: dict[str, list[str]] = {}
-    for key in ("robot_foot_bodies", "robot_trunk_bodies", "robot_leg_bodies"):
+    for key in ("robot_foot_bodies", "robot_trunk_bodies", "robot_leg_bodies", "robot_arm_bodies"):
         names = list(cfg.get(key, []))
         bad = [
             name

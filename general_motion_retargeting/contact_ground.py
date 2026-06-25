@@ -383,10 +383,19 @@ class ContactGroundPipeline:
                 ],
             )
         )
+        robot_arm_bodies = list(cfg.get("robot_arm_bodies", []))
         self.human_root_name = str(cfg.get("human_root_name", "Hips"))
         self.lying_hip_height_threshold = _as_float(
-            cfg.get("lying_hip_height_threshold", 0.35),
-            0.35,
+            cfg.get("lying_hip_height_threshold", 0.45),
+            0.45,
+        )
+        self.low_pose_foot_height_threshold = _as_float(
+            cfg.get("low_pose_foot_height_threshold", 0.20),
+            0.20,
+        )
+        self.low_pose_max_hip_height = _as_float(
+            cfg.get("low_pose_max_hip_height", 0.65),
+            0.65,
         )
         self.lying_penetration_margin = _as_float(
             cfg.get("lying_penetration_margin", 0.02),
@@ -399,15 +408,19 @@ class ContactGroundPipeline:
         trunk_geom_ids = collect_geom_ids_for_bodies(model, trunk_body_ids)
         leg_body_ids = resolve_foot_body_ids(model, robot_leg_bodies)
         leg_geom_ids = collect_geom_ids_for_bodies(model, leg_body_ids)
+        arm_body_ids = resolve_foot_body_ids(model, robot_arm_bodies)
+        arm_geom_ids = collect_geom_ids_for_bodies(model, arm_body_ids)
         self.foot_geom_ids = sorted(set(explicit_geom_ids + subtree_geom_ids))
         self.trunk_geom_ids = trunk_geom_ids
         self.leg_geom_ids = leg_geom_ids
+        self.arm_geom_ids = arm_geom_ids
         self.ground_geom_ids = sorted(set(self.foot_geom_ids + self.trunk_geom_ids))
         self.lying_ground_geom_ids = sorted(
-            set(self.ground_geom_ids + self.leg_geom_ids)
+            set(self.ground_geom_ids + self.leg_geom_ids + self.arm_geom_ids)
         )
         self.last_contacts: dict[str, bool] = {}
         self.last_human_hip_z = np.inf
+        self.last_min_foot_z = np.inf
         self.last_root_lift = 0.0
         self.missing_bodies = validate_contact_ground_config(cfg, model)
 
@@ -422,6 +435,7 @@ class ContactGroundPipeline:
 
         contacts = self.contact_detector.update(foot_positions)
         self.last_contacts = contacts
+        self.last_min_foot_z = min(float(pos[2]) for pos in foot_positions.values())
         if self.human_root_name in human_data:
             hip_pos = np.asarray(human_data[self.human_root_name][0], dtype=np.float64).reshape(3)
             self.last_human_hip_z = float(hip_pos[2])
@@ -431,8 +445,15 @@ class ContactGroundPipeline:
             aligned = self.foot_locker.apply(aligned, contacts)
         return aligned
 
-    def _penetration_targets(self) -> tuple[list[int], float]:
+    def _is_low_pose(self) -> bool:
         if self.last_human_hip_z <= self.lying_hip_height_threshold:
+            return True
+        if self.last_min_foot_z <= self.low_pose_foot_height_threshold:
+            return self.last_human_hip_z <= self.low_pose_max_hip_height
+        return False
+
+    def _penetration_targets(self) -> tuple[list[int], float]:
+        if self._is_low_pose():
             return self.lying_ground_geom_ids, self.lying_penetration_margin
         return self.ground_geom_ids, self.penetration_margin
 
