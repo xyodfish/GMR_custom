@@ -39,6 +39,8 @@ add_library(gmr_retarget_core STATIC
   src/solver/qp_solver.cpp
   src/solver/hqp_solver.cpp
   src/retarget/ik_config.cpp
+  src/retarget/contact_ground_config.cpp
+  src/retarget/contact_ground.cpp
   src/retarget/mujoco_collision_limit.cpp
   src/retarget/human_frame_io.cpp
   src/retarget/retargeter.cpp

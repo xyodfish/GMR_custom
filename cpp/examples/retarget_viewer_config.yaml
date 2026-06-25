@@ -17,5 +17,5 @@ backend: mujoco_se3 # pin_ik / pin_ik_jacobian_legacy / mujoco_se3 / mujoco_jaco
 
 transparent_robot: 0
 show_human_overlay: true
-window_width: 1280
-window_height: 720
+window_width: 2080
+window_height: 1170

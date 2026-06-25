@@ -16,6 +16,7 @@
 #include <pinocchio/parsers/urdf.hpp>
 
 #include "gmr/solver/qp_solver.h"
+#include "gmr/retarget/contact_ground.h"
 #include "retargeter_internal_utils.h"
 
 namespace gmr {
@@ -162,6 +163,8 @@ namespace gmr {
         Eigen::VectorXd qposPin;
         Eigen::VectorXd qvel;
 
+        std::unique_ptr<ContactGroundPipeline> contactGround;
+
         Impl(const std::filesystem::path& robotModelPath, IkConfig ikConfigIn, RetargetOptions optionsIn)
             : ikConfig(std::move(ikConfigIn)), options(std::move(optionsIn)) {
             const std::string extension = robotModelPath.extension().string();
@@ -224,6 +227,10 @@ namespace gmr {
                 table1RotOffsets[task.humanBodyName] = task.rotOffset;
             }
 
+            if (options.contactGround.enabled) {
+                contactGround = std::make_unique<ContactGroundPipeline>(options.contactGround, nullptr, options.motionFps);
+            }
+
             syncDataFromQpos();
         }
 
@@ -256,8 +263,16 @@ namespace gmr {
         }
 
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround) const {
+            const bool useOffsetToGround = offsetToGround && !(contactGround && contactGround->enabled());
             return retarget_internal::scaleAndOffsetHumanFrameImpl(humanFrame, ikConfig, table1PosOffsets, table1RotOffsets,
-                                                                   offsetToGround);
+                                                                   useOffsetToGround);
+        }
+
+        HumanFrame applyContactGround(const HumanFrame& prepared) const {
+            if (contactGround && contactGround->enabled()) {
+                return contactGround->processHumanFrame(prepared);
+            }
+            return prepared;
         }
 
         void updateTaskTargets(const HumanFrame& frame) {
@@ -422,7 +437,7 @@ namespace gmr {
     PinocchioLegacyRetargetBackend::~PinocchioLegacyRetargetBackend() = default;
 
     Eigen::VectorXd PinocchioLegacyRetargetBackend::retargetFrame(const HumanFrame& humanFrame, bool offsetToGround) {
-        HumanFrame prepared = impl_->prepareHumanFrame(humanFrame, offsetToGround);
+        HumanFrame prepared = impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
         impl_->updateTaskTargets(prepared);
         if (impl_->ikConfig.useTable1) {
             impl_->solveTaskSet(impl_->tasks1);
@@ -453,6 +468,12 @@ namespace gmr {
 
     const std::vector<ScalarJointCoordinate>& PinocchioLegacyRetargetBackend::scalarJointCoordinates() const {
         return impl_->scalarJointCoordinates;
+    }
+
+    void PinocchioLegacyRetargetBackend::setMotionFps(double fps) {
+        if (impl_->contactGround) {
+            impl_->contactGround->setFps(fps);
+        }
     }
 
 }  // namespace gmr

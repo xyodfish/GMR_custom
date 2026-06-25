@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -10,6 +11,7 @@
 
 #include "gmr/retarget/human_frame_io.h"
 #include "gmr/retarget/ik_config.h"
+#include "gmr/retarget/contact_ground_config.h"
 #include "gmr/retarget/repo_paths.h"
 #include "gmr/retarget/retargeter.h"
 
@@ -47,6 +49,8 @@ namespace {
                   << " [--integration_timestep <float>]"
                   << " [--use_velocity_limit]"
                   << " [--offset_to_ground]"
+                  << " [--contact_ground]"
+                  << " [--no_contact_ground]"
                   << " [--max_frames <int, 0=all>]"
                   << " --out_json <path>"
                   << "\n";
@@ -88,10 +92,22 @@ int main(int argc, char** argv) {
         const std::filesystem::path ikPath = gmr::resolveIkConfig(gmrRoot, srcHuman, robot);
         gmr::IkConfig ikConfig             = gmr::loadIkConfig(ikPath, actualHumanHeight);
 
+        std::optional<bool> contactGroundOverride;
+        if (hasFlag(argc, argv, "--contact_ground")) {
+            contactGroundOverride = true;
+        }
+        if (hasFlag(argc, argv, "--no_contact_ground")) {
+            contactGroundOverride = false;
+        }
+        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, contactGroundOverride);
+
         std::unique_ptr<gmr::Retargeter> retargeter = gmr::createRetargeter(backend, robotModelPath, std::move(ikConfig), opts);
         const gmr::HumanFrameSequence sequence      = gmr::loadHumanFrameSequence(humanFrameJson);
         if (sequence.frames.empty()) {
             throw std::runtime_error("No frame in human_frame_json.");
+        }
+        if (sequence.fps > 0.0) {
+            retargeter->setMotionFps(sequence.fps);
         }
 
         std::size_t frameCount = sequence.frames.size();

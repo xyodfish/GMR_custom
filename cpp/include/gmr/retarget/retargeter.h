@@ -9,16 +9,11 @@
 
 #include <Eigen/Geometry>
 
+#include "gmr/retarget/human_frame_types.h"
 #include "gmr/retarget/ik_config.h"
+#include "gmr/retarget/contact_ground.h"
 
 namespace gmr {
-
-    struct HumanBodyState {
-        Eigen::Vector3d position       = Eigen::Vector3d::Zero();
-        Eigen::Quaterniond orientation = Eigen::Quaterniond::Identity();  // world frame, wxyz semantics
-    };
-
-    using HumanFrame = std::unordered_map<std::string, HumanBodyState>;
 
     struct RetargetOptions {
         std::string solverName     = "qpoases";
@@ -28,6 +23,8 @@ namespace gmr {
         bool useVelocityLimit      = false;
         double velocityLimit       = 3.0 * M_PI;
         double progressThreshold   = 1e-3;
+        double motionFps           = 30.0;
+        ContactGroundConfig contactGround;
     };
 
     struct ScalarJointCoordinate {
@@ -57,6 +54,7 @@ namespace gmr {
         virtual const Eigen::VectorXd& currentQpos() const                               = 0;
         virtual bool hasRootFreeFlyer() const                                            = 0;
         virtual const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const = 0;
+        virtual void setMotionFps(double fps)                                            = 0;
     };
 
     class PinocchioRetargetBackend final : public Retargeter {
@@ -74,6 +72,7 @@ namespace gmr {
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;
         const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
+        void setMotionFps(double fps) override;
 
        private:
         struct Impl;
@@ -95,6 +94,7 @@ namespace gmr {
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;
         const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
+        void setMotionFps(double fps) override;
 
        private:
         struct Impl;
@@ -116,6 +116,7 @@ namespace gmr {
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;
         const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
+        void setMotionFps(double fps) override;
 
        private:
         struct Impl;
@@ -137,6 +138,7 @@ namespace gmr {
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;
         const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
+        void setMotionFps(double fps) override;
 
        private:
         struct Impl;

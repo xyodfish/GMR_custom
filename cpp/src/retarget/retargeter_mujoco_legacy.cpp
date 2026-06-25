@@ -9,6 +9,7 @@
 #include <mujoco/mujoco.h>
 
 #include "gmr/retarget/mujoco_collision_limit.h"
+#include "gmr/retarget/contact_ground.h"
 #include "gmr/solver/qp_solver.h"
 #include "retargeter_internal_utils.h"
 
@@ -60,6 +61,7 @@ namespace gmr {
         Eigen::VectorXd qvel;
 
         std::unique_ptr<MujocoCollisionLimit> collisionLimit;
+        std::unique_ptr<ContactGroundPipeline> contactGround;
 
         Impl(const std::filesystem::path& robotModelPath, IkConfig ikConfigIn, RetargetOptions optionsIn)
             : ikConfig(std::move(ikConfigIn)), options(std::move(optionsIn)) {
@@ -133,6 +135,10 @@ namespace gmr {
                 collisionLimit = std::make_unique<MujocoCollisionLimit>(model.get(), ikConfig.collisionAvoidance);
             }
 
+            if (options.contactGround.enabled) {
+                contactGround = std::make_unique<ContactGroundPipeline>(options.contactGround, model.get(), options.motionFps);
+            }
+
             mju_copy(data->qpos, model->qpos0, model->nq);
             mju_zero(data->qvel, model->nv);
             mj_forward(model.get(), data.get());
@@ -144,8 +150,23 @@ namespace gmr {
         void syncQposFromData() { qpos = Eigen::Map<Eigen::VectorXd>(data->qpos, model->nq); }
 
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround) const {
+            const bool useOffsetToGround = offsetToGround && !(contactGround && contactGround->enabled());
             return retarget_internal::scaleAndOffsetHumanFrameImpl(humanFrame, ikConfig, table1PosOffsets, table1RotOffsets,
-                                                                   offsetToGround);
+                                                                   useOffsetToGround);
+        }
+
+        HumanFrame applyContactGround(const HumanFrame& prepared) const {
+            if (contactGround && contactGround->enabled()) {
+                return contactGround->processHumanFrame(prepared);
+            }
+            return prepared;
+        }
+
+        void finalizeRobotState() {
+            if (contactGround && contactGround->enabled()) {
+                contactGround->fixRobotPenetration(model.get(), data.get());
+                syncQposFromData();
+            }
         }
 
         void updateTaskTargets(const HumanFrame& frame) {
@@ -309,7 +330,7 @@ namespace gmr {
     MujocoLegacyRetargetBackend::~MujocoLegacyRetargetBackend() = default;
 
     Eigen::VectorXd MujocoLegacyRetargetBackend::retargetFrame(const HumanFrame& humanFrame, bool offsetToGround) {
-        HumanFrame prepared = impl_->prepareHumanFrame(humanFrame, offsetToGround);
+        HumanFrame prepared = impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
         impl_->updateTaskTargets(prepared);
         if (impl_->ikConfig.useTable1) {
             impl_->solveTaskSet(impl_->tasks1);
@@ -317,6 +338,7 @@ namespace gmr {
         if (impl_->ikConfig.useTable2) {
             impl_->solveTaskSet(impl_->tasks2);
         }
+        impl_->finalizeRobotState();
         return impl_->qpos;
     }
 
@@ -342,6 +364,12 @@ namespace gmr {
 
     const std::vector<ScalarJointCoordinate>& MujocoLegacyRetargetBackend::scalarJointCoordinates() const {
         return impl_->scalarJointCoordinates;
+    }
+
+    void MujocoLegacyRetargetBackend::setMotionFps(double fps) {
+        if (impl_->contactGround) {
+            impl_->contactGround->setFps(fps);
+        }
     }
 
 }  // namespace gmr

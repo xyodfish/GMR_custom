@@ -50,6 +50,30 @@ qpos 输出
 | `scripts/stitch_videos_side_by_side.py` | 将两个 mp4 左右拼接 |
 | `scripts/inspect_contact_ground.py` | 校验某机器人的合并配置 |
 
+### C++ 实现（`cpp/`）
+
+| 文件 | 作用 |
+|------|------|
+| `cpp/include/gmr/retarget/contact_ground.h` | `ContactGroundPipeline` 声明 |
+| `cpp/src/retarget/contact_ground.cpp` | 与 Python 对齐的流水线实现 |
+| `cpp/include/gmr/retarget/contact_ground_config.h` | 读取 preset 并合并 IK JSON |
+| `cpp/src/retarget/contact_ground_config.cpp` | 配置合并逻辑 |
+| `cpp/src/retarget/retargeter_mujoco*.cpp` | MuJoCo 后端：人体修复 + IK 后穿透修正 |
+| `cpp/src/retarget/retargeter_pinocchio*.cpp` | Pinocchio 后端：仅人体侧修复（无 MuJoCo 穿透修正） |
+
+C++ 与 Python **共用** `general_motion_retargeting/ik_configs/contact_ground_presets.json` 与各 IK JSON 中的 `contact_ground` 块。
+
+**CLI 参数**（`gmr_retarget_cli` / `gmr_retarget_batch_cli` / `gmr_retarget_viewer`）：
+
+```bash
+--contact_ground        # 强制启用
+--no_contact_ground     # 强制关闭
+```
+
+Viewer YAML 示例：`contact_ground: true`
+
+**注意**：机器人穿透修正（`fixRobotPenetration`）需要 **MuJoCo 后端**（`mujoco_se3` / `mujoco_jacobian_legacy`）。Pinocchio 后端只做人体参考修复。
+
 ### `motion_retarget.py` 中的集成点
 
 1. **初始化** — `build_contact_ground_config(ik_config, tgt_robot, cli_override)` 构造 `ContactGroundPipeline`。
@@ -160,6 +184,19 @@ python scripts/bvh_to_robot.py \
   --contact_ground
 ```
 
+### C++ batch retargeting
+
+```bash
+./cpp/build/gmr_retarget_batch_cli \
+  --gmr_root /data/open_src_code/GMR_custom \
+  --robot unitree_g1 \
+  --backend mujoco_se3 \
+  --src_human bvh_lafan1 \
+  --human_frame_json /path/to/human_frames.json \
+  --contact_ground \
+  --out_json /tmp/qpos.json
+```
+
 显式关闭：
 
 ```bash
@@ -212,3 +249,4 @@ python scripts/stitch_videos_side_by_side.py \
 2. 脚部穿透修复：通过 ankle 子树 geom 检测（G1 脚 mesh 在 `ankle_roll_link` 上）。
 3. 躯干 geom 用于背 / 骨盆；躺姿模式加入腿部 geom 与更大边距。
 4. **机器人 preset**（`contact_ground_presets.json`）+ IK 覆盖合并，支持多机器人。
+5. **C++ 端口**：`ContactGroundPipeline` 接入四个 retarget 后端；MuJoCo 后端支持完整穿透修正。

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -16,6 +17,7 @@
 
 #include "gmr/retarget/human_frame_io.h"
 #include "gmr/retarget/ik_config.h"
+#include "gmr/retarget/contact_ground_config.h"
 #include "gmr/retarget/repo_paths.h"
 #include "gmr/retarget/retargeter.h"
 
@@ -32,6 +34,7 @@ struct ViewerConfig {
     bool useVelocityLimit = false;
 
     bool offsetToGround = false;
+    std::optional<bool> contactGroundOverride;
     bool loop           = false;
     bool realtime       = true;
 
@@ -256,6 +259,9 @@ void loadConfigYaml(const std::filesystem::path& configPath, ViewerConfig* confi
     setIfPresent(root, "use_velocity_limit", &config->useVelocityLimit);
 
     setIfPresent(root, "offset_to_ground", &config->offsetToGround);
+    if (root["contact_ground"]) {
+        config->contactGroundOverride = root["contact_ground"].as<bool>();
+    }
     setIfPresent(root, "loop", &config->loop);
 
     bool precompute = false;
@@ -310,6 +316,13 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     }
     if (hasFlag(argc, argv, "--no_offset_to_ground")) {
         config->offsetToGround = false;
+    }
+
+    if (hasFlag(argc, argv, "--contact_ground")) {
+        config->contactGroundOverride = true;
+    }
+    if (hasFlag(argc, argv, "--no_contact_ground")) {
+        config->contactGroundOverride = false;
     }
 
     if (hasFlag(argc, argv, "--loop")) {
@@ -564,13 +577,17 @@ int main(int argc, char** argv) {
             pinBackend ? gmr::resolveRobotUrdf(gmrRoot, robot) : gmr::resolveRobotXml(gmrRoot, robot);
         const std::filesystem::path ikPath = gmr::resolveIkConfig(gmrRoot, config.srcHuman, robot);
         gmr::IkConfig ikConfig             = gmr::loadIkConfig(ikPath, config.actualHumanHeight);
+        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, config.contactGroundOverride);
 
         const gmr::HumanFrameSequence sequence = gmr::loadHumanFrameSequence(config.humanFrameJson);
         if (sequence.frames.empty()) {
             throw std::runtime_error("No frames to render.");
         }
 
-        std::unique_ptr<gmr::Retargeter> retargeter = gmr::createRetargeter(backend, robotModelPath, ikConfig, opts);
+        std::unique_ptr<gmr::Retargeter> retargeter = gmr::createRetargeter(backend, robotModelPath, std::move(ikConfig), opts);
+        if (sequence.fps > 0.0) {
+            retargeter->setMotionFps(sequence.fps);
+        }
 
         if (glfwInit() == GLFW_FALSE) {
             throw std::runtime_error("glfwInit failed.");
