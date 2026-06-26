@@ -9,7 +9,9 @@
 - Built on top of upstream GMR and extended with an experimental C++ retargeting pipeline under [`cpp/`](cpp/).
 - Decoupled C++ retarget backends and rendering targets (MuJoCo / ROS / custom viewers).
 - Reuse of existing GMR IK configs in `general_motion_retargeting/ik_configs/*.json` to keep Python/C++ setup aligned.
-- Add self collision constraints and optimizaiton on foot slide problem with ground contact constraints. 
+- Add self collision constraints and optimization on foot slide problem with ground contact constraints.
+- Decoupled Python contact/ground controls for old `contact_ground`, experimental `foot_ground_limit`, and `fix_robot_penetration` so each mode can be evaluated independently.
+- Offline contact-mode analysis tools for BVH retargeting, with CSV/JSON summaries for penetration, root lift, foot slip, and IK tracking metrics.
 
 > [!NOTE]
 > If you want this repo to support a new robot or a new human motion data format, send the robot files (`.xml`, `.urdf`, and meshes) / human motion data to <a href="mailto:lastyanjieze@gmail.com">Yanjie Ze</a> or create an issue, we will support it as soon as possible. And please make sure the robot files you sent can be open-sourced in this repo.
@@ -18,6 +20,7 @@ This repo is licensed under the [MIT License](LICENSE).
 
 
 # News & Updates
+- **2026-06-26:** Added decoupled contact/ground mode controls and offline analysis tooling for BVH retargeting. See [`docs/contact_ground.md`](docs/contact_ground.md), [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and `scripts/analyze_contact_modes.py`.
 - **2026-04-15:** This repository adds an experimental C++ retargeting feature set based on GMR. See the new "C++ Feature (Experimental)" section and [`cpp/README.md`](cpp/README.md).
 - **2026-01-21:** GMR now supports [Xsens](https://www.xsens.com/) BVH offline data.
 - **2026-01-12:** GMR now supports [Fourier GR3](https://www.fftai.com/), the 17th humanoid robot in the repo.
@@ -294,7 +297,22 @@ python scripts/bvh_to_robot.py --bvh_file <path_to_bvh_data> --robot <path_to_ro
 By default you should see the visualization of the retargeted robot motion in a mujoco window. 
 - `--rate_limit` is used to limit the rate of the retargeted robot motion to keep the same as the human motion. If you want it as fast as possible, remove `--rate_limit`.
 - `--format` is used to specify the format of the BVH data. Supported formats are `lafan1` and `nokov`.
-- Optional contact/ground penetration fix: `--contact_ground` / `--no-contact_ground`. Per-robot body presets and tuning are documented in [`docs/contact_ground.md`](docs/contact_ground.md). Compare OFF vs ON videos: `scripts/bvh_compare_contact_ground.py`.
+- Optional contact/ground controls can be configured independently:
+  - `--contact_ground` / `--no-contact_ground`: old contact-ground alignment and foot-lock strategy.
+  - `--foot_ground_limit` / `--no-foot_ground_limit`: experimental IK/QP foot-ground limit.
+  - `--fix_robot_penetration` / `--no-fix_robot_penetration`: post-retarget root lift for robot ground penetration.
+- Per-robot contact body presets and tuning are documented in [`docs/contact_ground.md`](docs/contact_ground.md). Quantitative mode comparison is documented in [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and can be reproduced with `scripts/analyze_contact_modes.py`.
+
+Example contact mode analysis:
+
+```bash
+conda run -n py310 python scripts/analyze_contact_modes.py \
+  --bvh_dir /data2/Documents/lafan1 \
+  --robot unitree_g1 \
+  --format lafan1 \
+  --motion_fps 30 \
+  --out_dir analysis/contact_modes_lafan1_all
+```
 
 
 Retarget a folder of motions:

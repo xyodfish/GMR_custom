@@ -9,6 +9,12 @@ from tqdm import tqdm
 import os
 import numpy as np
 
+
+def add_optional_bool_arg(parser, name, help_text):
+    parser.add_argument(f"--{name}", dest=name, action="store_true", help=help_text)
+    parser.add_argument(f"--no-{name}", dest=name, action="store_false")
+    parser.set_defaults(**{name: None})
+
 if __name__ == "__main__":
     
     HERE = pathlib.Path(__file__).parent
@@ -71,11 +77,22 @@ if __name__ == "__main__":
         type=int,
     )
 
-    parser.add_argument(
-        "--contact_ground",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Enable streaming contact/ground fix (default: IK config contact_ground.enabled).",
+    add_optional_bool_arg(
+        parser,
+        "contact_ground",
+        "Enable streaming contact/ground fix (default: IK config contact_ground.enabled).",
+    )
+
+    add_optional_bool_arg(
+        parser,
+        "foot_ground_limit",
+        "Enable QP foot-ground inequality limit (default: IK config foot_ground_limit.enabled).",
+    )
+
+    add_optional_bool_arg(
+        parser,
+        "fix_robot_penetration",
+        "Enable post-IK robot root lift penetration repair (default: IK config contact_ground.fix_robot_penetration).",
     )
     
     args = parser.parse_args()
@@ -97,6 +114,8 @@ if __name__ == "__main__":
         tgt_robot=args.robot,
         actual_human_height=actual_human_height,
         contact_ground=args.contact_ground,
+        foot_ground_limit=args.foot_ground_limit,
+        fix_robot_penetration=args.fix_robot_penetration,
         motion_fps=args.motion_fps,
     )
 

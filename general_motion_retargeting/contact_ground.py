@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+import mink
 import mujoco as mj
 import numpy as np
 
@@ -107,16 +108,16 @@ class StreamingGroundAligner:
         contacts: dict[str, bool],
         foot_positions: dict[str, np.ndarray] | None = None,
     ) -> dict:
-        if foot_positions:
-            max_foot_z = max(float(pos[2]) for pos in foot_positions.values())
-            if max_foot_z > self.airborne_height_threshold:
-                self.last_offset *= self.airborne_offset_decay
-
         active_z = [
             float(np.asarray(human_data[name][0], dtype=np.float64).reshape(3)[2])
             for name, in_contact in contacts.items()
             if in_contact and name in human_data
         ]
+
+        if foot_positions and not active_z:
+            min_foot_z = min(float(pos[2]) for pos in foot_positions.values())
+            if min_foot_z > self.airborne_height_threshold:
+                self.last_offset *= self.airborne_offset_decay
 
         if active_z:
             target_z = self.ground_z + self.ground_margin
@@ -215,6 +216,71 @@ def collect_geom_ids_for_bodies(model: mj.MjModel, body_ids: list[int]) -> list[
         if int(model.geom_bodyid[geom_id]) in body_set:
             geom_ids.append(geom_id)
     return geom_ids
+
+
+def _geom_vertical_extent(model: mj.MjModel, data: mj.MjData, geom_id: int) -> float | None:
+    geom_type = int(model.geom_type[geom_id])
+    size = model.geom_size[geom_id]
+    if geom_type == int(mj.mjtGeom.mjGEOM_SPHERE):
+        return float(size[0])
+    if geom_type == int(mj.mjtGeom.mjGEOM_BOX):
+        R = data.geom_xmat[geom_id].reshape(3, 3)
+        return float(np.abs(R[2, :]) @ size[:3])
+    if geom_type in (int(mj.mjtGeom.mjGEOM_CAPSULE), int(mj.mjtGeom.mjGEOM_CYLINDER)):
+        R = data.geom_xmat[geom_id].reshape(3, 3)
+        axis_z = abs(float(R[2, 2]))
+        radial_z = np.sqrt(max(0.0, 1.0 - axis_z * axis_z))
+        return float(size[0] * radial_z + size[1] * axis_z)
+    return None
+
+
+class FootGroundLimit(mink.Limit):
+    """QP lower bound for foot primitive geoms against a flat ground plane."""
+
+    def __init__(
+        self,
+        model: mj.MjModel,
+        geom_ids: list[int],
+        ground_z: float = 0.0,
+        margin: float = 0.01,
+        gain: float = 0.95,
+    ) -> None:
+        self.model = model
+        self.geom_ids = [
+            geom_id
+            for geom_id in geom_ids
+            if int(model.geom_type[geom_id])
+            in (
+                int(mj.mjtGeom.mjGEOM_SPHERE),
+                int(mj.mjtGeom.mjGEOM_BOX),
+                int(mj.mjtGeom.mjGEOM_CAPSULE),
+                int(mj.mjtGeom.mjGEOM_CYLINDER),
+            )
+        ]
+        self.ground_z = float(ground_z)
+        self.margin = float(margin)
+        self.gain = float(np.clip(gain, 1e-6, 1.0))
+
+    def compute_qp_inequalities(self, configuration: mink.Configuration, dt: float) -> mink.Constraint:
+        del dt
+        if not self.geom_ids:
+            return mink.Constraint()
+
+        G = np.zeros((len(self.geom_ids), self.model.nv))
+        h = np.zeros((len(self.geom_ids),))
+        jacp = np.empty((3, self.model.nv))
+        z_min = self.ground_z + self.margin
+
+        for row, geom_id in enumerate(self.geom_ids):
+            extent = _geom_vertical_extent(self.model, configuration.data, geom_id)
+            if extent is None:
+                h[row] = np.inf
+                continue
+            mj.mj_jacGeom(self.model, configuration.data, jacp, None, geom_id)
+            z = float(configuration.data.geom_xpos[geom_id, 2]) - extent
+            G[row] = -jacp[2]
+            h[row] = self.gain * (z - z_min)
+        return mink.Constraint(G=G, h=h)
 
 
 def measure_robot_foot_min_z(
@@ -320,6 +386,7 @@ class ContactGroundPipeline:
     """Orchestrates streaming contact, human ground align, foot lock, and robot penetration fix."""
 
     def __init__(self, cfg: dict[str, Any], model: mj.MjModel, fps: float = 30.0) -> None:
+        self.model = model
         self.enabled = bool(cfg.get("enabled", False))
         self.foot_bodies = list(cfg.get("foot_bodies", []))
         self.enable_foot_lock = bool(cfg.get("enable_foot_lock", True))
@@ -428,10 +495,10 @@ class ContactGroundPipeline:
         if fps > 0.0:
             self.contact_detector.fps = float(fps)
 
-    def process_human_frame(self, human_data: dict) -> dict:
+    def observe_human_frame(self, human_data: dict) -> tuple[dict[str, np.ndarray], dict[str, bool]]:
         foot_positions = extract_foot_positions(human_data, self.foot_bodies)
         if not foot_positions:
-            return human_data
+            return {}, {}
 
         contacts = self.contact_detector.update(foot_positions)
         self.last_contacts = contacts
@@ -439,6 +506,12 @@ class ContactGroundPipeline:
         if self.human_root_name in human_data:
             hip_pos = np.asarray(human_data[self.human_root_name][0], dtype=np.float64).reshape(3)
             self.last_human_hip_z = float(hip_pos[2])
+        return foot_positions, contacts
+
+    def process_human_frame(self, human_data: dict) -> dict:
+        foot_positions, contacts = self.observe_human_frame(human_data)
+        if not foot_positions:
+            return human_data
 
         aligned = self.ground_aligner.update(human_data, contacts, foot_positions)
         if self.enable_foot_lock:

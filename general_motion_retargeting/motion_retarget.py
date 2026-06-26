@@ -6,7 +6,7 @@ import json
 from typing import Optional
 from scipy.spatial.transform import Rotation as R
 from .params import ROBOT_XML_DICT, IK_CONFIG_DICT
-from .contact_ground import ContactGroundPipeline
+from .contact_ground import ContactGroundPipeline, FootGroundLimit
 from .contact_ground_config import build_contact_ground_config
 from rich import print
 
@@ -105,6 +105,8 @@ class GeneralMotionRetargeting:
         verbose: bool=True,
         use_velocity_limit: bool=False,
         contact_ground: Optional[bool] = None,
+        foot_ground_limit: Optional[bool] = None,
+        fix_robot_penetration: Optional[bool] = None,
         motion_fps: float = 30.0,
     ) -> None:
         self.verbose = verbose
@@ -223,11 +225,35 @@ class GeneralMotionRetargeting:
             tgt_robot,
             cli_override=contact_ground,
         )
+        if fix_robot_penetration is not None:
+            contact_ground_cfg["fix_robot_penetration"] = bool(fix_robot_penetration)
         self.contact_ground = ContactGroundPipeline(
             contact_ground_cfg,
             self.model,
             fps=motion_fps,
         )
+        foot_ground_cfg = {
+            "enabled": False,
+            "ground_z": contact_ground_cfg.get("ground_z", 0.0),
+            "margin": 0.01,
+            "gain": 0.95,
+        }
+        foot_ground_cfg.update(dict(ik_config.get("foot_ground_limit", {})))
+        if foot_ground_limit is not None:
+            foot_ground_cfg["enabled"] = bool(foot_ground_limit)
+
+        foot_ground_limit_obj = None
+        if bool(foot_ground_cfg.get("enabled", False)):
+            foot_ground_limit_obj = FootGroundLimit(
+                self.model,
+                self.contact_ground.foot_geom_ids,
+                ground_z=float(foot_ground_cfg.get("ground_z", 0.0)),
+                margin=float(foot_ground_cfg.get("margin", 0.01)),
+                gain=float(foot_ground_cfg.get("gain", 0.95)),
+            )
+            if foot_ground_limit_obj.geom_ids:
+                self.ik_limits.append(foot_ground_limit_obj)
+
         if self.verbose and self.contact_ground.enabled:
             print(
                 "[GMR] contact_ground enabled: "
@@ -243,6 +269,13 @@ class GeneralMotionRetargeting:
                     "[GMR] contact_ground warning: unresolved bodies "
                     f"{self.contact_ground.missing_bodies}"
                 )
+        if self.verbose and foot_ground_limit_obj is not None:
+            print(
+                "[GMR] foot_ground_limit enabled: "
+                f"geoms={len(foot_ground_limit_obj.geom_ids)}, "
+                f"margin={foot_ground_limit_obj.margin}, "
+                f"gain={foot_ground_limit_obj.gain}"
+            )
 
     def setup_retarget_configuration(self):
         self.configuration = mink.Configuration(self.model)
@@ -344,7 +377,10 @@ class GeneralMotionRetargeting:
         human_data = self.apply_ground_offset(human_data)
         if self.contact_ground.enabled:
             human_data = self.contact_ground.process_human_frame(human_data)
-        elif offset_to_ground:
+        else:
+            self.contact_ground.observe_human_frame(human_data)
+        
+        if not self.contact_ground.enabled and offset_to_ground:
             human_data = self.offset_human_data_to_ground(human_data)
         self.scaled_human_data = human_data
 
@@ -370,7 +406,7 @@ class GeneralMotionRetargeting:
             curr_error = self.error1()
             dt = self.configuration.model.opt.timestep
             vel1 = mink.solve_ik(
-                self.configuration, self.tasks1, dt, self.solver, self.damping, self.ik_limits
+                self.configuration, self.tasks1, dt, self.solver, self.damping, limits=self.ik_limits
             )
             self.configuration.integrate_inplace(vel1, dt)
             next_error = self.error1()
@@ -379,7 +415,7 @@ class GeneralMotionRetargeting:
                 curr_error = next_error
                 dt = self.configuration.model.opt.timestep
                 vel1 = mink.solve_ik(
-                    self.configuration, self.tasks1, dt, self.solver, self.damping, self.ik_limits
+                    self.configuration, self.tasks1, dt, self.solver, self.damping, limits=self.ik_limits
                 )
                 self.configuration.integrate_inplace(vel1, dt)
                 next_error = self.error1()
@@ -389,7 +425,7 @@ class GeneralMotionRetargeting:
             curr_error = self.error2()
             dt = self.configuration.model.opt.timestep
             vel2 = mink.solve_ik(
-                self.configuration, self.tasks2, dt, self.solver, self.damping, self.ik_limits
+                self.configuration, self.tasks2, dt, self.solver, self.damping, limits=self.ik_limits
             )
             self.configuration.integrate_inplace(vel2, dt)
             next_error = self.error2()
@@ -399,14 +435,14 @@ class GeneralMotionRetargeting:
                 # Solve the IK problem with the second task
                 dt = self.configuration.model.opt.timestep
                 vel2 = mink.solve_ik(
-                    self.configuration, self.tasks2, dt, self.solver, self.damping, self.ik_limits
+                    self.configuration, self.tasks2, dt, self.solver, self.damping, limits=self.ik_limits
                 )
                 self.configuration.integrate_inplace(vel2, dt)
                 
                 next_error = self.error2()
                 num_iter += 1
 
-        if self.contact_ground.enabled:
+        if self.contact_ground.fix_penetration:
             self.contact_ground.fix_robot_penetration(self.model, self.configuration.data)
 
         return self.configuration.data.qpos.copy()

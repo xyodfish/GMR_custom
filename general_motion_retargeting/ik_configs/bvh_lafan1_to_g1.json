@@ -607,6 +607,10 @@
         ]
     },
     "contact_ground": {
-        "enabled": true
+        "enabled": true,
+        "fix_robot_penetration": true
+    },
+    "foot_ground_limit": {
+        "enabled": false
     }
 }

@@ -2,7 +2,10 @@
     "_comment": "Per-robot defaults for contact_ground. IK JSON contact_ground block overrides these fields.",
     "_default": {
         "enabled": false,
-        "foot_bodies": ["LeftFootMod", "RightFootMod"],
+        "foot_bodies": [
+            "LeftFootMod",
+            "RightFootMod"
+        ],
         "vel_threshold": 0.5,
         "height_threshold": 0.08,
         "height_off_threshold": 0.12,
@@ -26,11 +29,15 @@
         "human_root_name": "Hips",
         "robot_foot_bodies": [],
         "robot_trunk_bodies": [],
-        "robot_leg_bodies": []
+        "robot_leg_bodies": [],
+        "robot_arm_bodies": []
     },
     "unitree_g1": {
         "enabled": true,
-        "robot_foot_bodies": ["left_ankle_roll_link", "right_ankle_roll_link"],
+        "robot_foot_bodies": [
+            "left_ankle_roll_link",
+            "right_ankle_roll_link"
+        ],
         "robot_trunk_bodies": [
             "pelvis",
             "waist_yaw_link",
@@ -70,8 +77,14 @@
         "preset": "unitree_g1"
     },
     "booster_t1_29dof": {
-        "robot_foot_bodies": ["left_foot_link", "right_foot_link"],
-        "robot_trunk_bodies": ["Waist", "Trunk"],
+        "robot_foot_bodies": [
+            "left_foot_link",
+            "right_foot_link"
+        ],
+        "robot_trunk_bodies": [
+            "Waist",
+            "Trunk"
+        ],
         "robot_leg_bodies": [
             "Hip_Pitch_Left",
             "Hip_Roll_Left",
@@ -84,8 +97,14 @@
         ]
     },
     "engineai_pm01": {
-        "robot_foot_bodies": ["LINK_ANKLE_ROLL_L", "LINK_ANKLE_ROLL_R"],
-        "robot_trunk_bodies": ["LINK_BASE", "LINK_TORSO_YAW"],
+        "robot_foot_bodies": [
+            "LINK_ANKLE_ROLL_L",
+            "LINK_ANKLE_ROLL_R"
+        ],
+        "robot_trunk_bodies": [
+            "LINK_BASE",
+            "LINK_TORSO_YAW"
+        ],
         "robot_leg_bodies": [
             "LINK_HIP_PITCH_L",
             "LINK_HIP_ROLL_L",
@@ -98,8 +117,15 @@
         ]
     },
     "stanford_toddy": {
-        "robot_foot_bodies": ["ank_roll_link", "ank_roll_link_2"],
-        "robot_trunk_bodies": ["waist_link", "torso", "waist_gears"],
+        "robot_foot_bodies": [
+            "ank_roll_link",
+            "ank_roll_link_2"
+        ],
+        "robot_trunk_bodies": [
+            "waist_link",
+            "torso",
+            "waist_gears"
+        ],
         "robot_leg_bodies": [
             "hip_yaw_link",
             "left_hip_pitch_link",
@@ -110,8 +136,15 @@
         ]
     },
     "fourier_n1": {
-        "robot_foot_bodies": ["left_foot_roll_link", "right_foot_roll_link"],
-        "robot_trunk_bodies": ["base_link", "waist_yaw_link", "torso_link"],
+        "robot_foot_bodies": [
+            "left_foot_roll_link",
+            "right_foot_roll_link"
+        ],
+        "robot_trunk_bodies": [
+            "base_link",
+            "waist_yaw_link",
+            "torso_link"
+        ],
         "robot_leg_bodies": [
             "left_thigh_pitch_link",
             "left_thigh_roll_link",
@@ -124,8 +157,15 @@
         ]
     },
     "pal_talos": {
-        "robot_foot_bodies": ["leg_left_6_link", "leg_right_6_link"],
-        "robot_trunk_bodies": ["base_link", "torso_1_link", "torso_2_link"],
+        "robot_foot_bodies": [
+            "leg_left_6_link",
+            "leg_right_6_link"
+        ],
+        "robot_trunk_bodies": [
+            "base_link",
+            "torso_1_link",
+            "torso_2_link"
+        ],
         "robot_leg_bodies": [
             "leg_left_3_link",
             "leg_left_4_link",
