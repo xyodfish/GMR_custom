@@ -605,5 +605,17 @@
                 ]
             ]
         ]
+    },
+    "contact_ground": {
+        "enabled": true,
+        "fix_robot_penetration": true,
+        "human_root_name": "pelvis",
+        "foot_bodies": [
+            "left_foot",
+            "right_foot"
+        ]
+    },
+    "foot_ground_limit": {
+        "enabled": false
     }
 }

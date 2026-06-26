@@ -2,10 +2,6 @@
     "_comment": "Per-robot defaults for contact_ground. IK JSON contact_ground block overrides these fields.",
     "_default": {
         "enabled": false,
-        "foot_bodies": [
-            "LeftFootMod",
-            "RightFootMod"
-        ],
         "vel_threshold": 0.5,
         "height_threshold": 0.08,
         "height_off_threshold": 0.12,
@@ -26,7 +22,6 @@
         "airborne_offset_decay": 0.85,
         "floor_geom_name": "floor",
         "foot_collision_geoms": [],
-        "human_root_name": "Hips",
         "robot_foot_bodies": [],
         "robot_trunk_bodies": [],
         "robot_leg_bodies": [],

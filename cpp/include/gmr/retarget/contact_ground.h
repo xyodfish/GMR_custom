@@ -15,8 +15,8 @@ namespace gmr {
 
     struct ContactGroundConfig {
         bool enabled = false;
-        std::vector<std::string> footBodies{"LeftFootMod", "RightFootMod"};
-        std::string humanRootName = "Hips";
+        std::vector<std::string> footBodies;
+        std::string humanRootName;
         double velThreshold = 0.5;
         double heightThreshold = 0.08;
         double heightOffThreshold = 0.12;

@@ -605,5 +605,13 @@
                 ]
             ]
         ]
+    },
+    "contact_ground": {
+        "enabled": true,
+        "human_root_name": "Hips",
+        "foot_bodies": [
+            "LeftToeBase",
+            "RightToeBase"
+        ]
     }
 }

@@ -608,7 +608,12 @@
     },
     "contact_ground": {
         "enabled": true,
-        "fix_robot_penetration": true
+        "fix_robot_penetration": true,
+        "human_root_name": "Hips",
+        "foot_bodies": [
+            "LeftFootMod",
+            "RightFootMod"
+        ]
     },
     "foot_ground_limit": {
         "enabled": false

@@ -605,5 +605,13 @@
                 ]
             ]
         ]
+    },
+    "contact_ground": {
+        "enabled": true,
+        "human_root_name": "Pelvis",
+        "foot_bodies": [
+            "Left_Foot",
+            "Right_Foot"
+        ]
     }
 }

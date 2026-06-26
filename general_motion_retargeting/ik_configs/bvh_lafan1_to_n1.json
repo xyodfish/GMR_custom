@@ -477,6 +477,11 @@
         ]
     },
     "contact_ground": {
-        "enabled": false
+        "enabled": false,
+        "human_root_name": "Hips",
+        "foot_bodies": [
+            "LeftFootMod",
+            "RightFootMod"
+        ]
     }
 }

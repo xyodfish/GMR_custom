@@ -11,6 +11,13 @@ from general_motion_retargeting.utils.smpl import load_smplx_file, get_smplx_dat
 
 from rich import print
 
+
+def add_optional_bool_arg(parser, name, help_text):
+    parser.add_argument(f"--{name}", dest=name, action="store_true", help=help_text)
+    parser.add_argument(f"--no-{name}", dest=name, action="store_false")
+    parser.set_defaults(**{name: None})
+
+
 if __name__ == "__main__":
     
     HERE = pathlib.Path(__file__).parent
@@ -21,7 +28,7 @@ if __name__ == "__main__":
         help="SMPLX motion file to load.",
         type=str,
         # required=True,
-        default="/home/yanjieze/projects/g1_wbc/GMR/motion_data/ACCAD/Male1General_c3d/General_A1_-_Stand_stageii.npz",
+        default="/data2/Documents/ACCAD/Male2General_c3d/A10-_Lie_to_crouch_stageii.npz",
         # default="/home/yanjieze/projects/g1_wbc/GMR/motion_data/ACCAD/Male2MartialArtsKicks_c3d/G8_-__roundhouse_left_stageii.npz"
         # default="/home/yanjieze/projects/g1_wbc/TWIST-dev/motion_data/AMASS/KIT_572_dance_chacha11_stageii.npz"
         # default="/home/yanjieze/projects/g1_wbc/GMR/motion_data/ACCAD/Male2MartialArtsPunches_c3d/E1_-__Jab_left_stageii.npz",
@@ -71,6 +78,24 @@ if __name__ == "__main__":
         help="Limit the rate of the retargeted robot motion to keep the same as the human motion.",
     )
 
+    add_optional_bool_arg(
+        parser,
+        "contact_ground",
+        "Enable streaming contact/ground fix (default: IK config contact_ground.enabled).",
+    )
+
+    add_optional_bool_arg(
+        parser,
+        "foot_ground_limit",
+        "Enable QP foot-ground inequality limit (default: IK config foot_ground_limit.enabled).",
+    )
+
+    add_optional_bool_arg(
+        parser,
+        "fix_robot_penetration",
+        "Enable post-IK robot root lift penetration repair (default: IK config contact_ground.fix_robot_penetration).",
+    )
+
     args = parser.parse_args()
 
 
@@ -93,6 +118,10 @@ if __name__ == "__main__":
         actual_human_height=actual_human_height,
         src_human="smplx",
         tgt_robot=args.robot,
+        contact_ground=args.contact_ground,
+        foot_ground_limit=args.foot_ground_limit,
+        fix_robot_penetration=args.fix_robot_penetration,
+        motion_fps=aligned_fps,
     )
     
     robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,

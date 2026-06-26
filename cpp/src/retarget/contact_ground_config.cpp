@@ -83,9 +83,6 @@ namespace gmr {
             ContactGroundConfig cfg;
             cfg.enabled = j.value("enabled", cfg.enabled);
             cfg.footBodies = readStringArray(j, "foot_bodies");
-            if (cfg.footBodies.empty()) {
-                cfg.footBodies = {"LeftFootMod", "RightFootMod"};
-            }
             cfg.humanRootName = j.value("human_root_name", cfg.humanRootName);
             cfg.velThreshold = j.value("vel_threshold", cfg.velThreshold);
             cfg.heightThreshold = j.value("height_threshold", cfg.heightThreshold);
