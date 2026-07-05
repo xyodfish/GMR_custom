@@ -41,7 +41,7 @@ Thumbs.db
 data/
 data_record/
 Download/
-assets/body_models/
+# assets/body_models/
 
 # Media files
 # *.mp4
