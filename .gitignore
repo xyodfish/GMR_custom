@@ -60,7 +60,7 @@ Download/
 
 # Model files
 smplx/
-body_models/
+# body_models/
 *.pkl
 *.pth
 *.pt
