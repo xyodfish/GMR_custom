@@ -74,7 +74,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/.." && pwd)"
 export PYTHONPATH="${repo_root}:${PYTHONPATH:-}"
 
-python3 "${script_dir}/bvh_to_retargeting_frame.py" \
+"${PYTHON:-python}" "${script_dir}/bvh_to_retargeting_frame.py" \
   --bvh_file "$bvh_file" \
   --format "$format" \
   --motion_fps "$motion_fps" \
