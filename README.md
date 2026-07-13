@@ -1,5 +1,7 @@
 # GMR_custom: General Motion Retargeting with constraints and implementation with cpp
 
+[中文文档](README_zh.md)
+
 #### Key features of GMR:
 - Real-time high-quality retargeting, unlock the potential of real-time whole-body teleoperation, i.e., [TWIST](https://github.com/YanjieZe/TWIST).
 - Carefully tuned for good performance of RL tracking policies.
@@ -20,6 +22,7 @@ This repo is licensed under the [MIT License](LICENSE).
 
 
 # News & Updates
+- **2026-07-13:** Added **Unitree H2** (`unitree_h2`) with SMPL-X and LAFAN1 BVH IK configs, `contact_ground` preset, and tuned `bvh_lafan1_to_h2.json`. Real-time retargeting via `bvh_to_robot.py` / `human_json_to_robot.py`; playback with IK-target overlays via `vis_robot_motion.py --human_frame_json`.
 - **2026-06-26:** Added decoupled contact/ground mode controls and offline analysis tooling for BVH retargeting. See [`docs/contact_ground.md`](docs/contact_ground.md), [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and `scripts/analyze_contact_modes.py`.
 - **2026-04-15:** This repository adds an experimental C++ retargeting feature set based on GMR. See the new "C++ Feature (Experimental)" section and [`cpp/README.md`](cpp/README.md).
 - **2026-01-21:** GMR now supports [Xsens](https://www.xsens.com/) BVH offline data.
@@ -58,6 +61,7 @@ This repo is licensed under the [MIT License](LICENSE).
 | 1                         | Unitree G1 with Hands `unitree_g1_with_hands`                         | Leg (2\*6) + Waist (3) + Arm (2\*7) + Hand (2\*7) = 43 | ✅                                                                                                 | ✅                                                                          | ✅                                             | TBD                                 | TBD                                                                           |
 | 2                         | Unitree H1 `unitree_h1`                                               | Leg (2\*5) + Waist (1) + Arm (2\*4) = 19               | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 | TBD                                                                           |
 | 3                         | Unitree H1 2 `unitree_h1_2`                                           | Leg (2\*6) + Waist (1) + Arm (2\*7) = 27               | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 | TBD                                                                           |
+| 18                        | Unitree H2 `unitree_h2`                                               | Leg (2\*6) + Waist (3) + Arm (2\*7) = 29               | ✅                                                                                                 | ✅                                                                          | TBD                                           | TBD                                 | TBD                                                                           |
 | 4                         | Booster T1 `booster_t1`                                               | TBD                                                    | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
 | 5                         | Booster T1 29dof `booster_t1_29dof`                                   | TBD                                                    | ✅                                                                                                 | ✅                                                                          | TBD                                           | TBD                                 |
 | 6                         | Booster K1 `booster_k1`                                               | Neck (2) + Arm (2\*4) + Leg (2\*6) = 22                | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
@@ -73,8 +77,8 @@ This repo is licensed under the [MIT License](LICENSE).
 | 16                        | PAL Robotics' Talos `pal_talos`                                       | Head (2) + Arm (2\*7) + Waist (2) + Leg (2\*6) = 30    | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
 | 17                        | Fourier GR3 `fourier_gr3`                                             | Head (2) + Arm (2\*7) + Waist (3) + Leg (2\*6) = 31    | ✅                                                                                                 | TBD                                                                        | TBD                                           | TBD                                 |
 | More robots coming soon ! |
-| 18                        | AgiBot A2 `agibot_a2`                                                 | TBD                                                    | TBD                                                                                               | TBD                                                                        | TBD                                           | TBD                                 |
-| 19                        | OpenLoong `openloong`                                                 | TBD                                                    | TBD                                                                                               | TBD                                                                        | TBD                                           | TBD                                 |
+| 19                        | AgiBot A2 `agibot_a2`                                                 | TBD                                                    | TBD                                                                                               | TBD                                                                        | TBD                                           | TBD                                 |
+| 20                        | OpenLoong `openloong`                                                 | TBD                                                    | TBD                                                                                               | TBD                                                                        | TBD                                           | TBD                                 |
 
 
 
@@ -287,11 +291,59 @@ python scripts/gvhmr_to_robot.py --gvhmr_pred_file <path_to_hmr4d_results.pt> --
 
 ## Retargeting from BVH (LAFAN1, Nokov) to Robot
 
+### Real-time retargeting (recommended)
+
+`scripts/bvh_to_robot.py` runs IK every frame and visualizes in MuJoCo. Use `--rate_limit` for real-time playback speed and `--loop` to repeat the clip.
+
+```bash
+python scripts/bvh_to_robot.py \
+  --bvh_file <path_to_bvh_data> \
+  --robot unitree_h2 \
+  --format lafan1 \
+  --motion_fps 30 \
+  --rate_limit \
+  --loop
+```
+
+This is different from `vis_robot_motion.py`, which only **plays back** a saved `.pkl` without re-running IK.
+
+**Unitree H2 example (LAFAN1):**
+
+```bash
+python scripts/bvh_to_robot.py \
+  --bvh_file /path/to/lafan1/walk1_subject5.bvh \
+  --robot unitree_h2 \
+  --format lafan1 \
+  --rate_limit \
+  --loop
+```
+
+Enable contact/ground penetration repair explicitly (H2 IK config enables this by default):
+
+```bash
+python scripts/bvh_to_robot.py \
+  --bvh_file /path/to/lafan1/fallAndGetUp1_subject4.bvh \
+  --robot unitree_h2 \
+  --format lafan1 \
+  --contact_ground \
+  --fix_robot_penetration \
+  --rate_limit \
+  --loop
+```
+
+Inspect merged contact config and resolved foot/trunk geoms:
+
+```bash
+python scripts/inspect_contact_ground.py --robot unitree_h2 --src_human bvh_lafan1
+```
+
+### Retarget and save to pickle
+
 Retarget a single motion:
 
 ```bash
 # single motion
-python scripts/bvh_to_robot.py --bvh_file <path_to_bvh_data> --robot <path_to_robot_data> --save_path <path_to_save_robot_data.pkl> --rate_limit --format <format>
+python scripts/bvh_to_robot.py --bvh_file <path_to_bvh_data> --robot <robot_name> --save_path <path_to_save_robot_data.pkl> --rate_limit --format <format>
 ```
 
 By default you should see the visualization of the retargeted robot motion in a mujoco window. 
@@ -322,6 +374,31 @@ python scripts/bvh_to_robot_dataset.py --src_folder <path_to_dir_of_bvh_data> --
 ```
 
 By default there is no visualization for batch retargeting.
+
+
+### Retargeting from human frame JSON
+
+If you already exported human frames (e.g. via `scripts/bvh_to_retargeting_frame.py`), use `scripts/human_json_to_robot.py` for real-time IK + visualization:
+
+```bash
+python scripts/human_json_to_robot.py \
+  --human_frame_json <path_to_retarget_frame.json> \
+  --robot unitree_h2 \
+  --rate_limit \
+  --loop
+```
+
+The script reads `src_human` and `actual_human_height` from JSON metadata when present. Contact/ground flags are also supported:
+
+```bash
+python scripts/human_json_to_robot.py \
+  --human_frame_json <path_to_retarget_frame.json> \
+  --robot unitree_h2 \
+  --contact_ground \
+  --fix_robot_penetration \
+  --rate_limit \
+  --loop
+```
 
 
 
@@ -505,7 +582,18 @@ You should see the visualization of the retargeted robot motion in a mujoco wind
 
 ### Visualize saved robot motion
 
-Visualize a single motions:
+Playback only (no IK). To overlay IK target anchors, pass the matching human frame JSON. By default anchors show **scaled IK targets** (same as live retargeting), not raw JSON coordinates.
+
+```bash
+python scripts/vis_robot_motion.py \
+  --robot unitree_h2 \
+  --robot_motion_path <path_to_save_robot_data.pkl> \
+  --human_frame_json <path_to_retarget_frame.json>
+```
+
+Use `--show_human_body_name` to label anchors. Use `--show_raw_human_targets` to compare against unscaled JSON targets.
+
+Visualize a single motion without anchors:
 
 ```bash
 python scripts/vis_robot_motion.py --robot <robot_name> --robot_motion_path <path_to_save_robot_data.pkl>
@@ -523,6 +611,16 @@ After launching the MuJoCo visualization window and clicking on it, you can use 
 * `[`: play the previous motion
 * `]`: play the next motion
 * `space`: toggle play/pause
+
+### Retargeting quality checklist
+
+There is no single automatic score for all robots yet. A practical workflow:
+
+1. **Visual**: use real-time `bvh_to_robot.py` or playback with `vis_robot_motion.py --human_frame_json` and check foot anchors, leg crossing, and ground contact.
+2. **Pickle stats**: inspect `root_pos[:,2]`, knee joint means, and joint-limit saturation from saved `.pkl` files.
+3. **Contact metrics**: use `scripts/analyze_contact_modes.py` for penetration, foot slip, and IK error summaries (currently documented for G1; extend `--robot` for other platforms).
+
+For H2 LAFAN1, IK config lives at `general_motion_retargeting/ik_configs/bvh_lafan1_to_h2.json`. Robot assets live at `assets/unitree_h2/`.
 
 ## Speed Benchmark
 
@@ -587,3 +685,4 @@ The original robot models can be found at the following locations:
 * [PAL Robotics' Talos](https://github.com/google-deepmind/mujoco_menagerie): [Link to file](https://github.com/google-deepmind/mujoco_menagerie/tree/main/pal_talos)
 * [Toddlerbot](https://github.com/hshi74/toddlerbot): [Link to file](https://github.com/hshi74/toddlerbot/tree/main/toddlerbot/descriptions/toddlerbot_active)
 * [Unitree G1](https://github.com/unitreerobotics/unitree_ros): [Link to file](https://github.com/unitreerobotics/unitree_ros/tree/master/robots/g1_description)
+* [Unitree H2](https://www.unitree.com/): robot assets under `assets/unitree_h2/` in this repo

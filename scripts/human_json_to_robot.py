@@ -96,15 +96,21 @@ def load_human_frames(json_path: str) -> Tuple[List[Dict[str, Tuple[np.ndarray, 
     return frames, fps
 
 
+def add_optional_bool_arg(parser, name, help_text):
+    parser.add_argument(f"--{name}", dest=name, action="store_true", help=help_text)
+    parser.add_argument(f"--no-{name}", dest=name, action="store_false")
+    parser.set_defaults(**{name: None})
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--human_frame_json", type=str, required=True, help="Path to human frame json.")
     parser.add_argument(
         "--src_human",
         type=str,
-        default="smplx",
+        default=None,
         choices=["smplx", "bvh_lafan1", "bvh_nokov", "bvh_xsens", "fbx", "fbx_offline", "xrobot", "xsens_mvn"],
-        help="Source human type for IK config selection.",
+        help="Source human type for IK config. Defaults to json metadata or bvh_lafan1.",
     )
     parser.add_argument(
         "--robot",
@@ -113,6 +119,7 @@ if __name__ == "__main__":
             "unitree_g1_with_hands",
             "unitree_h1",
             "unitree_h1_2",
+            "unitree_h2",
             "booster_t1",
             "booster_t1_29dof",
             "stanford_toddy",
@@ -138,15 +145,42 @@ if __name__ == "__main__":
     parser.add_argument("--offset_to_ground", action="store_true", default=False)
     parser.add_argument("--max_steps", type=int, default=-1, help="Max rendering steps; -1 means unlimited.")
 
+    add_optional_bool_arg(
+        parser,
+        "contact_ground",
+        "Enable streaming contact/ground fix (default: IK config contact_ground.enabled).",
+    )
+    add_optional_bool_arg(
+        parser,
+        "foot_ground_limit",
+        "Enable QP foot-ground inequality limit (default: IK config foot_ground_limit.enabled).",
+    )
+    add_optional_bool_arg(
+        parser,
+        "fix_robot_penetration",
+        "Enable post-IK robot root lift penetration repair (default: IK config contact_ground.fix_robot_penetration).",
+    )
+
     args = parser.parse_args()
 
+    with open(args.human_frame_json, "r", encoding="utf-8") as f:
+        human_json_root = json.load(f)
     human_frames, motion_fps = load_human_frames(args.human_frame_json)
+    src_human = args.src_human or human_json_root.get("src_human", "bvh_lafan1")
+    actual_human_height = args.actual_human_height
+    if actual_human_height is None:
+        actual_human_height = human_json_root.get("actual_human_height")
 
     retarget = GMR(
-        src_human=args.src_human,
+        src_human=src_human,
         tgt_robot=args.robot,
-        actual_human_height=args.actual_human_height,
+        actual_human_height=actual_human_height,
+        contact_ground=args.contact_ground,
+        foot_ground_limit=args.foot_ground_limit,
+        fix_robot_penetration=args.fix_robot_penetration,
+        motion_fps=motion_fps,
     )
+    retarget.set_motion_fps(motion_fps)
 
     video_name = os.path.splitext(os.path.basename(args.human_frame_json))[0]
     viewer = RobotMotionViewer(
@@ -155,6 +189,7 @@ if __name__ == "__main__":
         transparent_robot=0,
         record_video=args.record_video,
         video_path=f"videos/{args.robot}_{video_name}.mp4",
+        camera_follow=True,
     )
 
     qpos_list = []
@@ -191,7 +226,7 @@ if __name__ == "__main__":
             human_pos_offset=np.array([0.0, 0.0, 0.0]),
             show_human_body_name=False,
             rate_limit=args.rate_limit,
-            follow_camera=False,
+            follow_camera=True,
         )
 
         if args.save_path is not None:
