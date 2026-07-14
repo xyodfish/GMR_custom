@@ -22,6 +22,7 @@
 
 
 # 新闻与更新
+- **2026-07-14：** 新增滑动窗口运动学 TO 重定向（`SlidingWindowRetargeter`）、GVHMR/SMPL-X CLI 及评估脚本。算法说明、用法与性能对比见 [`docs/sliding_window_retargeting.md`](docs/sliding_window_retargeting.md)。
 - **2026-07-13：** 新增 **Unitree H2**（`unitree_h2`），包含 SMPL-X 与 LAFAN1 BVH 的 IK 配置、`contact_ground` preset，以及调优后的 `bvh_lafan1_to_h2.json`。可通过 `bvh_to_robot.py` / `human_json_to_robot.py` 实时重定向；通过 `vis_robot_motion.py --human_frame_json` 回放并叠加 IK 目标锚点。
 - **2026-06-26：** 新增解耦的接触/地面模式控制与 BVH 离线分析工具。详见 [`docs/contact_ground.md`](docs/contact_ground.md)、[`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md) 及 `scripts/analysis/analyze_contact_modes.py`。
 - **2026-04-15：** 基于 GMR 新增实验性 C++ 重定向功能，见「C++ 功能（实验性）」章节及 [`cpp/README.md`](cpp/README.md)。
