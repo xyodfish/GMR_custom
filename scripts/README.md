@@ -24,11 +24,17 @@ python scripts/gmr_gui.py
 
 python scripts/retarget/bvh_to_robot.py --bvh_file ... --robot unitree_h2
 python scripts/retarget/smplx_to_robot.py --smplx_file ... --robot unitree_g1
+python scripts/retarget/smplx_to_robot_sliding_window.py --smplx_file ... --robot unitree_g1
 python scripts/gvhmr/to_robot.py --gvhmr_pred_file ... --robot unitree_h2
+python scripts/gvhmr/to_robot_sliding_window.py --gvhmr_pred_file ... --robot unitree_g1
 python scripts/gvhmr/video_to_robot.py --video ... --robot unitree_h2
 python scripts/viz/vis_robot_motion.py --robot ... --robot_motion_path ...
 python scripts/analysis/analyze_contact_modes.py ...
+python scripts/analysis/benchmark_retarget_timing.py --gvhmr_pred_file ... --robot unitree_g1
+python scripts/analysis/compare_joint_trajectories.py --gvhmr_pred_file ... --robot unitree_g1
 ```
+
+滑动窗口运动学 TO 详见 [`docs/sliding_window_retargeting.md`](../docs/sliding_window_retargeting.md)。
 
 ## 库代码
 

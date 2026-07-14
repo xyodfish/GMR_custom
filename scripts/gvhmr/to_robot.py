@@ -187,10 +187,10 @@ if __name__ == "__main__":
             root_rot=qpos[3:7],
             dof_pos=qpos[7:],
             human_motion_data=retarget.scaled_human_data,
-            # human_motion_data=smplx_data,
             human_pos_offset=np.array([0.0, 0.0, 0.0]),
             show_human_body_name=False,
             rate_limit=args.rate_limit,
+            follow_camera=True,
         )
         if args.save_path is not None:
             qpos_list.append(qpos)

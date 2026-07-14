@@ -405,9 +405,10 @@ class GeneralMotionRetargeting:
                 continue
             pos, rot = self._body_target_from_entry(human_data, entry)
             scaled[entry["human_body"]] = [pos, rot]
-        for entry in self.task_frames2:
-            pos, rot = self._body_target_from_entry(human_data, entry)
-            scaled[entry["human_body"]] = [pos, rot]
+        if self.use_ik_match_table2:
+            for entry in self.task_frames2:
+                pos, rot = self._body_target_from_entry(human_data, entry)
+                scaled[entry["human_body"]] = [pos, rot]
         return scaled
 
     @staticmethod

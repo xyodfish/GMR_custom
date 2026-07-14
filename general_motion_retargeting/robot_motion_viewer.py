@@ -72,7 +72,8 @@ class RobotMotionViewer:
         self.rate_limiter = RateLimiter(frequency=self.motion_fps, warn=False)
         self.camera_follow = camera_follow
         self.record_video = record_video
-
+        self._record_cam_azimuth = 135.0
+        self._record_cam_elevation = -15.0
 
         self.viewer = mjv.launch_passive(
             model=self.model,
@@ -96,7 +97,20 @@ class RobotMotionViewer:
             
             # Initialize renderer for video recording
             self.renderer = mj.Renderer(self.model, height=video_height, width=video_width)
+            self.record_cam = mj.MjvCamera()
+            self.record_cam.type = mj.mjtCamera.mjCAMERA_FREE
+            self.record_cam.azimuth = self._record_cam_azimuth
+            self.record_cam.elevation = self._record_cam_elevation
+            self.record_cam.distance = self.viewer_cam_distance
+            self.record_cam.lookat[:] = self.data.xpos[self.model.body(self.robot_base).id]
         
+    def _sync_camera(self, cam, follow: bool) -> None:
+        if follow:
+            cam.lookat[:] = self.data.xpos[self.model.body(self.robot_base).id]
+        cam.distance = self.viewer_cam_distance
+        cam.azimuth = self._record_cam_azimuth
+        cam.elevation = self._record_cam_elevation
+
     def step(self, 
             # robot data
             root_pos=None, root_rot=None, dof_pos=None, qpos=None,
@@ -132,11 +146,7 @@ class RobotMotionViewer:
         
         mj.mj_forward(self.model, self.data)
         
-        if follow_camera:
-            self.viewer.cam.lookat = self.data.xpos[self.model.body(self.robot_base).id]
-            self.viewer.cam.distance = self.viewer_cam_distance
-            self.viewer.cam.elevation = -10  # 正面视角，轻微向下看
-            # self.viewer.cam.azimuth = 180    # 正面朝向机器人
+        self._sync_camera(self.viewer.cam, follow_camera)
         
         if human_motion_data is not None:
             # Clean custom geometry
@@ -157,8 +167,9 @@ class RobotMotionViewer:
             self.rate_limiter.sleep()
 
         if self.record_video:
-            # Use renderer for proper offscreen rendering
-            self.renderer.update_scene(self.data, camera=self.viewer.cam)
+            # Use a deterministic record camera; do not read interactive viewer.cam.
+            self._sync_camera(self.record_cam, follow_camera)
+            self.renderer.update_scene(self.data, camera=self.record_cam)
             img = self.renderer.render()
             self.mp4_writer.append_data(img)
     
