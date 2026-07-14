@@ -19,7 +19,7 @@
         "lying_penetration_margin": 0.02,
         "penetration_max_iterations": 5,
         "airborne_height_threshold": 0.15,
-        "airborne_offset_decay": 0.85,
+        "airborne_offset_decay": 1.0,
         "floor_geom_name": "floor",
         "foot_collision_geoms": [],
         "robot_foot_bodies": [],

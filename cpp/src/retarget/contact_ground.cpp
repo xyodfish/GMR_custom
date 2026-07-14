@@ -186,7 +186,7 @@ namespace gmr {
         for (const auto& [name, pos] : footPositions) {
             const bool wasContact = lastContacts_.count(name) > 0 && lastContacts_.at(name);
             const double zLimit   = wasContact ? config_.heightOffThreshold : config_.heightThreshold;
-            const bool zOk        = pos.z() <= zLimit;
+            const bool zOk        = pos.z() - groundAlignOffset_ <= zLimit;
 
             bool velOk = true;
             if (footPosBuf_.size() >= 2) {

@@ -34,7 +34,7 @@ namespace gmr {
         double lyingPenetrationMargin = 0.02;
         int penetrationMaxIterations = 5;
         double airborneHeightThreshold = 0.15;
-        double airborneOffsetDecay = 0.85;
+        double airborneOffsetDecay = 1.0;
         std::string floorGeomName = "floor";
         std::vector<std::string> footCollisionGeoms;
         std::vector<std::string> robotFootBodies;

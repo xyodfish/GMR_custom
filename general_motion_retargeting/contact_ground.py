@@ -61,7 +61,11 @@ class StreamingContactDetector:
         self._buf: deque[dict[str, np.ndarray]] = deque(maxlen=self.vel_window)
         self._last_contacts: dict[str, bool] = {}
 
-    def update(self, foot_positions: dict[str, np.ndarray]) -> dict[str, bool]:
+    def update(
+        self,
+        foot_positions: dict[str, np.ndarray],
+        height_offset: float = 0.0,
+    ) -> dict[str, bool]:
         self._buf.append({name: pos.copy() for name, pos in foot_positions.items()})
         contacts: dict[str, bool] = {}
         dt = max((len(self._buf) - 1) / self.fps, 1.0 / self.fps)
@@ -69,7 +73,7 @@ class StreamingContactDetector:
         for name, pos in foot_positions.items():
             was_contact = self._last_contacts.get(name, False)
             z_limit = self.height_off_threshold if was_contact else self.height_threshold
-            z_ok = float(pos[2]) <= z_limit
+            z_ok = float(pos[2]) - height_offset <= z_limit
 
             if len(self._buf) < 2:
                 vel_ok = True
@@ -93,7 +97,7 @@ class StreamingGroundAligner:
         ground_margin: float = 0.02,
         lpf_alpha: float = 0.3,
         airborne_height_threshold: float = 0.15,
-        airborne_offset_decay: float = 0.85,
+        airborne_offset_decay: float = 1.0,
     ) -> None:
         self.ground_z = float(ground_z)
         self.ground_margin = float(ground_margin)
@@ -407,7 +411,7 @@ class ContactGroundPipeline:
             ground_margin=_as_float(cfg.get("ground_margin", 0.02), 0.02),
             lpf_alpha=_as_float(cfg.get("lpf_alpha", 0.3), 0.3),
             airborne_height_threshold=_as_float(cfg.get("airborne_height_threshold", 0.15), 0.15),
-            airborne_offset_decay=_as_float(cfg.get("airborne_offset_decay", 0.85), 0.85),
+            airborne_offset_decay=_as_float(cfg.get("airborne_offset_decay", 1.0), 1.0),
         )
         self.foot_locker = StreamingFootLocker(
             ema_alpha=_as_float(cfg.get("foot_lock_ema_alpha", 0.05), 0.05),
@@ -500,7 +504,10 @@ class ContactGroundPipeline:
         if not foot_positions:
             return {}, {}
 
-        contacts = self.contact_detector.update(foot_positions)
+        contacts = self.contact_detector.update(
+            foot_positions,
+            height_offset=self.ground_aligner.last_offset,
+        )
         self.last_contacts = contacts
         self.last_min_foot_z = min(float(pos[2]) for pos in foot_positions.values())
         if self.human_root_name in human_data:

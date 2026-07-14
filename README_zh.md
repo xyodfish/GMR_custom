@@ -195,6 +195,19 @@ cmake --build cpp/build -j
 
 ## 使用方法
 
+### GUI 启动器（快速调试）
+
+基于 **[Gradio](https://gradio.app)** 的 Web 界面：
+
+```bash
+conda activate gmr
+cd /path/to/GMR_custom
+pip install gradio
+python scripts/gmr_gui.py
+```
+
+浏览器打开 `http://127.0.0.1:7860`，填写本地绝对路径即可。逻辑拆分：`gmr_gui_core.py` + `gmr_gui.py`。
+
 ### [NEW] PICO 流式遥操作（TWIST2）
 
 安装 PICO SDK：
@@ -274,6 +287,26 @@ python tools/demo/demo.py --video=docs/example_video/tennis.mp4 -s
 ```bash
 python scripts/gvhmr_to_robot.py --gvhmr_pred_file <hmr4d_results.pt路径> --robot unitree_g1 --record_video
 ```
+
+### 将 GMR pickle 转为 CSV
+
+批量转换目录中的 `.pkl`，CSV 列顺序为 `root_pos + root_rot + dof_pos`：
+
+```bash
+python scripts/batch_gmr_pkl_to_csv.py --folder <包含pkl的目录>
+```
+
+GVHMR 单目视频结果可能带有持续向上的 root 漂移，表现为机器人行走一段时间后双脚浮空。当前 GMR 的 `contact_ground` 会以已估计的地面偏移判断接触，并在短暂腾空时保持该偏移；重新运行 `gvhmr_to_robot.py` 即可在生成 pickle 前修正漂移。
+
+对于修复前已经生成的旧 pickle，或重定向时关闭了 `contact_ground`，Unitree G1 的走路等始终有支撑脚的动作仍可在转换时启用兼容校正：
+
+```bash
+python scripts/batch_gmr_pkl_to_csv.py \
+  --folder <包含pkl的目录> \
+  --ground-feet
+```
+
+`--ground-feet` 使用 G1 MuJoCo 模型逐帧计算左右脚高度，并只修正 CSV 中的 `root_pos.z`，使较低脚保持在地面接触高度；不会修改原始 pickle、root 水平轨迹、旋转或关节角。该选项会强制至少一只脚接地，不要用于包含真实跳跃或腾空阶段的动作。新数据优先在 GMR 层启用 `contact_ground`，保留真实腾空。
 
 
 

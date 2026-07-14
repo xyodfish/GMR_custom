@@ -126,9 +126,11 @@ G1 使用共享 preset 启用：
 | `human_root_name` | 来自 IK 的 `human_root_name` | 用于检测躺姿（髋部高度） |
 | `vel_threshold` | `0.5` | 判定接触的最大脚速（m/s） |
 | `height_threshold` | `0.08` | 进入接触的脚高度（m） |
-| `height_off_threshold` | `0.12` | 离开接触的脚高度（m，迟滞） |
+| `height_off_threshold` | `0.12` | 离开接触的脚相对已估计地面高度（m，迟滞） |
 | `ground_z` | `0.0` | 人体对齐的目标地面高度 |
 | `ground_margin` | `0.02` | 人体对齐时相对地面的余量 |
+| `airborne_height_threshold` | `0.15` | 无接触时用于识别腾空的脚高度（m） |
+| `airborne_offset_decay` | `1.0` | 腾空时保留地面对齐 offset；小于 1 会逐帧衰减 |
 | `enable_foot_lock` | `true` | 接触期间启用 EMA 脚锁定 |
 | `fix_robot_penetration` | `true` | IK 后抬高 root |
 | `penetration_margin` | `0.01` | 站立 / 正常姿态的安全距离（m） |
@@ -253,3 +255,4 @@ python scripts/stitch_videos_side_by_side.py \
 3. 躯干 geom 用于背 / 骨盆；躺姿模式加入腿部 geom 与更大边距。
 4. **机器人 preset**（`contact_ground_presets.json`）+ IK 覆盖合并，支持多机器人。
 5. **C++ 端口**：`ContactGroundPipeline` 接入四个 retarget 后端；MuJoCo 后端支持完整穿透修正。
+6. **全局高度漂移修复**：接触高度相对已估计地面 offset 计算，脚速仍使用原始轨迹；腾空时默认冻结 offset，避免短暂失联后持续浮空。

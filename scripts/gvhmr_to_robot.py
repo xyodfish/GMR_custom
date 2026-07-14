@@ -11,6 +11,13 @@ from general_motion_retargeting.utils.smpl import load_gvhmr_pred_file, get_gvhm
 
 from rich import print
 
+
+def add_optional_bool_arg(parser, name, help_text):
+    parser.add_argument(f"--{name}", dest=name, action="store_true", help=help_text)
+    parser.add_argument(f"--no-{name}", dest=name, action="store_false")
+    parser.set_defaults(**{name: None})
+
+
 if __name__ == "__main__":
     
     HERE = pathlib.Path(__file__).parent
@@ -68,6 +75,24 @@ if __name__ == "__main__":
         help="Disable realtime playback limiting and render as fast as possible.",
     )
 
+    add_optional_bool_arg(
+        parser,
+        "contact_ground",
+        "Enable streaming contact/ground fix (default: IK config contact_ground.enabled).",
+    )
+
+    add_optional_bool_arg(
+        parser,
+        "foot_ground_limit",
+        "Enable QP foot-ground inequality limit (default: IK config foot_ground_limit.enabled).",
+    )
+
+    add_optional_bool_arg(
+        parser,
+        "fix_robot_penetration",
+        "Enable post-IK robot root lift penetration repair (default: IK config contact_ground.fix_robot_penetration).",
+    )
+
     args = parser.parse_args()
 
 
@@ -90,6 +115,10 @@ if __name__ == "__main__":
         actual_human_height=actual_human_height,
         src_human="smplx",
         tgt_robot=args.robot,
+        contact_ground=args.contact_ground,
+        foot_ground_limit=args.foot_ground_limit,
+        fix_robot_penetration=args.fix_robot_penetration,
+        motion_fps=aligned_fps,
     )
     
     robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,

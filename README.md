@@ -197,7 +197,22 @@ Each frame of **robot motion data** can be understood as a tuple of (robot_base_
 
 ## Usage
 
-### [NEW] PICO Streaming to Robot (TWIST2)
+### GUI 启动器（快速调试）
+
+基于 **[Gradio](https://gradio.app)** 的 Web 界面（比 Tk 更现代，便于迭代）：
+
+```bash
+conda activate gmr
+cd /path/to/GMR_custom
+pip install gradio   # 若尚未安装
+python scripts/gmr_gui.py
+```
+
+浏览器自动打开 `http://127.0.0.1:7860`。请填写**本地绝对路径**（不要用上传文件，大 BVH 需直接读磁盘路径）。
+
+核心逻辑在 `scripts/gmr_gui_core.py`，界面在 `scripts/gmr_gui.py`。
+
+### [NEW] PICO 流式遥操作（TWIST2）
 
 Install PICO SDK:
 1. On your PICO, install PICO SDK: see [here](https://github.com/XR-Robotics/XRoboToolkit-Unity-Client/releases/).
