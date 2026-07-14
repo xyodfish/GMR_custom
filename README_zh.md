@@ -23,7 +23,7 @@
 
 # 新闻与更新
 - **2026-07-13：** 新增 **Unitree H2**（`unitree_h2`），包含 SMPL-X 与 LAFAN1 BVH 的 IK 配置、`contact_ground` preset，以及调优后的 `bvh_lafan1_to_h2.json`。可通过 `bvh_to_robot.py` / `human_json_to_robot.py` 实时重定向；通过 `vis_robot_motion.py --human_frame_json` 回放并叠加 IK 目标锚点。
-- **2026-06-26：** 新增解耦的接触/地面模式控制与 BVH 离线分析工具。详见 [`docs/contact_ground.md`](docs/contact_ground.md)、[`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md) 及 `scripts/analyze_contact_modes.py`。
+- **2026-06-26：** 新增解耦的接触/地面模式控制与 BVH 离线分析工具。详见 [`docs/contact_ground.md`](docs/contact_ground.md)、[`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md) 及 `scripts/analysis/analyze_contact_modes.py`。
 - **2026-04-15：** 基于 GMR 新增实验性 C++ 重定向功能，见「C++ 功能（实验性）」章节及 [`cpp/README.md`](cpp/README.md)。
 - **2026-01-21：** 支持 [Xsens](https://www.xsens.com/) BVH 离线数据。
 - **2026-01-12：** 支持 [Fourier GR3](https://www.fftai.com/)，为本仓库第 17 款人形机器人。
@@ -35,7 +35,7 @@
 - **2025-10-14：** 新增 IK 配置文档，见 [DOC.md](DOC.md)。
 - **2025-10-09：** [TWIST](https://github.com/YanjieZe/TWIST) 开源代码可用于 RL 动作跟踪。
 - **2025-10-02：** GMR 技术报告已发布于 [arXiv](https://arxiv.org/abs/2510.02252)。
-- **2025-10-01：** 支持将 GMR pickle 转为 CSV（用于 beyondmimic），见 `scripts/batch_gmr_pkl_to_csv.py`。
+- **2025-10-01：** 支持将 GMR pickle 转为 CSV（用于 beyondmimic），见 `scripts/tools/batch_gmr_pkl_to_csv.py`。
 - **2025-09-25：** GMR 介绍视频见 [Bilibili](https://www.bilibili.com/video/BV1p1nazeEzC/?share_source=copy_web&vd_source=c76e3ab14ac3f7219a9006b96b4b0f76)。
 - **2025-09-16：** 支持通过 [GVHMR](https://github.com/zju3dv/GVHMR) 从**单目视频**提取人体姿态并重定向到机器人。
 - **2025-09-12：** 支持 [Tienkung](https://github.com/Open-X-Humanoid/TienKung-Lab)，第 14 款人形机器人。
@@ -182,7 +182,7 @@ cmake --build cpp/build -j
 
 [[AMASS](https://amass.is.tue.mpg.de/) 动作数据] 从 [AMASS](https://amass.is.tue.mpg.de/) 下载原始 SMPL-X 数据到任意目录。注意：不要下载 SMPL+H 数据。
 
-[[OMOMO](https://github.com/lijiaman/omomo_release) 动作数据] 从 [Google Drive](https://drive.google.com/file/d/1tZVqLB7II0whI-Qjz-z-AU3ponSEyAmm/view?usp=sharing) 下载，使用 `scripts/convert_omomo_to_smplx.py` 转为 SMPL-X 格式。
+[[OMOMO](https://github.com/lijiaman/omomo_release) 动作数据] 从 [Google Drive](https://drive.google.com/file/d/1tZVqLB7II0whI-Qjz-z-AU3ponSEyAmm/view?usp=sharing) 下载，使用 `scripts/tools/convert_omomo_to_smplx.py` 转为 SMPL-X 格式。
 
 [[LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset) 动作数据] 从[官方仓库](https://github.com/ubisoft/ubisoft-laforge-animation-dataset)下载 BVH，即 [lafan1.zip](https://github.com/ubisoft/ubisoft-laforge-animation-dataset/blob/master/lafan1/lafan1.zip)。
 
@@ -202,11 +202,13 @@ cmake --build cpp/build -j
 ```bash
 conda activate gmr
 cd /path/to/GMR_custom
-pip install gradio
+pip install -e .
 python scripts/gmr_gui.py
+# 或: gmr-gui
+# 或: python -m general_motion_retargeting.gui.app
 ```
 
-浏览器打开 `http://127.0.0.1:7860`，填写本地绝对路径即可。逻辑拆分：`gmr_gui_core.py` + `gmr_gui.py`。
+浏览器打开 `http://127.0.0.1:7860`。GUI 代码在 `general_motion_retargeting/gui/`，脚本目录见 [`scripts/README.md`](scripts/README.md)。
 
 ### [NEW] PICO 流式遥操作（TWIST2）
 
@@ -258,7 +260,7 @@ bash teleop.sh
 单条动作重定向：
 
 ```bash
-python scripts/smplx_to_robot.py --smplx_file <smplx数据路径> --robot <机器人名> --save_path <输出.pkl> --rate_limit
+python scripts/retarget/smplx_to_robot.py --smplx_file <smplx数据路径> --robot <机器人名> --save_path <输出.pkl> --rate_limit
 ```
 
 默认会在 MuJoCo 窗口中可视化。录制视频请加 `--record_video` 和 `--video_path <视频路径.mp4>`。
@@ -268,7 +270,7 @@ python scripts/smplx_to_robot.py --smplx_file <smplx数据路径> --robot <机�
 批量重定向：
 
 ```bash
-python scripts/smplx_to_robot_dataset.py --src_folder <smplx目录> --tgt_folder <输出目录> --robot <机器人名>
+python scripts/retarget/smplx_to_robot_dataset.py --src_folder <smplx目录> --tgt_folder <输出目录> --robot <机器人名>
 ```
 
 批量模式默认不可视化。
@@ -285,7 +287,7 @@ python tools/demo/demo.py --video=docs/example_video/tennis.mp4 -s
 人体姿态保存在 `GVHMR/outputs/demo/tennis/hmr4d_results.pt`，然后执行：
 
 ```bash
-python scripts/gvhmr_to_robot.py --gvhmr_pred_file <hmr4d_results.pt路径> --robot unitree_g1 --record_video
+python scripts/gvhmr/to_robot.py --gvhmr_pred_file <hmr4d_results.pt路径> --robot unitree_g1 --record_video
 ```
 
 ### 将 GMR pickle 转为 CSV
@@ -293,7 +295,7 @@ python scripts/gvhmr_to_robot.py --gvhmr_pred_file <hmr4d_results.pt路径> --ro
 批量转换目录中的 `.pkl`，CSV 列顺序为 `root_pos + root_rot + dof_pos`：
 
 ```bash
-python scripts/batch_gmr_pkl_to_csv.py --folder <包含pkl的目录>
+python scripts/tools/batch_gmr_pkl_to_csv.py --folder <包含pkl的目录>
 ```
 
 GVHMR 单目视频结果可能带有持续向上的 root 漂移，表现为机器人行走一段时间后双脚浮空。当前 GMR 的 `contact_ground` 会以已估计的地面偏移判断接触，并在短暂腾空时保持该偏移；重新运行 `gvhmr_to_robot.py` 即可在生成 pickle 前修正漂移。
@@ -301,7 +303,7 @@ GVHMR 单目视频结果可能带有持续向上的 root 漂移，表现为机�
 对于修复前已经生成的旧 pickle，或重定向时关闭了 `contact_ground`，Unitree G1 的走路等始终有支撑脚的动作仍可在转换时启用兼容校正：
 
 ```bash
-python scripts/batch_gmr_pkl_to_csv.py \
+python scripts/tools/batch_gmr_pkl_to_csv.py \
   --folder <包含pkl的目录> \
   --ground-feet
 ```
@@ -314,10 +316,10 @@ python scripts/batch_gmr_pkl_to_csv.py \
 
 ### 实时重定向（推荐）
 
-`scripts/bvh_to_robot.py` 每帧运行 IK 并在 MuJoCo 中可视化。使用 `--rate_limit` 按实时速度播放，`--loop` 循环播放。
+`scripts/retarget/bvh_to_robot.py` 每帧运行 IK 并在 MuJoCo 中可视化。使用 `--rate_limit` 按实时速度播放，`--loop` 循环播放。
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file <bvh文件路径> \
   --robot unitree_h2 \
   --format lafan1 \
@@ -331,7 +333,7 @@ python scripts/bvh_to_robot.py \
 **Unitree H2 示例（LAFAN1）：**
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file /path/to/lafan1/walk1_subject5.bvh \
   --robot unitree_h2 \
   --format lafan1 \
@@ -342,7 +344,7 @@ python scripts/bvh_to_robot.py \
 显式开启接触/地面穿透修复（H2 IK 配置默认已启用）：
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file /path/to/lafan1/fallAndGetUp1_subject4.bvh \
   --robot unitree_h2 \
   --format lafan1 \
@@ -355,13 +357,13 @@ python scripts/bvh_to_robot.py \
 检查合并后的接触配置及脚/躯干碰撞体解析：
 
 ```bash
-python scripts/inspect_contact_ground.py --robot unitree_h2 --src_human bvh_lafan1
+python scripts/analysis/inspect_contact_ground.py --robot unitree_h2 --src_human bvh_lafan1
 ```
 
 ### 重定向并保存为 pickle
 
 ```bash
-python scripts/bvh_to_robot.py --bvh_file <bvh路径> --robot <机器人名> --save_path <输出.pkl> --rate_limit --format <格式>
+python scripts/retarget/bvh_to_robot.py --bvh_file <bvh路径> --robot <机器人名> --save_path <输出.pkl> --rate_limit --format <格式>
 ```
 
 默认会在 MuJoCo 窗口中可视化。
@@ -371,12 +373,12 @@ python scripts/bvh_to_robot.py --bvh_file <bvh路径> --robot <机器人名> --s
   - `--contact_ground` / `--no-contact_ground`：人体脚接触对齐与脚锁定。
   - `--foot_ground_limit` / `--no-foot_ground_limit`：实验性 IK/QP 脚-地面不等式约束。
   - `--fix_robot_penetration` / `--no-fix_robot_penetration`：IK 后抬高 root 修复机器人穿地。
-- 各机器人接触体 preset 见 [`docs/contact_ground.md`](docs/contact_ground.md)。定量模式对比见 [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md)，可用 `scripts/analyze_contact_modes.py` 复现。
+- 各机器人接触体 preset 见 [`docs/contact_ground.md`](docs/contact_ground.md)。定量模式对比见 [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md)，可用 `scripts/analysis/analyze_contact_modes.py` 复现。
 
 接触模式分析示例：
 
 ```bash
-conda run -n py310 python scripts/analyze_contact_modes.py \
+conda run -n py310 python scripts/analysis/analyze_contact_modes.py \
   --bvh_dir /data2/Documents/lafan1 \
   --robot unitree_g1 \
   --format lafan1 \
@@ -388,7 +390,7 @@ conda run -n py310 python scripts/analyze_contact_modes.py \
 批量重定向：
 
 ```bash
-python scripts/bvh_to_robot_dataset.py --src_folder <bvh目录> --tgt_folder <输出目录> --robot <机器人名>
+python scripts/retarget/bvh_to_robot_dataset.py --src_folder <bvh目录> --tgt_folder <输出目录> --robot <机器人名>
 ```
 
 批量模式默认不可视化。
@@ -396,10 +398,10 @@ python scripts/bvh_to_robot_dataset.py --src_folder <bvh目录> --tgt_folder <�
 
 ### 从人体帧 JSON 重定向
 
-若已通过 `scripts/bvh_to_retargeting_frame.py` 等导出人体帧 JSON，可用 `scripts/human_json_to_robot.py` 做实时 IK + 可视化：
+若已通过 `scripts/tools/bvh_to_retargeting_frame.py` 等导出人体帧 JSON，可用 `scripts/retarget/human_json_to_robot.py` 做实时 IK + 可视化：
 
 ```bash
-python scripts/human_json_to_robot.py \
+python scripts/retarget/human_json_to_robot.py \
   --human_frame_json <retarget_frame.json路径> \
   --robot unitree_h2 \
   --rate_limit \
@@ -409,7 +411,7 @@ python scripts/human_json_to_robot.py \
 脚本会自动读取 JSON 元数据中的 `src_human` 和 `actual_human_height`。也支持接触/地面参数：
 
 ```bash
-python scripts/human_json_to_robot.py \
+python scripts/retarget/human_json_to_robot.py \
   --human_frame_json <retarget_frame.json路径> \
   --robot unitree_h2 \
   --contact_ground \
@@ -454,7 +456,7 @@ python general_motion_retargeting/utils/xsens_vendor/mujoco_xsens_bvh_view.py \
 
 #### 单条动作重定向
 ```bash
-python scripts/xsens_bvh_to_robot.py \
+python scripts/retarget/xsens_bvh_to_robot.py \
   --bvh_file <bvh路径> \
   --robot <机器人名> \
   --save_path <输出.pkl> \
@@ -467,7 +469,7 @@ python scripts/xsens_bvh_to_robot.py \
 
 示例：
 ```bash
-python scripts/xsens_bvh_to_robot.py  \
+python scripts/retarget/xsens_bvh_to_robot.py  \
   --robot unitree_h1_2 \
   --scale 0.01 \
   --reset_to_zero \
@@ -522,7 +524,7 @@ pip install xsens_mvn_robot_python-*-cp310-*.whl
 
 ```bash
 conda activate gmr
-python scripts/xsens_live_streaming.py
+python scripts/retarget/xsens_live_streaming.py
 ```
 
 MuJoCo 窗口将实时显示重定向后的 Unitree G1 动作。
@@ -543,7 +545,7 @@ python poselib/fbx_importer.py --input <文件.fbx> --output <输出.pkl> --root
 
 ```bash
 conda activate gmr
-python scripts/fbx_offline_to_robot.py --motion_file <动作.pkl> --robot <机器人名> --save_path <输出.pkl> --rate_limit
+python scripts/retarget/fbx_offline_to_robot.py --motion_file <动作.pkl> --robot <机器人名> --save_path <输出.pkl> --rate_limit
 ```
 
 #### 在线流式
@@ -553,7 +555,7 @@ python scripts/fbx_offline_to_robot.py --motion_file <动作.pkl> --robot <机�
 ![OptiTrack Streaming](./assets/optitrack.png)
 
 ```bash
-python scripts/optitrack_to_robot.py --server_ip <服务端IP> --client_ip <客户端IP> --use_multicast False --robot unitree_g1
+python scripts/retarget/optitrack_to_robot.py --server_ip <服务端IP> --client_ip <客户端IP> --use_multicast False --robot unitree_g1
 ```
 
 ### 可视化已保存的机器人动作
@@ -561,7 +563,7 @@ python scripts/optitrack_to_robot.py --server_ip <服务端IP> --client_ip <客�
 仅回放（不运行 IK）。叠加 IK 目标锚点时，传入对应的人体帧 JSON。默认显示**缩放后的 IK 目标**（与实时重定向一致），而非 JSON 原始坐标。
 
 ```bash
-python scripts/vis_robot_motion.py \
+python scripts/viz/vis_robot_motion.py \
   --robot unitree_h2 \
   --robot_motion_path <机器人动作.pkl> \
   --human_frame_json <retarget_frame.json>
@@ -573,7 +575,7 @@ python scripts/vis_robot_motion.py \
 无锚点回放：
 
 ```bash
-python scripts/vis_robot_motion.py --robot <机器人名> --robot_motion_path <动作.pkl>
+python scripts/viz/vis_robot_motion.py --robot <机器人名> --robot_motion_path <动作.pkl>
 ```
 
 录制视频请加 `--record_video` 和 `--video_path <视频路径.mp4>`。
@@ -581,7 +583,7 @@ python scripts/vis_robot_motion.py --robot <机器人名> --robot_motion_path <�
 批量可视化：
 
 ```bash
-python scripts/vis_robot_motion_dataset.py --robot <机器人名> --robot_motion_folder <动作目录>
+python scripts/viz/vis_robot_motion_dataset.py --robot <机器人名> --robot_motion_folder <动作目录>
 ```
 
 MuJoCo 窗口快捷键：
@@ -595,7 +597,7 @@ MuJoCo 窗口快捷键：
 
 1. **视觉检查**：用实时 `bvh_to_robot.py`，或 `vis_robot_motion.py --human_frame_json` 回放，观察脚锚点、是否交叉腿、地面接触。
 2. **Pickle 统计**：从 `.pkl` 检查 `root_pos[:,2]`、膝关节均值、关节限位饱和比例。
-3. **接触指标**：用 `scripts/analyze_contact_modes.py` 分析穿透、脚滑、IK 误差（当前文档以 G1 为主，其他平台需扩展 `--robot`）。
+3. **接触指标**：用 `scripts/analysis/analyze_contact_modes.py` 分析穿透、脚滑、IK 误差（当前文档以 G1 为主，其他平台需扩展 `--robot`）。
 
 H2 LAFAN1 的 IK 配置：`general_motion_retargeting/ik_configs/bvh_lafan1_to_h2.json`。机器人资产：`assets/unitree_h2/`。
 

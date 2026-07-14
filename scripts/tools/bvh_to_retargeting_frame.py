@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 GMR_ROOT = os.path.join(REPO_ROOT, "general_motion_retargeting")
 GMR_UTILS_ROOT = os.path.join(GMR_ROOT, "utils")

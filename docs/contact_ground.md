@@ -45,10 +45,10 @@ qpos 输出
 | `general_motion_retargeting/contact_ground_config.py` | 合并机器人 preset 与 IK JSON 覆盖项 |
 | `general_motion_retargeting/ik_configs/contact_ground_presets.json` | **各机器人 body 名称与默认阈值** |
 | `general_motion_retargeting/motion_retarget.py` | 在 `update_targets()` 与 `retarget()` 中挂接流水线 |
-| `scripts/bvh_to_robot.py` | CLI：`--contact_ground` / `--no-contact_ground` |
-| `scripts/bvh_compare_contact_ground.py` | 录制 OFF / ON 对比视频 |
-| `scripts/stitch_videos_side_by_side.py` | 将两个 mp4 左右拼接 |
-| `scripts/inspect_contact_ground.py` | 校验某机器人的合并配置 |
+| `scripts/retarget/bvh_to_robot.py` | CLI：`--contact_ground` / `--no-contact_ground` |
+| `scripts/analysis/bvh_compare_contact_ground.py` | 录制 OFF / ON 对比视频 |
+| `scripts/analysis/stitch_videos_side_by_side.py` | 将两个 mp4 左右拼接 |
+| `scripts/analysis/inspect_contact_ground.py` | 校验某机器人的合并配置 |
 
 ### C++ 实现（`cpp/`）
 
@@ -169,7 +169,7 @@ G1 使用共享 preset 启用：
 4. 校验：
 
 ```bash
-python scripts/inspect_contact_ground.py --robot <robot_name> --src_human bvh_lafan1
+python scripts/analysis/inspect_contact_ground.py --robot <robot_name> --src_human bvh_lafan1
 ```
 
 **注意**
@@ -183,7 +183,7 @@ python scripts/inspect_contact_ground.py --robot <robot_name> --src_human bvh_la
 ### BVH retargeting
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file /path/to/motion.bvh \
   --robot unitree_g1 \
   --contact_ground
@@ -205,13 +205,13 @@ python scripts/bvh_to_robot.py \
 显式关闭：
 
 ```bash
-python scripts/bvh_to_robot.py ... --no-contact_ground
+python scripts/retarget/bvh_to_robot.py ... --no-contact_ground
 ```
 
 其他机器人（需先在 IK JSON 或 preset 中启用）：
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file motion.bvh \
   --robot fourier_n1 \
   --contact_ground
@@ -220,11 +220,11 @@ python scripts/bvh_to_robot.py \
 ### 对比视频
 
 ```bash
-python scripts/bvh_compare_contact_ground.py \
+python scripts/analysis/bvh_compare_contact_ground.py \
   --bvh_file /path/to/motion.bvh \
   --robot unitree_g1
 
-python scripts/stitch_videos_side_by_side.py \
+python scripts/analysis/stitch_videos_side_by_side.py \
   --stem motion_stem \
   --dir videos/contact_compare
 ```

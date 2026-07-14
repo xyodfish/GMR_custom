@@ -6,11 +6,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
+VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from general_motion_retargeting.utils.gvhmr_env import DEFAULT_GVHMR_ROOT
 
 from general_motion_retargeting.params import IK_CONFIG_DICT, ROBOT_XML_DICT
 
@@ -18,8 +21,8 @@ INPUT_TYPES = {
     "bvh_lafan1": {
         "label": "BVH (LAFAN1)",
         "extensions": (".bvh",),
-        "script": "bvh_to_robot.py",
-        "batch_script": "bvh_to_robot_dataset.py",
+        "script": "retarget/bvh_to_robot.py",
+        "batch_script": "retarget/bvh_to_robot_dataset.py",
         "src_human": "bvh_lafan1",
         "bvh_format": "lafan1",
         "supports_contact": True,
@@ -28,8 +31,8 @@ INPUT_TYPES = {
     "bvh_nokov": {
         "label": "BVH (Nokov)",
         "extensions": (".bvh",),
-        "script": "bvh_to_robot.py",
-        "batch_script": "bvh_to_robot_dataset.py",
+        "script": "retarget/bvh_to_robot.py",
+        "batch_script": "retarget/bvh_to_robot_dataset.py",
         "src_human": "bvh_nokov",
         "bvh_format": "nokov",
         "supports_contact": True,
@@ -38,16 +41,33 @@ INPUT_TYPES = {
     "smplx": {
         "label": "SMPL-X (.npz)",
         "extensions": (".npz", ".pkl"),
-        "script": "smplx_to_robot.py",
-        "batch_script": "smplx_to_robot_dataset.py",
+        "script": "retarget/smplx_to_robot.py",
+        "batch_script": "retarget/smplx_to_robot_dataset.py",
         "src_human": "smplx",
         "supports_contact": True,
         "supports_batch": True,
     },
+    "gvhmr_pt": {
+        "label": "GVHMR (.pt)",
+        "extensions": (".pt",),
+        "script": "gvhmr/to_robot.py",
+        "src_human": "smplx",
+        "supports_contact": True,
+        "supports_batch": False,
+    },
+    "video_gvhmr": {
+        "label": "Video → GVHMR → GMR",
+        "extensions": VIDEO_EXTENSIONS,
+        "script": "gvhmr/video_to_robot.py",
+        "src_human": "smplx",
+        "supports_contact": True,
+        "supports_batch": False,
+        "needs_gvhmr": True,
+    },
     "human_json": {
         "label": "Human JSON",
         "extensions": (".json",),
-        "script": "human_json_to_robot.py",
+        "script": "retarget/human_json_to_robot.py",
         "src_human": None,
         "supports_contact": True,
         "supports_batch": False,
@@ -55,7 +75,7 @@ INPUT_TYPES = {
     "playback_pkl": {
         "label": "Playback PKL",
         "extensions": (".pkl",),
-        "script": "vis_robot_motion.py",
+        "script": "viz/vis_robot_motion.py",
         "supports_contact": False,
         "supports_batch": False,
     },
@@ -63,6 +83,7 @@ INPUT_TYPES = {
 
 INPUT_TYPE_LABELS = {key: cfg["label"] for key, cfg in INPUT_TYPES.items()}
 LABEL_TO_INPUT_TYPE = {cfg["label"]: key for key, cfg in INPUT_TYPES.items()}
+INVERSE_RATE_LIMIT_TYPES = frozenset({"gvhmr_pt", "video_gvhmr"})
 
 TRI_STATE_LABELS = ("IK 默认", "开启", "关闭")
 ALL_ROBOTS = sorted(ROBOT_XML_DICT.keys())
@@ -87,6 +108,9 @@ class GMRRunConfig:
     contact_ground: str = "IK 默认"
     fix_robot_penetration: str = "IK 默认"
     foot_ground_limit: str = "IK 默认"
+    gvhmr_root: str = ""
+    gvhmr_python: str = ""
+    gvhmr_static_cam: bool = True
 
 
 def robots_for_input(input_type: str) -> list[str]:
@@ -129,6 +153,15 @@ def validate_config(cfg: GMRRunConfig) -> str | None:
         return "已开启保存 PKL，请填写保存路径"
     if cfg.input_type == "playback_pkl" and cfg.show_ik_anchors and not cfg.human_json_path.strip():
         return "显示 IK 锚点时需要人体 JSON 路径"
+    if INPUT_TYPES[cfg.input_type].get("needs_gvhmr"):
+        gvhmr_root = cfg.gvhmr_root.strip() or str(DEFAULT_GVHMR_ROOT)
+        if not Path(gvhmr_root).is_dir():
+            return f"GVHMR 根目录不存在: {gvhmr_root}"
+        demo_script = Path(gvhmr_root) / "tools" / "demo" / "demo.py"
+        if not demo_script.is_file():
+            return f"未找到 GVHMR demo 脚本: {demo_script}"
+    if cfg.input_type == "video_gvhmr" and p.suffix.lower() not in VIDEO_EXTENSIONS:
+        return f"视频模式需要 {', '.join(VIDEO_EXTENSIONS)} 格式文件"
     return None
 
 
@@ -160,6 +193,18 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
         cmd += ["--motion_fps", (cfg.motion_fps or "30").strip()]
     elif input_type == "smplx":
         cmd += ["--smplx_file", path, "--robot", robot]
+    elif input_type == "gvhmr_pt":
+        cmd += ["--gvhmr_pred_file", path, "--robot", robot]
+    elif input_type == "video_gvhmr":
+        cmd += ["--video", path, "--robot", robot]
+        gvhmr_root = cfg.gvhmr_root.strip() or str(DEFAULT_GVHMR_ROOT)
+        cmd += ["--gvhmr_root", gvhmr_root]
+        if cfg.gvhmr_python.strip():
+            cmd += ["--gvhmr_python", cfg.gvhmr_python.strip()]
+        if cfg.gvhmr_static_cam:
+            cmd.append("--static_cam")
+        else:
+            cmd.append("--no-static_cam")
     elif input_type == "human_json":
         cmd += ["--human_frame_json", path, "--robot", robot]
     elif input_type == "playback_pkl":
@@ -177,8 +222,14 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
         ):
             cmd += tri_state_to_args(name, value)
 
-    if cfg.rate_limit and input_type != "playback_pkl":
-        cmd.append("--rate_limit")
+    if input_type != "playback_pkl":
+        if input_type in INVERSE_RATE_LIMIT_TYPES:
+            if cfg.rate_limit:
+                cmd.append("--rate_limit")
+            else:
+                cmd.append("--no-rate-limit")
+        elif cfg.rate_limit:
+            cmd.append("--rate_limit")
     if cfg.loop and input_type != "playback_pkl":
         cmd.append("--loop")
     if cfg.save_output and input_type != "playback_pkl":

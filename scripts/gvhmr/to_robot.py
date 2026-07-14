@@ -20,7 +20,8 @@ def add_optional_bool_arg(parser, name, help_text):
 
 if __name__ == "__main__":
     
-    HERE = pathlib.Path(__file__).parent
+    HERE = pathlib.Path(__file__).resolve().parent
+    REPO_ROOT = HERE.parents[2]
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -49,7 +50,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--body_model_dir",
         type=str,
-        default=str((HERE / ".." / "assets" / "body_models").resolve()),
+        default=str((REPO_ROOT / "assets" / "body_models").resolve()),
         help="SMPL-X body model root folder containing the smplx subfolder.",
     )
     
@@ -68,12 +69,26 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--video_path",
+        type=str,
+        default=None,
+        help="Output MP4 path for robot motion recording.",
+    )
+
+    parser.add_argument(
+        "--rate_limit",
+        dest="rate_limit",
+        action="store_true",
+        help="Limit the rate of the retargeted robot motion to keep the same as the human motion.",
+    )
+
+    parser.add_argument(
         "--no-rate-limit",
         dest="rate_limit",
-        default=True,
         action="store_false",
         help="Disable realtime playback limiting and render as fast as possible.",
     )
+    parser.set_defaults(rate_limit=True)
 
     add_optional_bool_arg(
         parser,
@@ -121,11 +136,12 @@ if __name__ == "__main__":
         motion_fps=aligned_fps,
     )
     
+    default_video_path = f"videos/{args.robot}_{args.gvhmr_pred_file.split('/')[-1].split('.')[0]}.mp4"
     robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
                                             motion_fps=aligned_fps,
                                             transparent_robot=0,
                                             record_video=args.record_video,
-                                            video_path=f"videos/{args.robot}_{args.gvhmr_pred_file.split('/')[-1].split('.')[0]}.mp4",)
+                                            video_path=args.video_path or default_video_path,)
     
 
     curr_frame = 0

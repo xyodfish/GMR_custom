@@ -51,23 +51,23 @@ Additional models retained in ROBOT_BASE_DICT for compatibility:
 ### Single Motion Retargeting
 ```bash
 # SMPL-X to robot
-python scripts/smplx_to_robot.py --smplx_file <path> --robot <robot_name> --save_path <output.pkl>
+python scripts/retarget/smplx_to_robot.py --smplx_file <path> --robot <robot_name> --save_path <output.pkl>
 
-# BVH to robot  
-python scripts/bvh_to_robot.py --bvh_file <path> --robot <robot_name> --save_path <output.pkl>
+# BVH to robot 
+python scripts/retarget/bvh_to_robot.py --bvh_file <path> --robot <robot_name> --save_path <output.pkl>
 ```
 
 ### Batch Processing
 ```bash
 # Process datasets
-python scripts/smplx_to_robot_dataset.py
-python scripts/bvh_to_robot_dataset.py
+python scripts/retarget/smplx_to_robot_dataset.py
+python scripts/retarget/bvh_to_robot_dataset.py
 ```
 
 ### Visualization
 ```bash
 # Visualize saved robot motion
-python scripts/vis_robot_motion.py --robot <robot_name> --robot_motion_path <path.pkl>
+python scripts/viz/vis_robot_motion.py --robot <robot_name> --robot_motion_path <path.pkl>
 ```
 
 Add `--record_video --video_path <output.mp4>` to any visualization command to record video.
@@ -81,7 +81,7 @@ Add `--record_video --video_path <output.mp4>` to any visualization command to r
 
 ## File Organization
 
-- `scripts/`: Entry point scripts for different retargeting workflows
+- `scripts/`: Entry point scripts — see [`scripts/README.md`](scripts/README.md) for layout (`retarget/`, `gvhmr/`, `viz/`, `analysis/`, `tools/`)
 - `general_motion_retargeting/`: Core library code
 - `assets/`: Robot models (MuJoCo XML) and body models (SMPL-X)
 - `general_motion_retargeting/ik_configs/`: JSON configuration files for human-to-robot body mappings:

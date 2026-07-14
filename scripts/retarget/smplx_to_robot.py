@@ -20,7 +20,8 @@ def add_optional_bool_arg(parser, name, help_text):
 
 if __name__ == "__main__":
     
-    HERE = pathlib.Path(__file__).parent
+    HERE = pathlib.Path(__file__).resolve().parent
+    REPO_ROOT = HERE.parents[2]
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -53,7 +54,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--body_model_dir",
         type=str,
-        default=str((HERE / ".." / "assets" / "body_models").resolve()),
+        default=str((REPO_ROOT / "assets" / "body_models").resolve()),
         help="SMPL-X body model root folder containing the smplx subfolder.",
     )
     

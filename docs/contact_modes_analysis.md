@@ -22,7 +22,7 @@
 运行命令：
 
 ```bash
-conda run -n py310 python scripts/analyze_contact_modes.py \
+conda run -n py310 python scripts/analysis/analyze_contact_modes.py \
   --bvh_files \
   /data2/Documents/lafan1/dance1_subject2.bvh \
   /data2/Documents/lafan1/fallAndGetUp1_subject4.bvh \

@@ -15,8 +15,9 @@ import pathlib
 import sys
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+REPO_ROOT = SCRIPT_DIR.parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import imageio
 import mujoco as mj
@@ -32,7 +33,7 @@ from general_motion_retargeting import (
 )
 from general_motion_retargeting.utils.lafan1 import load_bvh_file
 
-from stitch_videos_side_by_side import stitch_videos_side_by_side
+from scripts.analysis.stitch_videos_side_by_side import stitch_videos_side_by_side
 
 try:
     import cv2

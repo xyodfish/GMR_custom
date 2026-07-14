@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
+REPO_ROOT = HERE.parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.human_json_to_robot import load_human_frames
 

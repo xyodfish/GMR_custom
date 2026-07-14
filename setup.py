@@ -30,4 +30,9 @@ setup(
     "gradio>=5.0",
   ],
   python_requires='>=3.10',
+  entry_points={
+    "console_scripts": [
+      "gmr-gui=general_motion_retargeting.gui.app:main",
+    ],
+  },
 )

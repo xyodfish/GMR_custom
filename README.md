@@ -23,7 +23,7 @@ This repo is licensed under the [MIT License](LICENSE).
 
 # News & Updates
 - **2026-07-13:** Added **Unitree H2** (`unitree_h2`) with SMPL-X and LAFAN1 BVH IK configs, `contact_ground` preset, and tuned `bvh_lafan1_to_h2.json`. Real-time retargeting via `bvh_to_robot.py` / `human_json_to_robot.py`; playback with IK-target overlays via `vis_robot_motion.py --human_frame_json`.
-- **2026-06-26:** Added decoupled contact/ground mode controls and offline analysis tooling for BVH retargeting. See [`docs/contact_ground.md`](docs/contact_ground.md), [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and `scripts/analyze_contact_modes.py`.
+- **2026-06-26:** Added decoupled contact/ground mode controls and offline analysis tooling for BVH retargeting. See [`docs/contact_ground.md`](docs/contact_ground.md), [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and `scripts/analysis/analyze_contact_modes.py`.
 - **2026-04-15:** This repository adds an experimental C++ retargeting feature set based on GMR. See the new "C++ Feature (Experimental)" section and [`cpp/README.md`](cpp/README.md).
 - **2026-01-21:** GMR now supports [Xsens](https://www.xsens.com/) BVH offline data.
 - **2026-01-12:** GMR now supports [Fourier GR3](https://www.fftai.com/), the 17th humanoid robot in the repo.
@@ -35,7 +35,7 @@ This repo is licensed under the [MIT License](LICENSE).
 - **2025-10-14:** Add a doc on ik config. See [DOC.md](DOC.md)
 - **2025-10-09:** Check [TWIST](https://github.com/YanjieZe/TWIST) open-sourced code for RL motion tracking.
 - **2025-10-02:** Tech report for GMR is now on [arXiv](https://arxiv.org/abs/2510.02252).
-- **2025-10-01:** GMR now supports converting GMR pickle files to CSV (for beyondmimic), check `scripts/batch_gmr_pkl_to_csv.py`.
+- **2025-10-01:** GMR now supports converting GMR pickle files to CSV (for beyondmimic), check `scripts/tools/batch_gmr_pkl_to_csv.py`.
 - **2025-09-25:** An introduction on GMR is available on [Bilibili](https://www.bilibili.com/video/BV1p1nazeEzC/?share_source=copy_web&vd_source=c76e3ab14ac3f7219a9006b96b4b0f76).
 - **2025-09-16:** GMR now supports to use [GVHMR](https://github.com/zju3dv/GVHMR) for extracting human pose from **monocular video** and retargeting to robot.
 - **2025-09-12:** GMR now supports [Tienkung](https://github.com/Open-X-Humanoid/TienKung-Lab), the 14th humanoid robot in the repo.
@@ -182,7 +182,7 @@ For full details and latest C++ notes, see [`cpp/README.md`](cpp/README.md).
 
 [[AMASS](https://amass.is.tue.mpg.de/) motion data] download raw SMPL-X data to any folder you want from [AMASS](https://amass.is.tue.mpg.de/). NOTE: Do not download SMPL+H data.
 
-[[OMOMO](https://github.com/lijiaman/omomo_release) motion data] download raw OMOMO data to any folder you want from [this google drive file](https://drive.google.com/file/d/1tZVqLB7II0whI-Qjz-z-AU3ponSEyAmm/view?usp=sharing). And process the data into the SMPL-X format using `scripts/convert_omomo_to_smplx.py`.
+[[OMOMO](https://github.com/lijiaman/omomo_release) motion data] download raw OMOMO data to any folder you want from [this google drive file](https://drive.google.com/file/d/1tZVqLB7II0whI-Qjz-z-AU3ponSEyAmm/view?usp=sharing). And process the data into the SMPL-X format using `scripts/tools/convert_omomo_to_smplx.py`.
 
 [[LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset) motion data] download raw LAFAN1 bvh files from [the official repo](https://github.com/ubisoft/ubisoft-laforge-animation-dataset), i.e., [lafan1.zip](https://github.com/ubisoft/ubisoft-laforge-animation-dataset/blob/master/lafan1/lafan1.zip).
 
@@ -204,13 +204,15 @@ Each frame of **robot motion data** can be understood as a tuple of (robot_base_
 ```bash
 conda activate gmr
 cd /path/to/GMR_custom
-pip install gradio   # 若尚未安装
+pip install -e .
 python scripts/gmr_gui.py
+# or: gmr-gui
+# or: python -m general_motion_retargeting.gui.app
 ```
 
 浏览器自动打开 `http://127.0.0.1:7860`。请填写**本地绝对路径**（不要用上传文件，大 BVH 需直接读磁盘路径）。
 
-核心逻辑在 `scripts/gmr_gui_core.py`，界面在 `scripts/gmr_gui.py`。
+GUI 代码在 `general_motion_retargeting/gui/`，脚本目录见 [`scripts/README.md`](scripts/README.md)。
 
 ### [NEW] PICO 流式遥操作（TWIST2）
 
@@ -267,7 +269,7 @@ You should be able to see the retargeted robot motion in a mujoco window.
 Retarget a single motion:
 
 ```bash
-python scripts/smplx_to_robot.py --smplx_file <path_to_smplx_data> --robot <path_to_robot_data> --save_path <path_to_save_robot_data.pkl> --rate_limit
+python scripts/retarget/smplx_to_robot.py --smplx_file <path_to_smplx_data> --robot <path_to_robot_data> --save_path <path_to_save_robot_data.pkl> --rate_limit
 ```
 
 By default you should see the visualization of the retargeted robot motion in a mujoco window.
@@ -278,7 +280,7 @@ If you want to record video, add `--record_video` and `--video_path <your_video_
 Retarget a folder of motions:
 
 ```bash
-python scripts/smplx_to_robot_dataset.py --src_folder <path_to_dir_of_smplx_data> --tgt_folder <path_to_dir_to_save_robot_data> --robot <robot_name>
+python scripts/retarget/smplx_to_robot_dataset.py --src_folder <path_to_dir_of_smplx_data> --tgt_folder <path_to_dir_to_save_robot_data> --robot <robot_name>
 ```
 
 By default there is no visualization for batch retargeting.
@@ -299,7 +301,7 @@ Then you should obtain the saved human pose data in `GVHMR/outputs/demo/tennis/h
 Then, run the command below to retarget the extracted human pose data to your robot:
 
 ```bash
-python scripts/gvhmr_to_robot.py --gvhmr_pred_file <path_to_hmr4d_results.pt> --robot unitree_g1 --record_video
+python scripts/gvhmr/to_robot.py --gvhmr_pred_file <path_to_hmr4d_results.pt> --robot unitree_g1 --record_video
 ```
 
 
@@ -308,10 +310,10 @@ python scripts/gvhmr_to_robot.py --gvhmr_pred_file <path_to_hmr4d_results.pt> --
 
 ### Real-time retargeting (recommended)
 
-`scripts/bvh_to_robot.py` runs IK every frame and visualizes in MuJoCo. Use `--rate_limit` for real-time playback speed and `--loop` to repeat the clip.
+`scripts/retarget/bvh_to_robot.py` runs IK every frame and visualizes in MuJoCo. Use `--rate_limit` for real-time playback speed and `--loop` to repeat the clip.
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file <path_to_bvh_data> \
   --robot unitree_h2 \
   --format lafan1 \
@@ -325,7 +327,7 @@ This is different from `vis_robot_motion.py`, which only **plays back** a saved 
 **Unitree H2 example (LAFAN1):**
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file /path/to/lafan1/walk1_subject5.bvh \
   --robot unitree_h2 \
   --format lafan1 \
@@ -336,7 +338,7 @@ python scripts/bvh_to_robot.py \
 Enable contact/ground penetration repair explicitly (H2 IK config enables this by default):
 
 ```bash
-python scripts/bvh_to_robot.py \
+python scripts/retarget/bvh_to_robot.py \
   --bvh_file /path/to/lafan1/fallAndGetUp1_subject4.bvh \
   --robot unitree_h2 \
   --format lafan1 \
@@ -349,7 +351,7 @@ python scripts/bvh_to_robot.py \
 Inspect merged contact config and resolved foot/trunk geoms:
 
 ```bash
-python scripts/inspect_contact_ground.py --robot unitree_h2 --src_human bvh_lafan1
+python scripts/analysis/inspect_contact_ground.py --robot unitree_h2 --src_human bvh_lafan1
 ```
 
 ### Retarget and save to pickle
@@ -358,7 +360,7 @@ Retarget a single motion:
 
 ```bash
 # single motion
-python scripts/bvh_to_robot.py --bvh_file <path_to_bvh_data> --robot <robot_name> --save_path <path_to_save_robot_data.pkl> --rate_limit --format <format>
+python scripts/retarget/bvh_to_robot.py --bvh_file <path_to_bvh_data> --robot <robot_name> --save_path <path_to_save_robot_data.pkl> --rate_limit --format <format>
 ```
 
 By default you should see the visualization of the retargeted robot motion in a mujoco window. 
@@ -368,12 +370,12 @@ By default you should see the visualization of the retargeted robot motion in a 
   - `--contact_ground` / `--no-contact_ground`: old contact-ground alignment and foot-lock strategy.
   - `--foot_ground_limit` / `--no-foot_ground_limit`: experimental IK/QP foot-ground limit.
   - `--fix_robot_penetration` / `--no-fix_robot_penetration`: post-retarget root lift for robot ground penetration.
-- Per-robot contact body presets and tuning are documented in [`docs/contact_ground.md`](docs/contact_ground.md). Quantitative mode comparison is documented in [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and can be reproduced with `scripts/analyze_contact_modes.py`.
+- Per-robot contact body presets and tuning are documented in [`docs/contact_ground.md`](docs/contact_ground.md). Quantitative mode comparison is documented in [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and can be reproduced with `scripts/analysis/analyze_contact_modes.py`.
 
 Example contact mode analysis:
 
 ```bash
-conda run -n py310 python scripts/analyze_contact_modes.py \
+conda run -n py310 python scripts/analysis/analyze_contact_modes.py \
   --bvh_dir /data2/Documents/lafan1 \
   --robot unitree_g1 \
   --format lafan1 \
@@ -385,7 +387,7 @@ conda run -n py310 python scripts/analyze_contact_modes.py \
 Retarget a folder of motions:
 
 ```bash
-python scripts/bvh_to_robot_dataset.py --src_folder <path_to_dir_of_bvh_data> --tgt_folder <path_to_dir_to_save_robot_data> --robot <robot_name>
+python scripts/retarget/bvh_to_robot_dataset.py --src_folder <path_to_dir_of_bvh_data> --tgt_folder <path_to_dir_to_save_robot_data> --robot <robot_name>
 ```
 
 By default there is no visualization for batch retargeting.
@@ -393,10 +395,10 @@ By default there is no visualization for batch retargeting.
 
 ### Retargeting from human frame JSON
 
-If you already exported human frames (e.g. via `scripts/bvh_to_retargeting_frame.py`), use `scripts/human_json_to_robot.py` for real-time IK + visualization:
+If you already exported human frames (e.g. via `scripts/tools/bvh_to_retargeting_frame.py`), use `scripts/retarget/human_json_to_robot.py` for real-time IK + visualization:
 
 ```bash
-python scripts/human_json_to_robot.py \
+python scripts/retarget/human_json_to_robot.py \
   --human_frame_json <path_to_retarget_frame.json> \
   --robot unitree_h2 \
   --rate_limit \
@@ -406,7 +408,7 @@ python scripts/human_json_to_robot.py \
 The script reads `src_human` and `actual_human_height` from JSON metadata when present. Contact/ground flags are also supported:
 
 ```bash
-python scripts/human_json_to_robot.py \
+python scripts/retarget/human_json_to_robot.py \
   --human_frame_json <path_to_retarget_frame.json> \
   --robot unitree_h2 \
   --contact_ground \
@@ -457,7 +459,7 @@ python general_motion_retargeting/utils/xsens_vendor/mujoco_xsens_bvh_view.py \
 #### Retarget a single motion:
 ```bash
 # single motion
-python scripts/xsens_bvh_to_robot.py \
+python scripts/retarget/xsens_bvh_to_robot.py \
   --bvh_file <path_to_bvh_data> \
   --robot <path_to_robot_data> \
   --save_path <path_to_save_robot_data.pkl> \
@@ -469,7 +471,7 @@ python scripts/xsens_bvh_to_robot.py \
 ```
 like
 ```bash
-python scripts/xsens_bvh_to_robot.py  \
+python scripts/retarget/xsens_bvh_to_robot.py  \
   --robot unitree_h1_2 \
   --scale 0.01 \
   --reset_to_zero \
@@ -546,7 +548,7 @@ With the Xsens MVN Network Streamer active and the conda environment loaded, run
 conda activate gmr
 
 # Run the Xsens live streaming retargeting script
-python scripts/xsens_live_streaming.py
+python scripts/retarget/xsens_live_streaming.py
 ```
 
 ### Retargeting from FBX (OptiTrack) to Robot
@@ -570,7 +572,7 @@ python poselib/fbx_importer.py --input <path_to_fbx_file.fbx> --output <path_to_
 ```bash
 conda activate gmr
 # single motion
-python scripts/fbx_offline_to_robot.py --motion_file <path_to_saved_motion_data.pkl> --robot <path_to_robot_data> --save_path <path_to_save_robot_data.pkl> --rate_limit
+python scripts/retarget/fbx_offline_to_robot.py --motion_file <path_to_saved_motion_data.pkl> --robot <path_to_robot_data> --save_path <path_to_save_robot_data.pkl> --rate_limit
 ```
 
 By default you should see the visualization of the retargeted robot motion in a mujoco window. 
@@ -590,7 +592,7 @@ Find the server ip (the computer that installed with Motive) and client ip (your
 And then run:
 
 ```bash
-python scripts/optitrack_to_robot.py --server_ip <server_ip> --client_ip <client_ip> --use_multicast False --robot unitree_g1
+python scripts/retarget/optitrack_to_robot.py --server_ip <server_ip> --client_ip <client_ip> --use_multicast False --robot unitree_g1
 ```
 
 You should see the visualization of the retargeted robot motion in a mujoco window.
@@ -600,7 +602,7 @@ You should see the visualization of the retargeted robot motion in a mujoco wind
 Playback only (no IK). To overlay IK target anchors, pass the matching human frame JSON. By default anchors show **scaled IK targets** (same as live retargeting), not raw JSON coordinates.
 
 ```bash
-python scripts/vis_robot_motion.py \
+python scripts/viz/vis_robot_motion.py \
   --robot unitree_h2 \
   --robot_motion_path <path_to_save_robot_data.pkl> \
   --human_frame_json <path_to_retarget_frame.json>
@@ -611,7 +613,7 @@ Use `--show_human_body_name` to label anchors. Use `--show_raw_human_targets` to
 Visualize a single motion without anchors:
 
 ```bash
-python scripts/vis_robot_motion.py --robot <robot_name> --robot_motion_path <path_to_save_robot_data.pkl>
+python scripts/viz/vis_robot_motion.py --robot <robot_name> --robot_motion_path <path_to_save_robot_data.pkl>
 ```
 
 If you want to record video, add `--record_video` and `--video_path <your_video_path,mp4>`.
@@ -619,7 +621,7 @@ If you want to record video, add `--record_video` and `--video_path <your_video_
 Visualize a folder of motions:
 
 ```bash
-python scripts/vis_robot_motion_dataset.py --robot <robot_name> --robot_motion_folder <path_to_save_robot_data_folder>
+python scripts/viz/vis_robot_motion_dataset.py --robot <robot_name> --robot_motion_folder <path_to_save_robot_data_folder>
 ```
 
 After launching the MuJoCo visualization window and clicking on it, you can use the following keyboard controls::
@@ -633,7 +635,7 @@ There is no single automatic score for all robots yet. A practical workflow:
 
 1. **Visual**: use real-time `bvh_to_robot.py` or playback with `vis_robot_motion.py --human_frame_json` and check foot anchors, leg crossing, and ground contact.
 2. **Pickle stats**: inspect `root_pos[:,2]`, knee joint means, and joint-limit saturation from saved `.pkl` files.
-3. **Contact metrics**: use `scripts/analyze_contact_modes.py` for penetration, foot slip, and IK error summaries (currently documented for G1; extend `--robot` for other platforms).
+3. **Contact metrics**: use `scripts/analysis/analyze_contact_modes.py` for penetration, foot slip, and IK error summaries (currently documented for G1; extend `--robot` for other platforms).
 
 For H2 LAFAN1, IK config lives at `general_motion_retargeting/ik_configs/bvh_lafan1_to_h2.json`. Robot assets live at `assets/unitree_h2/`.
 

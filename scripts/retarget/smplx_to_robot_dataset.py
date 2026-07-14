@@ -33,7 +33,8 @@ def check_memory(threshold_gb=30):  # adjust based on your available memory
     return False
 
 
-HERE = pathlib.Path(__file__).parent
+HERE = pathlib.Path(__file__).resolve().parent
+REPO_ROOT = HERE.parents[2]
 
 
 def process_file(smplx_file_path, tgt_file_path, tgt_robot, SMPLX_FOLDER, tgt_folder, total_files, verbose=False):
@@ -183,7 +184,7 @@ def main():
     parser.add_argument(
         "--body_model_dir",
         type=str,
-        default=str((HERE / ".." / "assets" / "body_models").resolve()),
+        default=str((REPO_ROOT / "assets" / "body_models").resolve()),
         help="SMPL-X body model root folder containing the smplx subfolder.",
     )
     args = parser.parse_args()
@@ -196,7 +197,7 @@ def main():
     tgt_folder = args.tgt_folder
 
     SMPLX_FOLDER = pathlib.Path(args.body_model_dir)
-    hard_motions_folder = HERE / ".." / "assets" / "hard_motions"
+    hard_motions_folder = REPO_ROOT / "assets" / "hard_motions"
 
     verbose = False
 
