@@ -1,16 +1,17 @@
 from general_motion_retargeting import GeneralMotionRetargeting as GMR
-from general_motion_retargeting import RobotMotionViewer, load_robot_motion
+from general_motion_retargeting import RobotMotionViewer, load_robot_motion, PLANAR_BASE_ROBOTS
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_RETARGET_DIR = Path(__file__).resolve().parents[1] / "retarget"
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(SCRIPTS_RETARGET_DIR))
 
-from scripts.human_json_to_robot import load_human_frames
+from human_json_to_robot import load_human_frames
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -72,11 +73,11 @@ if __name__ == "__main__":
                 verbose=False,
             )
     
-    motion_data, motion_fps, motion_root_pos, motion_root_rot, motion_dof_pos, motion_local_body_pos, motion_link_body_list = load_robot_motion(robot_motion_path)
+    motion_data, motion_fps, motion_root_pos, motion_root_rot, motion_dof_pos, motion_local_body_pos, motion_link_body_list, motion_qpos = load_robot_motion(robot_motion_path)
     
     env = RobotMotionViewer(robot_type=robot_type,
                             motion_fps=motion_fps,
-                            camera_follow=True,
+                            camera_follow=robot_type not in PLANAR_BASE_ROBOTS,
                             record_video=args.record_video, video_path=args.video_path)
     
     frame_idx = 0
@@ -90,12 +91,33 @@ if __name__ == "__main__":
                 retarget.update_targets(human_frame)
                 human_motion_data = retarget.scaled_human_data
 
-        env.step(motion_root_pos[frame_idx], 
+        if motion_qpos is not None:
+            env.step(
+                qpos=motion_qpos[frame_idx],
+                human_motion_data=human_motion_data,
+                show_human_body_name=args.show_human_body_name,
+                rate_limit=True,
+                follow_camera=env.camera_follow,
+            )
+        elif robot_type in PLANAR_BASE_ROBOTS:
+            env.step(
+                root_pos=motion_root_pos[frame_idx],
+                dof_pos=motion_dof_pos[frame_idx],
+                human_motion_data=human_motion_data,
+                show_human_body_name=args.show_human_body_name,
+                rate_limit=True,
+                follow_camera=env.camera_follow,
+            )
+        else:
+            env.step(
+                motion_root_pos[frame_idx], 
                 motion_root_rot[frame_idx], 
                 motion_dof_pos[frame_idx],
                 human_motion_data=human_motion_data,
                 show_human_body_name=args.show_human_body_name,
-                rate_limit=True)
+                rate_limit=True,
+                follow_camera=env.camera_follow,
+            )
         frame_idx += 1
         if frame_idx >= len(motion_root_pos):
             frame_idx = 0

@@ -5,7 +5,7 @@ import numpy as np
 import json
 from typing import Optional
 from scipy.spatial.transform import Rotation as R
-from .params import ROBOT_XML_DICT, IK_CONFIG_DICT
+from .params import ROBOT_XML_DICT, IK_CONFIG_DICT, PLANAR_BASE_ROBOTS
 from .contact_ground import ContactGroundPipeline, FootGroundLimit
 from .contact_ground_config import build_contact_ground_config
 from rich import print
@@ -112,6 +112,7 @@ class GeneralMotionRetargeting:
         self.verbose = verbose
 
         # load the robot model
+        self.tgt_robot = tgt_robot
         self.xml_file = str(ROBOT_XML_DICT[tgt_robot])
         if verbose:
             print("Use robot model: ", self.xml_file)
@@ -150,6 +151,7 @@ class GeneralMotionRetargeting:
             print("Use IK config: ", IK_CONFIG_DICT[src_human][tgt_robot])
         
         # compute the scale ratio based on given human height and the assumption in the IK config
+        self.actual_human_height = actual_human_height
         if actual_human_height is not None:
             ratio = actual_human_height / ik_config["human_height_assumption"]
         else:
@@ -169,12 +171,16 @@ class GeneralMotionRetargeting:
         self.use_ik_match_table2 = ik_config["use_ik_match_table2"]
         self.human_scale_table = ik_config["human_scale_table"]
         self.ground = ik_config["ground_height"] * np.array([0, 0, 1])
+        self.planar_base_cfg = ik_config.get("planar_base")
+        self._g1_reference = None
 
-        self.max_iter = 10
+        self.max_iter = 15
 
         self.solver = solver
         self.damping = damping
 
+        self.task_frames1 = []
+        self.task_frames2 = []
         self.human_body_to_task1 = {}
         self.human_body_to_task2 = {}
         self.pos_offsets1 = {}
@@ -282,6 +288,10 @@ class GeneralMotionRetargeting:
     
         self.tasks1 = []
         self.tasks2 = []
+        self.task_frames1 = []
+        self.task_frames2 = []
+        self.human_body_to_task1 = {}
+        self.human_body_to_task2 = {}
         
         for frame_name, entry in self.ik_match_table1.items():
             body_name, pos_weight, rot_weight, pos_offset, rot_offset = entry
@@ -294,6 +304,17 @@ class GeneralMotionRetargeting:
                     lm_damping=1,
                 )
                 self.human_body_to_task1[body_name] = task
+                self.task_frames1.append(
+                    {
+                        "task": task,
+                        "human_body": body_name,
+                        "robot_frame": frame_name,
+                        "pos_offset": np.array(pos_offset) - self.ground,
+                        "rot_offset": R.from_quat(
+                            self._quat_wxyz_to_xyzw(rot_offset)
+                        ),
+                    }
+                )
                 self.pos_offsets1[body_name] = np.array(pos_offset) - self.ground
                 self.rot_offsets1[body_name] = R.from_quat(
                     self._quat_wxyz_to_xyzw(rot_offset)
@@ -312,12 +333,82 @@ class GeneralMotionRetargeting:
                     lm_damping=1,
                 )
                 self.human_body_to_task2[body_name] = task
+                self.task_frames2.append(
+                    {
+                        "task": task,
+                        "human_body": body_name,
+                        "robot_frame": frame_name,
+                        "pos_offset": np.array(pos_offset) - self.ground,
+                        "rot_offset": R.from_quat(
+                            self._quat_wxyz_to_xyzw(rot_offset)
+                        ),
+                    }
+                )
                 self.pos_offsets2[body_name] = np.array(pos_offset) - self.ground
                 self.rot_offsets2[body_name] = R.from_quat(
                     self._quat_wxyz_to_xyzw(rot_offset)
                 )
                 self.tasks2.append(task)
                 self.task_errors2[task] = []
+
+    def _apply_body_offset(self, pos, quat_wxyz, pos_offset, rot_offset):
+        pos = np.asarray(pos, dtype=float)
+        updated_rot = R.from_quat(self._quat_wxyz_to_xyzw(quat_wxyz)) * rot_offset
+        updated_quat = self._quat_xyzw_to_wxyz(updated_rot.as_quat())
+        global_pos_offset = updated_rot.apply(np.asarray(pos_offset, dtype=float))
+        return pos + global_pos_offset, updated_quat
+
+    def _body_target_from_entry(self, human_data, entry):
+        pos, quat = human_data[entry["human_body"]]
+        return self._apply_body_offset(
+            pos, quat, entry["pos_offset"], entry["rot_offset"]
+        )
+
+    def _planar_base_target(self, pos, quat_wxyz):
+        """Project a human root target onto the ground plane with yaw-only orientation."""
+        cfg = self.planar_base_cfg or {}
+        ground_z = float(cfg.get("ground_z", self.ground[2]))
+        pos = np.asarray(pos, dtype=float)
+        rot = R.from_quat(self._quat_wxyz_to_xyzw(quat_wxyz))
+        if cfg.get("yaw_frame") == "g1_pelvis":
+            # Match unitree_g1 smplx pelvis heading (same rot_offset as smplx_to_g1.json).
+            rot = rot * R.from_quat([-0.5, -0.5, -0.5, 0.5])
+        yaw = rot.as_euler("ZYX")[0]
+        rot_yaw = R.from_euler("Z", yaw)
+        return np.array([pos[0], pos[1], ground_z], dtype=float), self._quat_xyzw_to_wxyz(
+            rot_yaw.as_quat()
+        )
+
+    def _resolve_ik_target(self, entry, human_data):
+        pos, rot = self._body_target_from_entry(human_data, entry)
+        if (
+            self.tgt_robot in PLANAR_BASE_ROBOTS
+            and self.planar_base_cfg is not None
+            and entry["robot_frame"] == self.planar_base_cfg.get("frame_name", self.robot_root_name)
+            and entry["human_body"] == self.planar_base_cfg.get("human_body", self.human_root_name)
+        ):
+            pos, rot = self._planar_base_target(pos, rot)
+        return pos, rot
+
+    def _build_scaled_human_data(self, human_data):
+        scaled = {
+            body_name: [np.asarray(pos), np.asarray(quat)]
+            for body_name, (pos, quat) in human_data.items()
+        }
+        planar_frame = (
+            self.planar_base_cfg.get("frame_name")
+            if self.planar_base_cfg is not None
+            else None
+        )
+        for entry in self.task_frames1:
+            if entry["robot_frame"] == planar_frame:
+                continue
+            pos, rot = self._body_target_from_entry(human_data, entry)
+            scaled[entry["human_body"]] = [pos, rot]
+        for entry in self.task_frames2:
+            pos, rot = self._body_target_from_entry(human_data, entry)
+            scaled[entry["human_body"]] = [pos, rot]
+        return scaled
 
     @staticmethod
     def _quat_wxyz_to_xyzw(quat):
@@ -369,81 +460,125 @@ class GeneralMotionRetargeting:
         return valid_pairs
 
   
-    def update_targets(self, human_data, offset_to_ground=False):
-        # scale human data in local frame
+    def _prepare_scaled_human_data(self, human_data, offset_to_ground=False):
         human_data = self.to_numpy(human_data)
         human_data = self.scale_human_data(human_data, self.human_root_name, self.human_scale_table)
-        human_data = self.offset_human_data(human_data, self.pos_offsets1, self.rot_offsets1)
         human_data = self.apply_ground_offset(human_data)
         if self.contact_ground.enabled:
             human_data = self.contact_ground.process_human_frame(human_data)
         else:
             self.contact_ground.observe_human_frame(human_data)
-        
         if not self.contact_ground.enabled and offset_to_ground:
             human_data = self.offset_human_data_to_ground(human_data)
-        self.scaled_human_data = human_data
+        return human_data
+
+    def _get_g1_root_xy(self, human_data):
+        if self._g1_reference is None:
+            self._g1_reference = GeneralMotionRetargeting(
+                actual_human_height=self.actual_human_height,
+                src_human="smplx",
+                tgt_robot="unitree_g1",
+                verbose=False,
+            )
+        q = self._g1_reference.retarget(human_data)
+        return float(q[0]), float(q[1])
+
+    def _snap_planar_base_qpos(self, human_data, raw_human_data=None):
+        if self.tgt_robot not in PLANAR_BASE_ROBOTS or not self.planar_base_cfg:
+            return None
+        frame_name = self.planar_base_cfg.get("frame_name", self.robot_root_name)
+        entry = next((e for e in self.task_frames1 if e["robot_frame"] == frame_name), None)
+        if entry is None:
+            return None
+        pos, rot = self._resolve_ik_target(entry, human_data)
+        if self.planar_base_cfg.get("position_source") == "g1_root":
+            g1_input = raw_human_data if raw_human_data is not None else human_data
+            pos[0], pos[1] = self._get_g1_root_xy(g1_input)
+        yaw = R.from_quat(self._quat_wxyz_to_xyzw(rot)).as_euler("ZYX")[0]
+        qpos = self.configuration.data.qpos
+        qpos[0] = pos[0]
+        qpos[1] = pos[1]
+        qpos[2] = yaw
+        mj.mj_forward(self.model, self.configuration.data)
+        return entry["task"]
+
+    def _run_ik_tasks(self, tasks, max_iter=None, freeze_base=False, base_qpos=None):
+        if not tasks:
+            return
+        max_iter = self.max_iter if max_iter is None else max_iter
+        curr_error = np.linalg.norm(
+            np.concatenate([task.compute_error(self.configuration) for task in tasks])
+        )
+        dt = self.configuration.model.opt.timestep
+        num_iter = 0
+        while num_iter < max_iter:
+            vel = mink.solve_ik(
+                self.configuration, tasks, dt, self.solver, self.damping, limits=self.ik_limits
+            )
+            if freeze_base and base_qpos is not None:
+                vel[:3] = 0.0
+            self.configuration.integrate_inplace(vel, dt)
+            if freeze_base and base_qpos is not None:
+                self.configuration.data.qpos[:3] = base_qpos
+                mj.mj_forward(self.model, self.configuration.data)
+            next_error = np.linalg.norm(
+                np.concatenate([task.compute_error(self.configuration) for task in tasks])
+            )
+            if curr_error - next_error <= 0.001:
+                break
+            curr_error = next_error
+            num_iter += 1
+
+    def update_targets(self, human_data, offset_to_ground=False):
+        human_data = self._prepare_scaled_human_data(human_data, offset_to_ground)
+        self.scaled_human_data = self._build_scaled_human_data(human_data)
 
         if self.use_ik_match_table1:
-            for body_name in self.human_body_to_task1.keys():
-                task = self.human_body_to_task1[body_name]
-                pos, rot = human_data[body_name]
-                task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos))
+            for entry in self.task_frames1:
+                pos, rot = self._resolve_ik_target(entry, human_data)
+                entry["task"].set_target(
+                    mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos)
+                )
         
         if self.use_ik_match_table2:
-            for body_name in self.human_body_to_task2.keys():
-                task = self.human_body_to_task2[body_name]
-                pos, rot = human_data[body_name]
-                task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos))
+            for entry in self.task_frames2:
+                pos, rot = self._resolve_ik_target(entry, human_data)
+                entry["task"].set_target(
+                    mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos)
+                )
             
             
     def retarget(self, human_data, offset_to_ground=False):
         # Update the task targets
         self.update_targets(human_data, offset_to_ground)
 
+        freeze_base = self.tgt_robot in PLANAR_BASE_ROBOTS and bool(self.planar_base_cfg)
+        base_qpos = None
+        if freeze_base:
+            scaled_human = self._prepare_scaled_human_data(human_data, offset_to_ground)
+            self._snap_planar_base_qpos(scaled_human, raw_human_data=human_data)
+            base_qpos = self.configuration.data.qpos[:3].copy()
+
         if self.use_ik_match_table1:
-            # Solve the IK problem
-            curr_error = self.error1()
-            dt = self.configuration.model.opt.timestep
-            vel1 = mink.solve_ik(
-                self.configuration, self.tasks1, dt, self.solver, self.damping, limits=self.ik_limits
+            self._run_ik_tasks(
+                self.tasks1,
+                freeze_base=freeze_base,
+                base_qpos=base_qpos,
             )
-            self.configuration.integrate_inplace(vel1, dt)
-            next_error = self.error1()
-            num_iter = 0
-            while curr_error - next_error > 0.001 and num_iter < self.max_iter:
-                curr_error = next_error
-                dt = self.configuration.model.opt.timestep
-                vel1 = mink.solve_ik(
-                    self.configuration, self.tasks1, dt, self.solver, self.damping, limits=self.ik_limits
-                )
-                self.configuration.integrate_inplace(vel1, dt)
-                next_error = self.error1()
-                num_iter += 1
 
         if self.use_ik_match_table2:
-            curr_error = self.error2()
-            dt = self.configuration.model.opt.timestep
-            vel2 = mink.solve_ik(
-                self.configuration, self.tasks2, dt, self.solver, self.damping, limits=self.ik_limits
+            self._run_ik_tasks(
+                self.tasks2,
+                freeze_base=freeze_base,
+                base_qpos=base_qpos,
             )
-            self.configuration.integrate_inplace(vel2, dt)
-            next_error = self.error2()
-            num_iter = 0
-            while curr_error - next_error > 0.001 and num_iter < self.max_iter:
-                curr_error = next_error
-                # Solve the IK problem with the second task
-                dt = self.configuration.model.opt.timestep
-                vel2 = mink.solve_ik(
-                    self.configuration, self.tasks2, dt, self.solver, self.damping, limits=self.ik_limits
-                )
-                self.configuration.integrate_inplace(vel2, dt)
-                
-                next_error = self.error2()
-                num_iter += 1
 
         if self.contact_ground.fix_penetration:
             self.contact_ground.fix_robot_penetration(self.model, self.configuration.data)
+
+        if freeze_base and base_qpos is not None:
+            self.configuration.data.qpos[:3] = base_qpos
+            mj.mj_forward(self.model, self.configuration.data)
 
         return self.configuration.data.qpos.copy()
 
@@ -503,6 +638,9 @@ class GeneralMotionRetargeting:
         offset_human_data = {}
         for body_name in human_data.keys():
             pos, quat = human_data[body_name]
+            if body_name not in rot_offsets:
+                offset_human_data[body_name] = [np.asarray(pos), np.asarray(quat)]
+                continue
             offset_human_data[body_name] = [pos, quat]
             # apply rotation offset first
             updated_rot = R.from_quat(self._quat_wxyz_to_xyzw(quat)) * rot_offsets[body_name]
@@ -543,5 +681,5 @@ class GeneralMotionRetargeting:
     def apply_ground_offset(self, human_data):
         for body_name in human_data.keys():
             pos, quat = human_data[body_name]
-            human_data[body_name][0] = pos - np.array([0, 0, self.ground_offset])
+            human_data[body_name] = [pos - np.array([0, 0, self.ground_offset]), quat]
         return human_data

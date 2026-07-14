@@ -8,8 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -130,6 +129,7 @@ def parse_args() -> argparse.Namespace:
             "kuavo_s45",
             "hightorque_hi",
             "galaxea_r1pro",
+            "galbot_one_golf",
             "berkeley_humanoid_lite",
             "booster_k1",
             "pnd_adam_lite",

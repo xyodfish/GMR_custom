@@ -128,6 +128,7 @@ if __name__ == "__main__":
             "kuavo_s45",
             "hightorque_hi",
             "galaxea_r1pro",
+            "galbot_one_golf",
             "berkeley_humanoid_lite",
             "booster_k1",
             "pnd_adam_lite",

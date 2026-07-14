@@ -4,7 +4,7 @@ import mujoco as mj
 import mujoco.viewer as mjv
 import imageio
 from scipy.spatial.transform import Rotation as R
-from general_motion_retargeting import ROBOT_XML_DICT, ROBOT_BASE_DICT, VIEWER_CAM_DISTANCE_DICT
+from general_motion_retargeting import ROBOT_XML_DICT, ROBOT_BASE_DICT, VIEWER_CAM_DISTANCE_DICT, PLANAR_BASE_ROBOTS
 from loop_rate_limiters import RateLimiter
 import numpy as np
 from rich import print
@@ -99,7 +99,7 @@ class RobotMotionViewer:
         
     def step(self, 
             # robot data
-            root_pos, root_rot, dof_pos, 
+            root_pos=None, root_rot=None, dof_pos=None, qpos=None,
             # human data
             human_motion_data=None, 
             show_human_body_name=False,
@@ -120,10 +120,15 @@ class RobotMotionViewer:
         if rate_limit is True, the motion will be visualized at the same rate as the motion data.
         else, the motion will be visualized as fast as possible.
         """
-        
-        self.data.qpos[:3] = root_pos
-        self.data.qpos[3:7] = root_rot # quat need to be scalar first! for mujoco
-        self.data.qpos[7:] = dof_pos
+        if qpos is not None:
+            self.data.qpos[:] = qpos
+        elif self.robot_type in PLANAR_BASE_ROBOTS:
+            self.data.qpos[:3] = root_pos
+            self.data.qpos[3:] = dof_pos
+        else:
+            self.data.qpos[:3] = root_pos
+            self.data.qpos[3:7] = root_rot # quat need to be scalar first! for mujoco
+            self.data.qpos[7:] = dof_pos
         
         mj.mj_forward(self.model, self.data)
         

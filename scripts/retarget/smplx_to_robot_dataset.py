@@ -33,8 +33,7 @@ def check_memory(threshold_gb=30):  # adjust based on your available memory
     return False
 
 
-HERE = pathlib.Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[2]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def process_file(smplx_file_path, tgt_file_path, tgt_robot, SMPLX_FOLDER, tgt_folder, total_files, verbose=False):

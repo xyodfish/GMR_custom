@@ -20,8 +20,7 @@ def add_optional_bool_arg(parser, name, help_text):
 
 if __name__ == "__main__":
     
-    HERE = pathlib.Path(__file__).resolve().parent
-    REPO_ROOT = HERE.parents[2]
+    REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -36,7 +35,7 @@ if __name__ == "__main__":
         "--robot",
         choices=["unitree_g1", "unitree_g1_with_hands", "unitree_h1", "unitree_h1_2", "unitree_h2",
                  "booster_t1", "booster_t1_29dof","stanford_toddy", "fourier_n1", 
-                "engineai_pm01", "kuavo_s45", "hightorque_hi", "galaxea_r1pro", "berkeley_humanoid_lite", "booster_k1",
+                "engineai_pm01", "kuavo_s45", "hightorque_hi", "galaxea_r1pro", "galbot_one_golf", "berkeley_humanoid_lite", "booster_k1",
                 "pnd_adam_lite", "openloong", "tienkung"],
         default="unitree_g1",
     )

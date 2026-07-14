@@ -1,4 +1,4 @@
-from general_motion_retargeting import RobotMotionViewer, load_robot_motion
+from general_motion_retargeting import RobotMotionViewer, load_robot_motion, PLANAR_BASE_ROBOTS
 import argparse
 import os
 from tqdm import tqdm
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     motion_dataset = []
     for motion_file in tqdm(motion_files):
         motion_path = os.path.join(robot_motion_folder, motion_file)
-        motion_data, motion_fps, motion_root_pos, motion_root_rot, motion_dof_pos, motion_local_body_pos, motion_link_body_list = load_robot_motion(motion_path)
+        motion_data, motion_fps, motion_root_pos, motion_root_rot, motion_dof_pos, motion_local_body_pos, motion_link_body_list, motion_qpos = load_robot_motion(motion_path)
         motion_dataset.append({
             "motion_file": motion_file,
             "motion_data": motion_data,
@@ -50,6 +50,7 @@ if __name__ == "__main__":
             "motion_root_pos": motion_root_pos,
             "motion_root_rot": motion_root_rot,
             "motion_dof_pos": motion_dof_pos,
+            "motion_qpos": motion_qpos,
             "motion_local_body_pos": motion_local_body_pos,
             "motion_link_body_list": motion_link_body_list,
         })
@@ -73,14 +74,24 @@ if __name__ == "__main__":
             motion_root_pos = motion_data["motion_root_pos"]
             motion_root_rot = motion_data["motion_root_rot"]
             motion_dof_pos = motion_data["motion_dof_pos"]
+            motion_qpos = motion_data["motion_qpos"]
             print(f"Switched to motion {motion_id}: {motion_file}, fps: {motion_fps}, num_frames: {len(motion_root_pos)}")
         
         
         if not paused:
-            env.step(motion_root_pos[frame_idx], 
-                    motion_root_rot[frame_idx], 
-                    motion_dof_pos[frame_idx], 
-                    rate_limit=True)
+            if motion_qpos is not None:
+                env.step(qpos=motion_qpos[frame_idx], rate_limit=True)
+            elif robot_type in PLANAR_BASE_ROBOTS:
+                env.step(
+                    root_pos=motion_root_pos[frame_idx],
+                    dof_pos=motion_dof_pos[frame_idx],
+                    rate_limit=True,
+                )
+            else:
+                env.step(motion_root_pos[frame_idx], 
+                        motion_root_rot[frame_idx], 
+                        motion_dof_pos[frame_idx], 
+                        rate_limit=True)
             frame_idx += 1
             if frame_idx >= len(motion_root_pos):
                 frame_idx = 0
