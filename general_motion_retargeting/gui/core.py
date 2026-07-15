@@ -88,7 +88,9 @@ INVERSE_RATE_LIMIT_TYPES = frozenset({"gvhmr_pt", "video_gvhmr"})
 RETARGET_ALGOS = {
     "ik": {"label": "Per-frame IK (GMR)"},
     "to": {"label": "Trajectory Optimization (TO)"},
-    "batch_to": {"label": "Batch TO (offline)"},
+    "batch_to": {"label": "Batch TO (Python)"},
+    "cpp_batch_to": {"label": "Batch TO (C++ · 一键回放)"},
+    "cpp_causal_to": {"label": "Causal TO (C++ · 在线)"},
 }
 RETARGET_ALGO_LABELS = {key: cfg["label"] for key, cfg in RETARGET_ALGOS.items()}
 LABEL_TO_RETARGET_ALGO = {cfg["label"]: key for key, cfg in RETARGET_ALGOS.items()}
@@ -108,6 +110,10 @@ BATCH_TO_SCRIPT_BY_INPUT = {
     "bvh_nokov": "retarget/to_robot_batch.py",
 }
 BATCH_TO_SUPPORTED_INPUT_TYPES = frozenset(BATCH_TO_SCRIPT_BY_INPUT)
+CPP_TO_SUPPORTED_INPUT_TYPES = BATCH_TO_SUPPORTED_INPUT_TYPES
+
+CPP_TO_VIEWER_SCRIPT = "tools/run_cpp_to_viewer.py"
+DEFAULT_CPP_VIEWER = REPO_ROOT / "cpp" / "build" / "gmr_retarget_viewer"
 
 TRI_STATE_LABELS = ("IK 默认", "开启", "关闭")
 ALL_ROBOTS = sorted(ROBOT_XML_DICT.keys())
@@ -173,6 +179,14 @@ def supports_to(input_type: str) -> bool:
 
 def supports_batch_to(input_type: str) -> bool:
     return input_type in BATCH_TO_SUPPORTED_INPUT_TYPES
+
+
+def supports_cpp_to(input_type: str) -> bool:
+    return input_type in CPP_TO_SUPPORTED_INPUT_TYPES
+
+
+def is_cpp_retarget_algo(retarget_algo: str) -> bool:
+    return retarget_algo in ("cpp_batch_to", "cpp_causal_to")
 
 
 def resolve_retarget_script(input_type: str, retarget_algo: str) -> str:
@@ -258,7 +272,68 @@ def validate_config(cfg: GMRRunConfig) -> str | None:
             return "Batch TO 暂不支持批量模式"
         if not supports_batch_to(cfg.input_type):
             return "当前数据类型不支持 Batch TO（支持 GVHMR .pt / SMPL-X / BVH）"
+    if is_cpp_retarget_algo(cfg.retarget_algo):
+        if cfg.run_mode == "batch":
+            return "C++ TO 暂不支持批量模式"
+        if not supports_cpp_to(cfg.input_type):
+            return "当前数据类型不支持 C++ TO（支持 GVHMR .pt / SMPL-X / BVH）"
+        if not DEFAULT_CPP_VIEWER.is_file():
+            return f"未找到 C++ viewer: {DEFAULT_CPP_VIEWER}（请先 cmake --build cpp/build）"
+        if cfg.save_output and cfg.retarget_algo == "cpp_causal_to":
+            return "C++ Causal TO 暂不支持保存 PKL/JSON"
+        if cfg.record_video:
+            return "C++ TO 暂不支持 GUI 内录制视频，请用 Python 流程或后续扩展"
     return None
+
+
+def append_cpp_to_viewer_args(cmd: list[str], cfg: GMRRunConfig) -> None:
+    if not is_cpp_retarget_algo(cfg.retarget_algo):
+        return
+    method = "batch_to" if cfg.retarget_algo == "cpp_batch_to" else "causal_to"
+    cmd += ["--method", method]
+    input_type = cfg.input_type
+    path = cfg.input_path.strip()
+    cmd += ["--input_file", path]
+    if input_type in ("bvh_lafan1", "bvh_nokov"):
+        meta = INPUT_TYPES[input_type]
+        cmd += ["--input_type", input_type, "--format", meta["bvh_format"]]
+        cmd += ["--motion_fps", (cfg.motion_fps or "30").strip()]
+    elif input_type == "smplx":
+        cmd += ["--input_type", "smplx"]
+        cmd += ["--motion_fps", (cfg.motion_fps or "30").strip()]
+    elif input_type == "gvhmr_pt":
+        cmd += ["--input_type", "gvhmr_pt"]
+    if cfg.retarget_algo == "cpp_batch_to":
+        cmd += [
+            "--window_size",
+            str(int(cfg.batch_to_window_size)),
+            "--window_stride",
+            str(int(cfg.batch_to_window_stride)),
+            "--gn_steps",
+            str(int(cfg.batch_to_gn_steps)),
+        ]
+        if cfg.batch_to_fast:
+            cmd.append("--fast")
+        else:
+            cmd.append("--quality")
+    if cfg.loop:
+        cmd.append("--loop")
+    else:
+        cmd.append("--no_loop")
+    for name, value in (
+        ("contact_ground", cfg.contact_ground),
+        ("fix_robot_penetration", cfg.fix_robot_penetration),
+        ("foot_ground_limit", cfg.foot_ground_limit),
+    ):
+        if value != "IK 默认":
+            cmd += [f"--{name}", value]
+    if cfg.save_output and cfg.retarget_algo == "cpp_batch_to":
+        out = cfg.save_path.strip()
+        if out.endswith(".pkl"):
+            out = out[:-4] + ".json"
+        elif not out.endswith(".json"):
+            out = out + ".json"
+        cmd += ["--out_json", out]
 
 
 def build_command(cfg: GMRRunConfig) -> list[str]:
@@ -282,6 +357,12 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
         return cmd
 
     script = SCRIPTS_DIR / resolve_retarget_script(input_type, cfg.retarget_algo)
+    if is_cpp_retarget_algo(cfg.retarget_algo):
+        cmd.append(str(SCRIPTS_DIR / CPP_TO_VIEWER_SCRIPT))
+        append_cpp_to_viewer_args(cmd, cfg)
+        cmd += ["--robot", robot, "--gmr_root", str(REPO_ROOT)]
+        return cmd
+
     cmd.append(str(script))
 
     if cfg.retarget_algo == "batch_to" and input_type in BATCH_TO_SCRIPT_BY_INPUT:

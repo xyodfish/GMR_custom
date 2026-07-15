@@ -232,14 +232,47 @@ enableFootPenalties = true   // 全部 foot 权重与 Python 对齐
 
 **结论：C++ 默认跑的是 quality 档完整 GN，加速来自 native MuJoCo / Eigen，不是砍迭代换速度。**
 
-### 3.5 C++ vs Python 差异（parity 未完成项）
+### 3.5 C++ vs Python parity（已完成）
 
-| 项目 | Python | C++ | 影响 |
-|------|--------|-----|------|
-| 多 alpha line search cost | 完整 `_window_cost` | 完整 `windowCost`（已对齐） | — |
-| finalize_contact | `contact_ground.fix_penetration` | `Retargeter::finalizeContact()` | 需 `--contact_ground` 开启 |
-| IK bootstrap | 完整 GMR | C++ `Retargeter` | qpos RMSE ~0.03 |
-| contact_ground CLI | 默认随 GMR | 需 `--contact_ground` / `--no_contact_ground` | 对比时注意对齐 |
+| 项目 | 状态 |
+|------|------|
+| 多 alpha line search + 完整 `windowCost` | ✅ 对齐 Python |
+| `contact_ground` / foot penalties | ✅ CLI `--contact_ground` |
+| IK bootstrap | ✅ 纯 C++ `Retargeter`，无需 Python |
+| Py batch quality vs C++ dense GN | ✅ RMSE < 1e-5（cxk-ball 120f） |
+| Banded vs dense 求解器 | ✅ 统一 dense 组装后提取 band，RMSE < 1e-6 |
+
+回归脚本：
+
+```bash
+./scripts/tools/verify_batch_to_parity.sh
+# 可选环境变量：PT_FILE ROBOT MAX_FRAMES PY_CPP_RMSE_MAX BANDED_DENSE_RMSE_MAX
+```
+
+### 3.6 GUI 一键 Batch TO（C++）
+
+`scripts/gmr_gui.py`：
+
+1. 数据类型：**GVHMR (.pt)** / **SMPL-X** / **BVH (LAFAN1/Nokov)**
+2. 算法：**Batch TO (C++ · 一键回放)** 或 **Causal TO (C++ · 在线)**
+3. 点 **运行** → 内部 `scripts/tools/run_cpp_to_viewer.py` 加载动作 → C++ batch/causal → MuJoCo 回放
+
+长片段会先在终端日志里跑 batch GN，优化完成后再打开 MuJoCo 窗口（避免黑屏/无响应）。
+
+```bash
+python scripts/gmr_gui.py
+```
+
+等效命令行：
+
+```bash
+python scripts/tools/run_cpp_to_viewer.py \
+  --input_file assets/motions/walk1_subject1.bvh \
+  --input_type bvh_lafan1 \
+  --robot unitree_g1 \
+  --method batch_to \
+  --contact_ground 开启
+```
 
 ---
 
@@ -262,7 +295,7 @@ enableFootPenalties = true   // 全部 foot 权重与 Python 对齐
 |------|--------|-----|--------|
 | optimize | ~3118 ms | ~330 ms | **~9.5×** |
 | total | ~3367 ms (28 ms/f) | ~392 ms (3.3 ms/f, **~306 FPS**) | **~8.6×** |
-| qpos RMSE vs Python | — | **0.034** | 同参数下的实现差，非 fast 牺牲 |
+| qpos RMSE vs Python batch | — | **< 1e-5** | 同参数 quality 档已对齐 |
 
 ### 4.3 质量参考（Python quality, 120f）
 
@@ -286,7 +319,8 @@ enableFootPenalties = true   // 全部 foot 权重与 Python 对齐
 | `scripts/analysis/compare_ik_vs_batch_preset.py` | IK vs batch 预设质量指标 |
 | `scripts/analysis/compare_ik_vs_batch_gn_metrics.py` | jerk / foot slip 等 |
 | `scripts/analysis/benchmark_gvhmr_batch_to.py` | GVHMR 批量 IK vs batch |
-| `scripts/analysis/compare_py_vs_cpp_batch.py` | 同输入一键 Py vs C++ batch TO |
+| `scripts/analysis/compare_batch_opt_quality.py` | IK / Py / C++ 质量与 parity 指标 |
+| `scripts/tools/verify_batch_to_parity.sh` | 一键回归：Py≈C++ dense + banded≈dense |
 | `scripts/tools/export_gvhmr_frames_json.py` | `.pt` → C++ 输入 JSON |
 
 可视化（PKL 或 C++ batch JSON）：
@@ -317,7 +351,7 @@ cpp/build/gmr_retarget_viewer \
   --actual_human_height 1.7 --contact_ground --max_frames 120 --loop
 ```
 
-GUI：`scripts/gmr_gui.py` → 数据类型 **GVHMR (.pt)** → 算法 **Batch TO (offline)**。
+GUI：`scripts/gmr_gui.py` → 选 **Batch TO (C++ · 一键回放)**（支持 GVHMR / SMPL-X / BVH）。
 
 ---
 
@@ -361,7 +395,7 @@ GUI：`scripts/gmr_gui.py` → 数据类型 **GVHMR (.pt)** → 算法 **Batch T
 
 - [x] C++ line search 使用完整 window cost
 - [x] C++ finalize_contact 对齐 Python `fix_penetration`
-- [x] 统一 benchmark 脚本（`compare_py_vs_cpp_batch.py`）
-- [x] GUI / viewer 集成 batch TO 回放
+- [x] 统一 benchmark / parity 脚本（`compare_batch_opt_quality.py`、`verify_batch_to_parity.sh`）
+- [x] GUI / viewer 集成 C++ batch TO 一键回放
+- [x] Banded GN 求解器与 dense parity（`--banded_solver`，`--fast` 默认开启）
 - [ ] pybind 绑定（可选，替代 subprocess CLI）
-- [ ] 稀疏 / banded 求解器进一步提速

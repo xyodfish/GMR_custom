@@ -59,7 +59,23 @@ cpp/build/gmr_batch_to_cli \
   --max_frames 120
 ```
 
-`--fast`：gn_steps=2 + 单步 line search（更快，质量略降）。
+`--fast`：gn_steps=2 + 单步 line search + banded 求解器（更快；质量略降，见 parity 脚本中 `Cpp_fast`）。
+
+Parity 回归：
+
+```bash
+./scripts/tools/verify_batch_to_parity.sh
+```
+
+## GUI 一键 C++ Batch / Causal TO
+
+```bash
+python scripts/gmr_gui.py
+# 算法选 Batch TO (C++ · 一键回放) 或 Causal TO (C++ · 在线)
+# 支持 GVHMR .pt / SMPL-X / BVH；内部调用 run_cpp_to_viewer.py
+```
+
+长 BVH 会先在终端完成 batch 优化，再打开 MuJoCo 窗口。
 
 ## 运行 retarget，并打印/保存 qpos
 ```bash

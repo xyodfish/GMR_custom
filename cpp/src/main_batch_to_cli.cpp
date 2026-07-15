@@ -50,6 +50,17 @@ namespace {
                   << " [--window_stride 8]"
                   << " [--gn_steps 3]"
                   << " [--fast]"
+                  << " [--ceiling]"
+                  << " [--no_foot_penalties]"
+                  << " [--q_init_json <path>]"
+                  << " [--no_parallel]"
+                  << " [--parallel]"
+                  << " [--gn_line_search best|armijo]"
+                  << " [--banded_solver]"
+                  << " [--no_banded_solver]"
+                  << " [--max_iter <int>]"
+                  << " [--integration_timestep <float>]"
+                  << " [--solver daqp|qpoases]"
                   << " [--max_frames N]"
                   << " [--benchmark]"
                   << "\n"
@@ -79,6 +90,10 @@ int main(int argc, char** argv) {
         const int maxFramesInput       = std::stoi(getArg(argc, argv, "--max_frames", "0"));
         const bool benchmark           = hasFlag(argc, argv, "--benchmark");
         const bool fast                = hasFlag(argc, argv, "--fast");
+        const bool ceiling             = hasFlag(argc, argv, "--ceiling");
+        const bool noFootPenalties     = hasFlag(argc, argv, "--no_foot_penalties");
+        const bool noParallel          = hasFlag(argc, argv, "--no_parallel");
+        const bool enableParallel      = hasFlag(argc, argv, "--parallel");
         const bool offsetToGround      = hasFlag(argc, argv, "--offset_to_ground");
 
         const gmr::HumanFrameSequence sequence = gmr::loadHumanFrameSequence(humanJson);
@@ -97,7 +112,9 @@ int main(int argc, char** argv) {
 
         gmr::RetargetOptions ikOpts;
         ikOpts.damping       = std::stod(getArg(argc, argv, "--damping", "0.5"));
-        ikOpts.maxIterations = std::stoi(getArg(argc, argv, "--max_iter", "10"));
+        ikOpts.maxIterations = std::stoi(getArg(argc, argv, "--max_iter", "15"));
+        ikOpts.integrationTimestep = std::stod(getArg(argc, argv, "--integration_timestep", "0"));
+        ikOpts.solverName    = getArg(argc, argv, "--solver", "daqp");
 
         const gmr::RetargetBackend backend = gmr::parseRetargetBackend(backendName);
         const std::filesystem::path robotXml = gmr::resolveRobotXml(gmrRoot, robot);
@@ -119,6 +136,42 @@ int main(int argc, char** argv) {
         batchCfg.gnSteps      = std::stoi(getArg(argc, argv, "--gn_steps", fast ? "2" : "3"));
         if (fast) {
             batchCfg.gnLineSearchAlphas = {1.0};
+            batchCfg.useBandedSolver    = true;
+        }
+        if (ceiling) {
+            batchCfg.windowSize           = 16;
+            batchCfg.windowStride         = 16;
+            batchCfg.gnSteps              = 1;
+            batchCfg.gnLineSearchAlphas   = {1.0};
+            batchCfg.enableFootPenalties  = false;
+            batchCfg.finalizeContact      = false;
+        }
+        if (noFootPenalties) {
+            batchCfg.enableFootPenalties = false;
+        }
+        if (noParallel) {
+            batchCfg.parallelBootstrap = false;
+            batchCfg.parallelFinalize  = false;
+        }
+        if (enableParallel) {
+            batchCfg.parallelBootstrap = true;
+            batchCfg.parallelFinalize  = true;
+        }
+        const std::string lineSearchMode = getArg(argc, argv, "--gn_line_search", "best");
+        if (lineSearchMode == "best") {
+            batchCfg.gnLineSearchMode = gmr::GnLineSearchMode::kBest;
+        } else if (lineSearchMode == "armijo") {
+            batchCfg.gnLineSearchMode = gmr::GnLineSearchMode::kArmijo;
+        }
+        if (hasFlag(argc, argv, "--banded_solver")) {
+            batchCfg.useBandedSolver = true;
+        }
+        if (hasFlag(argc, argv, "--no_banded_solver")) {
+            batchCfg.useBandedSolver = false;
+        }
+        const std::string qInitJson = getArg(argc, argv, "--q_init_json", "");
+        if (!qInitJson.empty()) {
+            batchCfg.qInitJsonPath = qInitJson;
         }
         batchCfg.verbose = hasFlag(argc, argv, "--verbose");
 
@@ -129,7 +182,10 @@ int main(int argc, char** argv) {
 
         if (sequence.fps > 0) {
             ikRetargeter->setMotionFps(sequence.fps);
+            ikOpts.motionFps = sequence.fps;
         }
+
+        gmr::BatchIkBootstrapContext ikBootstrap{backend, ikOpts, ikOpts.contactGround};
 
         std::size_t frameCount = sequence.frames.size();
         if (maxFramesInput > 0) {
@@ -138,7 +194,7 @@ int main(int argc, char** argv) {
         std::vector<gmr::HumanFrame> frames(sequence.frames.begin(), sequence.frames.begin() + frameCount);
 
         const auto t0 = std::chrono::steady_clock::now();
-        std::vector<Eigen::VectorXd> qBatch = batchTo.retargetBatch(frames, *ikRetargeter, offsetToGround);
+        std::vector<Eigen::VectorXd> qBatch = batchTo.retargetBatch(frames, *ikRetargeter, offsetToGround, &ikBootstrap);
         const double wallMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
@@ -162,7 +218,9 @@ int main(int argc, char** argv) {
         out["config"] = {{"window_size", batchCfg.windowSize},
                          {"window_stride", batchCfg.windowStride},
                          {"gn_steps", batchCfg.gnSteps},
-                         {"fast", fast}};
+                         {"fast", fast},
+                         {"ceiling", ceiling},
+                         {"enable_foot_penalties", batchCfg.enableFootPenalties}};
 
         nlohmann::json qFrames = nlohmann::json::array();
         for (const auto& q : qBatch) {

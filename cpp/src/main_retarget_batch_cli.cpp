@@ -86,8 +86,8 @@ int main(int argc, char** argv) {
 
         gmr::RetargetOptions opts;
         opts.damping             = std::stod(getArg(argc, argv, "--damping", "0.5"));
-        opts.maxIterations       = std::stoi(getArg(argc, argv, "--max_iter", "10"));
-        opts.integrationTimestep = std::stod(getArg(argc, argv, "--integration_timestep", "0.01"));
+        opts.maxIterations       = std::stoi(getArg(argc, argv, "--max_iter", "15"));
+        opts.integrationTimestep = std::stod(getArg(argc, argv, "--integration_timestep", "0"));
         opts.useVelocityLimit    = hasFlag(argc, argv, "--use_velocity_limit");
 
         const bool pinBackend = backend == gmr::RetargetBackend::kPinocchio;

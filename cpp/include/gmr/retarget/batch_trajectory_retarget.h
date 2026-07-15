@@ -8,11 +8,19 @@
 #include <Eigen/Core>
 
 #include "gmr/retarget/batch_trajectory_config.h"
+#include "gmr/retarget/contact_ground.h"
 #include "gmr/retarget/human_frame_types.h"
 #include "gmr/retarget/ik_config.h"
 #include "gmr/retarget/retargeter.h"
 
 namespace gmr {
+
+    /// IK factory context for optional parallel bootstrap / finalize in batch TO.
+    struct BatchIkBootstrapContext {
+        RetargetBackend backend = RetargetBackend::kMujoco;
+        RetargetOptions options;
+        ContactGroundConfig contactGround;
+    };
 
     /// Offline sliding-window batch GN trajectory optimization (MuJoCo FK costs).
     class BatchTrajectoryRetargeter {
@@ -24,11 +32,12 @@ namespace gmr {
         };
         struct FrameTaskTarget {
             int bodyId = -1;
-            double posWeight = 0.0;
-            double rotWeight = 0.0;
             Eigen::Vector3d targetPos = Eigen::Vector3d::Zero();
             Eigen::Quaterniond targetRot = Eigen::Quaterniond::Identity();
         };
+
+        /// Per-frame IK targets keyed by MuJoCo body id (table2 overwrites table1, matching Python).
+        using FrameTargets = std::unordered_map<int, FrameTaskTarget>;
 
         BatchTrajectoryRetargeter(const std::filesystem::path& robotModelPath, IkConfig ikConfig, BatchTrajectoryConfig config = {});
 
@@ -39,7 +48,8 @@ namespace gmr {
 
         /// Bootstrap with ``retargeter`` (per-frame IK), then optimize jointly.
         std::vector<Eigen::VectorXd> retargetBatch(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                  bool offsetToGround = false);
+                                                  bool offsetToGround = false,
+                                                  const BatchIkBootstrapContext* ikBootstrap = nullptr);
 
         const BatchTrajectoryProfile& lastProfile() const { return lastProfile_; }
         int modelNq() const { return nq_; }
@@ -47,27 +57,33 @@ namespace gmr {
        private:
         void buildTrackEntries();
         void buildOptIndices();
+        void buildSmoothMappings();
         void resolveFootBodyIds();
+        void applyContactGroundConfig(const ContactGroundConfig& contactGround);
+        void ensureGnWorkspace(int nFrames) const;
 
         HumanFrame prepareHumanFrame(const HumanFrame& frame, bool offsetToGround) const;
-        std::vector<FrameTaskTarget> targetsForPrepared(const HumanFrame& prepared) const;
+        FrameTargets targetsForPrepared(const HumanFrame& prepared) const;
 
         std::vector<Eigen::VectorXd> bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                bool offsetToGround);
+                                                bool offsetToGround, const BatchIkBootstrapContext* ikBootstrap);
+        std::vector<Eigen::VectorXd> loadQInitFromJson(const std::filesystem::path& path, std::size_t expectedFrames) const;
         std::vector<int> windowStarts(int nFrames) const;
         std::vector<std::vector<bool>> batchContactMask(const std::vector<Eigen::VectorXd>& qRef) const;
+        void buildGlobalRefFootPos(const std::vector<Eigen::VectorXd>& qRef);
 
         std::vector<Eigen::VectorXd> optimizeSlidingWindows(const std::vector<Eigen::VectorXd>& qInit,
-                                                        const std::vector<std::vector<FrameTaskTarget>>& targets);
+                                                            const std::vector<FrameTargets>& targets);
         std::vector<Eigen::VectorXd> optimizeGnWindow(const std::vector<Eigen::VectorXd>& qInit,
-                                                      const std::vector<std::vector<FrameTaskTarget>>& targets,
+                                                      const std::vector<FrameTargets>& targets,
                                                       const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef,
                                                       int frameOffset, double anchorWeight);
 
         void clipHingeQpos(Eigen::VectorXd& q) const;
-        double windowCost(const std::vector<Eigen::VectorXd>& qWin,
-                          const std::vector<std::vector<FrameTaskTarget>>& targets, const Eigen::VectorXd& anchor,
-                          const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight) const;
+        void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;
+        double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
+                          const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
+                          double anchorWeight) const;
         Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared,
                                      bool offsetToGround);
 
@@ -76,17 +92,25 @@ namespace gmr {
         BatchTrajectoryProfile lastProfile_;
 
         struct Impl;
+        struct GnWorkspace;
         std::unique_ptr<Impl> impl_;
+        mutable std::unique_ptr<GnWorkspace> gnWs_;
         int nq_ = 0;
 
+        std::filesystem::path robotModelPath_;
         std::vector<TrackEntry> trackEntries_;
         std::vector<int> optVidx_;
         std::vector<int> smoothQidx_;
+        std::vector<int> smoothV_;
+        std::vector<int> smoothQ_;
+        std::unordered_map<int, int> qToOptV_;
         std::vector<int> footBodyIds_;
         std::unordered_map<std::string, Eigen::Vector3d> table1PosOffsets_;
         std::unordered_map<std::string, Eigen::Quaterniond> table1RotOffsets_;
         std::vector<std::vector<bool>> globalRefContact_;
+        std::vector<std::vector<Eigen::Vector3d>> globalRefFootPos_;
         double groundZ_ = 0.0;
+        std::unique_ptr<ContactGroundPipeline> contactGroundPipeline_;
     };
 
 }  // namespace gmr

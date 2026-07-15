@@ -27,9 +27,11 @@ from general_motion_retargeting.gui.core import (
     RETARGET_ALGO_LABELS,
     TRI_STATE_LABELS,
     build_command,
+    is_cpp_retarget_algo,
     robots_for_input,
     supports_to,
     supports_batch_to,
+    supports_cpp_to,
     validate_config,
 )
 from general_motion_retargeting.utils.gvhmr_env import default_gvhmr_python
@@ -181,6 +183,9 @@ def _algo_choices_for_input(input_type: str) -> list[str]:
         choices.append(RETARGET_ALGO_LABELS["to"])
     if supports_batch_to(input_type):
         choices.append(RETARGET_ALGO_LABELS["batch_to"])
+    if supports_cpp_to(input_type):
+        choices.append(RETARGET_ALGO_LABELS["cpp_batch_to"])
+        choices.append(RETARGET_ALGO_LABELS["cpp_causal_to"])
     return choices
 
 
@@ -200,8 +205,11 @@ def on_input_type_change(input_label: str, current_robot: str, current_algo: str
         algo_key = "ik"
     if not batch_to_supported and algo_key == "batch_to":
         algo_key = "ik"
+    if not supports_cpp_to(input_type) and is_cpp_retarget_algo(algo_key):
+        algo_key = "ik"
     algo_label = RETARGET_ALGO_LABELS[algo_key]
     algo_choices = _algo_choices_for_input(input_type)
+    show_batch_panel = batch_to_supported and algo_key in ("batch_to", "cpp_batch_to")
     return (
         gr.Dropdown(choices=robots, value=value),
         gr.Radio(choices=batch_choices, value="single"),
@@ -217,7 +225,7 @@ def on_input_type_change(input_label: str, current_robot: str, current_algo: str
         gr.update(open=needs_gvhmr),
         gr.Dropdown(choices=algo_choices, value=algo_label),
         gr.update(visible=to_supported and algo_key == "to"),
-        gr.update(visible=batch_to_supported and algo_key == "batch_to"),
+        gr.update(visible=show_batch_panel),
     )
 
 
@@ -225,7 +233,7 @@ def on_retarget_algo_change(algo_label: str, input_label: str):
     input_type = _resolve_input_type(input_label)
     algo_key = _resolve_retarget_algo(algo_label)
     show_to = supports_to(input_type) and algo_key == "to"
-    show_batch_to = supports_batch_to(input_type) and algo_key == "batch_to"
+    show_batch_to = supports_batch_to(input_type) and algo_key in ("batch_to", "cpp_batch_to")
     return gr.update(visible=show_to), gr.update(visible=show_batch_to)
 
 
@@ -332,6 +340,9 @@ def run_stream(*args):
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    devel_lib = "/opt/robot/devel/lib"
+    if Path(devel_lib).is_dir():
+        env["LD_LIBRARY_PATH"] = f"{devel_lib}:{env.get('LD_LIBRARY_PATH', '')}"
     _ACTIVE_PROC = subprocess.Popen(
         cmd,
         cwd=str(REPO_ROOT),
@@ -360,7 +371,7 @@ def build_app() -> gr.Blocks:
             f"""
             <div id="gmr-header">
               <h1>{GUI_APP_TITLE}</h1>
-              <p>运动重定向 · IK / TO</p>
+              <p>运动重定向 · IK / TO / C++ Batch·Causal</p>
             </div>
             """
         )
@@ -448,6 +459,11 @@ def build_app() -> gr.Blocks:
                             to_use_gmr_init = gr.Checkbox(value=True, label="GMR 初值 (use_gmr_init)")
 
                         with gr.Tab("Batch TO", visible=False) as batch_to_panel:
+                            gr.Markdown(
+                                "Python **Batch TO** 与 **C++ Batch TO** 共用窗口/GN 参数；"
+                                "C++ 从 `.pt` / `.npz` / `.bvh` 一键加载：先在终端完成优化，再打开 MuJoCo 回放。"
+                                "长 BVH 可先截短或降低帧数。"
+                            )
                             batch_to_fast = gr.Checkbox(
                                 value=False,
                                 label="Fast 档 (--fast)",

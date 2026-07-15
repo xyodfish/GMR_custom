@@ -100,7 +100,7 @@ def export_human_json(
     out_json: pathlib.Path,
     max_frames: int,
 ) -> float:
-    from scripts.tools.export_gvhmr_frames_json import frame_to_json
+    from general_motion_retargeting.human_frame_loaders import frame_to_json_dict
     from general_motion_retargeting.utils.smpl import (
         get_gvhmr_data_offline_fast,
         load_gvhmr_pred_file,
@@ -116,7 +116,7 @@ def export_human_json(
     payload = {
         "fps": float(fps),
         "actual_human_height": float(height),
-        "frames": [frame_to_json(f) for f in frames],
+        "frames": [frame_to_json_dict(f) for f in frames],
     }
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload))
@@ -135,6 +135,7 @@ def run_cpp_batch(
     gn_steps: int,
     fast: bool,
     cpp_cli: pathlib.Path,
+    gn_line_search: str = "armijo",
 ) -> tuple[np.ndarray, dict]:
     cmd = [
         str(cpp_cli),
@@ -162,6 +163,10 @@ def run_cpp_batch(
         cmd.append("--contact_ground")
     if fast:
         cmd.append("--fast")
+    if gn_line_search == "best":
+        cmd.extend(["--gn_line_search", "best"])
+    elif gn_line_search == "armijo":
+        cmd.extend(["--gn_line_search", "armijo"])
 
     env = os.environ.copy()
     devel_lib = "/opt/robot/devel/lib"
@@ -189,6 +194,7 @@ def main() -> None:
     parser.add_argument("--no-contact_ground", dest="contact_ground", action="store_false")
     parser.add_argument("--cpp_cli", type=str, default=str(DEFAULT_CPP_CLI))
     parser.add_argument("--output_json", default="output/py_vs_cpp_batch.json")
+    parser.add_argument("--gn_line_search", default="best", choices=["armijo", "best"])
     parser.add_argument("--keep_human_json", type=str, default="")
     args = parser.parse_args()
 
@@ -232,6 +238,7 @@ def main() -> None:
             args.gn_steps,
             args.fast,
             cpp_cli,
+            args.gn_line_search,
         )
 
     n = min(len(q_py), len(q_cpp))
@@ -251,6 +258,7 @@ def main() -> None:
             "window_stride": args.window_stride,
             "gn_steps": args.gn_steps,
             "fast": args.fast,
+            "gn_line_search": args.gn_line_search,
         },
         "python_profile": py_prof,
         "cpp_profile": cpp_prof,

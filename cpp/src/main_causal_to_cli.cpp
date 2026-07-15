@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
 
         gmr::RetargetOptions ikOpts;
         ikOpts.damping       = std::stod(getArg(argc, argv, "--damping", "0.5"));
-        ikOpts.maxIterations = std::stoi(getArg(argc, argv, "--max_iter", "10"));
+        ikOpts.maxIterations = std::stoi(getArg(argc, argv, "--max_iter", "15"));
 
         const gmr::RetargetBackend backend = gmr::parseRetargetBackend(backendName);
         const std::filesystem::path robotXml = gmr::resolveRobotXml(gmrRoot, robot);

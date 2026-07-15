@@ -1,0 +1,79 @@
+{
+  "pt_file": "output/gvhmr_pt/cxk-ball_hmr4d_results.pt",
+  "contact_ground": true,
+  "methods": [
+    {
+      "name": "IK",
+      "fk_mean": 5.535219060963641,
+      "jerk_mean": 4098.495284062432,
+      "foot_slip_total": 0.4621656795093783,
+      "rmse_vs_ik": 0.0,
+      "rmse_vs_py": 0.015330998263966904
+    },
+    {
+      "name": "Py_batch_quality",
+      "fk_mean": 5.421140546654152,
+      "jerk_mean": 3896.674202123303,
+      "foot_slip_total": 0.31915712227837706,
+      "rmse_vs_ik": 0.015330998263966904,
+      "rmse_vs_py": 0.0
+    },
+    {
+      "name": "Cpp_armijo",
+      "fk_mean": 6.894865114701251,
+      "jerk_mean": 4537.773157979672,
+      "foot_slip_total": 0.25542386805069656,
+      "rmse_vs_ik": 0.04816487298355701,
+      "rmse_vs_py": 0.041429379572456244
+    },
+    {
+      "name": "Cpp_best_LS",
+      "fk_mean": 5.421140542391063,
+      "jerk_mean": 3896.6742037952417,
+      "foot_slip_total": 0.31915712215824427,
+      "rmse_vs_ik": 0.015330998244974187,
+      "rmse_vs_py": 7.870819036595408e-10
+    },
+    {
+      "name": "Cpp_dense_solver",
+      "fk_mean": 5.421140542391063,
+      "jerk_mean": 3896.6742037952417,
+      "foot_slip_total": 0.31915712215824427,
+      "rmse_vs_ik": 0.015330998244974187,
+      "rmse_vs_py": 7.870819036595408e-10
+    },
+    {
+      "name": "Cpp_banded_solver",
+      "fk_mean": 5.421140542391063,
+      "jerk_mean": 3896.6742037952417,
+      "foot_slip_total": 0.31915712215824427,
+      "rmse_vs_ik": 0.015330998244974187,
+      "rmse_vs_py": 7.870819036595408e-10
+    },
+    {
+      "name": "Cpp_fast",
+      "fk_mean": 6.30539711352928,
+      "jerk_mean": 4181.2024649669565,
+      "foot_slip_total": 0.25282316561399565,
+      "rmse_vs_ik": 0.0388413112735534,
+      "rmse_vs_py": 0.031072260769322596
+    },
+    {
+      "name": "Cpp_py_ik_init",
+      "fk_mean": 5.3828217163372285,
+      "jerk_mean": 3703.193857295561,
+      "foot_slip_total": 0.2780702868938598,
+      "rmse_vs_ik": 0.010314035997048152,
+      "rmse_vs_py": 0.013760923025468734
+    }
+  ],
+  "cpp_armijo_vs_best_rmse": 0.04142937959350118,
+  "cpp_armijo_vs_dense_rmse": 0.04142937959350118,
+  "cpp_banded_vs_dense_rmse": 0.0,
+  "cpp_fast_vs_dense_rmse": 0.031072260782286927,
+  "py_vs_cpp_armijo_rmse": 0.041429379572456244,
+  "py_vs_cpp_dense_rmse": 7.870819036595408e-10,
+  "py_vs_cpp_banded_rmse": 7.870819036595408e-10,
+  "py_vs_cpp_fast_rmse": 0.031072260769322596,
+  "py_vs_cpp_pyinit_rmse": 0.013760923025468734
+}

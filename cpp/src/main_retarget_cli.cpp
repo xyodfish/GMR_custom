@@ -45,6 +45,7 @@ namespace {
                   << " [--actual_human_height <float>]"
                   << " [--damping <float>]"
                   << " [--max_iter <int>]"
+                  << " [--solver daqp|qpoases]"
                   << " [--use_velocity_limit]"
                   << " [--offset_to_ground]"
                   << " [--contact_ground]"
@@ -81,7 +82,8 @@ int main(int argc, char** argv) {
 
         gmr::RetargetOptions opts;
         opts.damping          = std::stod(getArg(argc, argv, "--damping", "0.5"));
-        opts.maxIterations    = std::stoi(getArg(argc, argv, "--max_iter", "10"));
+        opts.maxIterations    = std::stoi(getArg(argc, argv, "--max_iter", "15"));
+        opts.solverName       = getArg(argc, argv, "--solver", "daqp");
         opts.useVelocityLimit = hasFlag(argc, argv, "--use_velocity_limit");
 
         const bool pinBackend = backend == gmr::RetargetBackend::kPinocchio;

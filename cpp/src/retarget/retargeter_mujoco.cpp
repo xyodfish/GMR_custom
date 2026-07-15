@@ -13,6 +13,7 @@
 #include "gmr/retarget/mujoco_collision_limit.h"
 #include "gmr/retarget/contact_ground.h"
 #include "gmr/solver/qp_solver.h"
+#include "mink_configuration_limit.h"
 #include "retargeter_internal_utils.h"
 #include "causal_lbfgs_b.h"
 #include "mujoco_task_kinematics.h"
@@ -58,8 +59,6 @@ namespace gmr {
 
         std::vector<MujocoTaskRuntime> tasks1;
         std::vector<MujocoTaskRuntime> tasks2;
-        std::unordered_map<std::string, Eigen::Vector3d> table1PosOffsets;
-        std::unordered_map<std::string, Eigen::Quaterniond> table1RotOffsets;
 
         bool hasRootFreeFlyer = false;
         std::vector<ScalarJointCoordinate> scalarJointCoordinates;
@@ -133,9 +132,8 @@ namespace gmr {
             buildTasks(ikConfig.tasksTable1, &tasks1);
             buildTasks(ikConfig.tasksTable2, &tasks2);
 
-            for (const auto& task : tasks1) {
-                table1PosOffsets[task.humanBodyName] = task.posOffset - Eigen::Vector3d(0.0, 0.0, ikConfig.groundHeight);
-                table1RotOffsets[task.humanBodyName] = task.rotOffset;
+            if (options.integrationTimestep <= 0.0) {
+                options.integrationTimestep = model->opt.timestep;
             }
 
             if (ikConfig.collisionAvoidance.enabled) {
@@ -158,8 +156,7 @@ namespace gmr {
 
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround) const {
             const bool useOffsetToGround = offsetToGround && !(contactGround && contactGround->enabled());
-            return retarget_internal::scaleAndOffsetHumanFrameImpl(humanFrame, ikConfig, table1PosOffsets, table1RotOffsets,
-                                                                   useOffsetToGround);
+            return retarget_internal::scaleHumanFrameOnly(humanFrame, ikConfig, useOffsetToGround);
         }
 
         HumanFrame applyContactGround(const HumanFrame& prepared) const {
@@ -177,14 +174,18 @@ namespace gmr {
         }
 
         void updateTaskTargets(const HumanFrame& frame) {
-            auto fill = [&frame](std::vector<MujocoTaskRuntime>* tasks) {
+            auto fill = [this, &frame](std::vector<MujocoTaskRuntime>* tasks) {
                 for (auto& task : *tasks) {
                     auto it = frame.find(task.humanBodyName);
                     if (it == frame.end()) {
                         continue;
                     }
-                    task.targetPos = it->second.position;
-                    task.targetRot = it->second.orientation;
+                    const Eigen::Vector3d posOff =
+                        retarget_internal::ikTaskPosOffset(task.posOffset, ikConfig.groundHeight);
+                    const auto [targetPos, targetRot] = retarget_internal::applyBodyOffset(
+                        it->second.position, it->second.orientation, posOff, task.rotOffset);
+                    task.targetPos = targetPos;
+                    task.targetRot = targetRot;
                 }
             };
 
@@ -201,9 +202,12 @@ namespace gmr {
                 Eigen::Quaterniond currRot(xquat[0], xquat[1], xquat[2], xquat[3]);
                 currRot.normalize();
 
-                const Eigen::Vector3d posErr = task.targetPos - currPos;
-                const Eigen::Vector3d rotErr = retarget_internal::computeOrientationErrorWorld(currRot, task.targetRot);
-                sqErr += posErr.squaredNorm() + rotErr.squaredNorm();
+                Eigen::Quaterniond targetRot = task.targetRot;
+                targetRot.normalize();
+                const pinocchio::SE3 T_wb(currRot.toRotationMatrix(), currPos);
+                const pinocchio::SE3 T_wt(targetRot.toRotationMatrix(), task.targetPos);
+                const Eigen::Matrix<double, 6, 1> error = pinocchio::log6(T_wb.inverse() * T_wt).toVector();
+                sqErr += error.squaredNorm();
             }
 
             return std::sqrt(sqErr);
@@ -221,7 +225,7 @@ namespace gmr {
             }
 
             double currError = computeTaskError(tasks);
-            solver::QPSolver solver;
+            solver::QPSolver solver(options.solverName);
             const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(nv, nv);
 
             std::vector<mjtNum> jacp(3 * nv);
@@ -247,23 +251,8 @@ namespace gmr {
                     qp.ciUb.head(nv).setConstant(options.velocityLimit * dt);
                 }
 
-                for (int j = 0; j < model->njnt; ++j) {
-                    const int jointType = model->jnt_type[j];
-                    if (jointType != mjJNT_HINGE && jointType != mjJNT_SLIDE) {
-                        continue;
-                    }
-                    if (model->jnt_limited[j] <= 0) {
-                        continue;
-                    }
-
-                    const int qadr    = model->jnt_qposadr[j];
-                    const int vadr    = model->jnt_dofadr[j];
-                    const double qmin = model->jnt_range[2 * j + 0];
-                    const double qmax = model->jnt_range[2 * j + 1];
-
-                    qp.ciLb[vadr] = std::max(qp.ciLb[vadr], qmin - data->qpos[qadr]);
-                    qp.ciUb[vadr] = std::min(qp.ciUb[vadr], qmax - data->qpos[qadr]);
-                }
+                mink_limits::applyConfigurationLimit(model.get(), data->qpos, options.configurationLimitGain, &qp.ciLb,
+                                                   &qp.ciUb);
 
                 for (const auto& task : tasks) {
                     std::fill(jacp.begin(), jacp.end(), 0.0);
@@ -303,7 +292,7 @@ namespace gmr {
                     weightedError.head<3>() *= task.posWeight;
                     weightedError.tail<3>() *= task.rotWeight;
 
-                    const double lmMu = weightedError.squaredNorm();
+                    const double lmMu = options.taskLmDamping * weightedError.squaredNorm();
                     qp.H.noalias() += weightedJ.transpose() * weightedJ + lmMu * I;
                     qp.g.noalias() += -(weightedError.transpose() * weightedJ).transpose();
                 }
@@ -323,15 +312,6 @@ namespace gmr {
                 qvel                         = deltaQ / dt;
 
                 mj_integratePos(model.get(), data->qpos, qvel.data(), dt);
-                for (int j = 0; j < model->njnt; ++j) {
-                    const int jointType = model->jnt_type[j];
-                    if ((jointType == mjJNT_HINGE || jointType == mjJNT_SLIDE) && model->jnt_limited[j] > 0) {
-                        const int qadr    = model->jnt_qposadr[j];
-                        const double qmin = model->jnt_range[2 * j + 0];
-                        const double qmax = model->jnt_range[2 * j + 1];
-                        data->qpos[qadr]  = std::min(std::max(data->qpos[qadr], qmin), qmax);
-                    }
-                }
                 mju_copy(data->qvel, qvel.data(), model->nv);
                 mj_forward(model.get(), data.get());
                 syncQposFromData();

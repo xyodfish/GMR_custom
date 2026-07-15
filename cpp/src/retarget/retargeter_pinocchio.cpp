@@ -154,8 +154,6 @@ namespace gmr {
 
         std::vector<PinTaskRuntime> tasks1;
         std::vector<PinTaskRuntime> tasks2;
-        std::unordered_map<std::string, Eigen::Vector3d> table1PosOffsets;
-        std::unordered_map<std::string, Eigen::Quaterniond> table1RotOffsets;
 
         bool hasRootFreeFlyer = false;
         std::vector<ScalarJointCoordinate> scalarJointCoordinates;
@@ -222,9 +220,8 @@ namespace gmr {
             buildTasks(ikConfig.tasksTable1, &tasks1);
             buildTasks(ikConfig.tasksTable2, &tasks2);
 
-            for (const auto& task : tasks1) {
-                table1PosOffsets[task.humanBodyName] = task.posOffset - Eigen::Vector3d(0.0, 0.0, ikConfig.groundHeight);
-                table1RotOffsets[task.humanBodyName] = task.rotOffset;
+            if (options.integrationTimestep <= 0.0) {
+                options.integrationTimestep = 2e-3;
             }
 
             if (options.contactGround.enabled) {
@@ -264,8 +261,7 @@ namespace gmr {
 
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround) const {
             const bool useOffsetToGround = offsetToGround && !(contactGround && contactGround->enabled());
-            return retarget_internal::scaleAndOffsetHumanFrameImpl(humanFrame, ikConfig, table1PosOffsets, table1RotOffsets,
-                                                                   useOffsetToGround);
+            return retarget_internal::scaleHumanFrameOnly(humanFrame, ikConfig, useOffsetToGround);
         }
 
         HumanFrame applyContactGround(const HumanFrame& prepared) const {
@@ -276,14 +272,18 @@ namespace gmr {
         }
 
         void updateTaskTargets(const HumanFrame& frame) {
-            auto fill = [&frame](std::vector<PinTaskRuntime>* tasks) {
+            auto fill = [this, &frame](std::vector<PinTaskRuntime>* tasks) {
                 for (auto& task : *tasks) {
                     auto it = frame.find(task.humanBodyName);
                     if (it == frame.end()) {
                         continue;
                     }
-                    task.targetPos = it->second.position;
-                    task.targetRot = it->second.orientation;
+                    const Eigen::Vector3d posOff =
+                        retarget_internal::ikTaskPosOffset(task.posOffset, ikConfig.groundHeight);
+                    const auto [targetPos, targetRot] = retarget_internal::applyBodyOffset(
+                        it->second.position, it->second.orientation, posOff, task.rotOffset);
+                    task.targetPos = targetPos;
+                    task.targetRot = targetRot;
                 }
             };
 
@@ -328,7 +328,7 @@ namespace gmr {
             }
 
             double currError = computeTaskError(tasks);
-            solver::QPSolver solver;
+            solver::QPSolver solver(options.solverName);
             const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(nv, nv);
 
             for (int iter = 0; iter < options.maxIterations; ++iter) {
@@ -399,7 +399,7 @@ namespace gmr {
                     weightedError.head<3>() *= task.posWeight;
                     weightedError.tail<3>() *= task.rotWeight;
 
-                    const double lmMu = weightedError.squaredNorm();
+                    const double lmMu = options.taskLmDamping * weightedError.squaredNorm();
                     qp.H.noalias() += weightedJacobian.transpose() * weightedJacobian + lmMu * I;
                     qp.g.noalias() += -(weightedError.transpose() * weightedJacobian).transpose();
                 }

@@ -17,10 +17,15 @@
 namespace gmr {
 
     struct RetargetOptions {
-        std::string solverName     = "qpoases";
+        std::string solverName     = "daqp";
         double damping             = 5e-1;
-        double integrationTimestep = 1e-2;
-        int maxIterations          = 100;
+        /// Integration dt for IK; <= 0 uses MuJoCo ``model.opt.timestep`` (Python ``mink.solve_ik``).
+        double integrationTimestep = 0.0;
+        int maxIterations          = 15;
+        /// Per-task LM scale (mink ``FrameTask`` ``lm_damping``); mu = scale * ||W e||^2 per task.
+        double taskLmDamping = 1.0;
+        /// Mink ``ConfigurationLimit`` gain for joint position bounds.
+        double configurationLimitGain = 0.95;
         bool useVelocityLimit      = false;
         double velocityLimit       = 3.0 * M_PI;
         double progressThreshold   = 1e-3;

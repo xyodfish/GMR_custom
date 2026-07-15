@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -10,6 +11,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include <GLFW/glfw3.h>
 #include <mujoco/mujoco.h>
@@ -35,7 +38,7 @@ struct ViewerConfig {
     double actualHumanHeight = 0.0;
 
     double damping        = 0.5;
-    int maxIter           = 10;
+    int maxIter           = 15;
     bool useVelocityLimit = false;
 
     bool offsetToGround = false;
@@ -50,6 +53,7 @@ struct ViewerConfig {
     int batchToGnSteps      = 3;
     bool batchToFast        = false;
     int maxFrames           = 0;
+    std::string outJson;
 
     int transparentRobot  = 0;
     bool showHumanOverlay = true;
@@ -413,6 +417,29 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     if (hasArg(argc, argv, "--max_frames")) {
         config->maxFrames = std::stoi(getArg(argc, argv, "--max_frames"));
     }
+    if (hasArg(argc, argv, "--out_json")) {
+        config->outJson = getArg(argc, argv, "--out_json");
+    }
+}
+
+void writeQposJson(const std::filesystem::path& path, const std::string& robot, const std::string& method,
+                   double fps, int nq, const std::vector<Eigen::VectorXd>& qposFrames) {
+    nlohmann::json out;
+    out["robot"]      = robot;
+    out["method"]     = method;
+    out["fps"]        = fps;
+    out["nq"]         = nq;
+    out["num_frames"] = qposFrames.size();
+    nlohmann::json rows = nlohmann::json::array();
+    for (const auto& q : qposFrames) {
+        rows.push_back(std::vector<double>(q.data(), q.data() + q.size()));
+    }
+    out["qpos_frames"] = rows;
+    std::ofstream ofs(path);
+    if (!ofs) {
+        throw std::runtime_error("Failed to open out_json: " + path.string());
+    }
+    ofs << out.dump(2) << std::endl;
 }
 
 void applyDefaults(ViewerConfig* config) {
@@ -624,6 +651,7 @@ void printUsage() {
               << " [--realtime|--precompute]"
               << " [--window_size <int>] [--window_stride <int>] [--gn_steps <int>] [--fast]"
               << " [--max_frames <int>]"
+              << " [--out_json <path>]"
               << " [--transparent_robot <0|1>]"
               << " [--hide_human_overlay|--show_human_overlay]"
               << " [--window_width <int>]"
@@ -711,6 +739,64 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Run expensive offline work before opening GLFW (avoids black/unresponsive window during batch GN).
+        std::vector<Eigen::VectorXd> precomputedQpos;
+        if (useBatchTo) {
+            gmr::BatchTrajectoryConfig batchCfg;
+            batchCfg.windowSize   = config.batchToWindowSize;
+            batchCfg.windowStride = config.batchToWindowStride;
+            batchCfg.gnSteps      = config.batchToGnSteps;
+            batchCfg.verbose      = true;
+            if (config.batchToFast) {
+                batchCfg.gnSteps             = 2;
+                batchCfg.gnLineSearchAlphas    = {1.0};
+                batchCfg.windowSize            = 16;
+                batchCfg.windowStride          = 8;
+                batchCfg.useBandedSolver       = true;
+            }
+
+            gmr::BatchTrajectoryRetargeter batchTo(xmlPath, ikConfigCopy, batchCfg);
+            std::cout << "[batch-to-viewer] Optimizing " << playSequence.frames.size()
+                      << " frames in terminal (MuJoCo window opens when done)..." << std::endl;
+            std::cout << "  window=" << batchCfg.windowSize << "/" << batchCfg.windowStride
+                      << " gn_steps=" << batchCfg.gnSteps << std::endl;
+            std::cout.flush();
+
+            const auto tBatch = std::chrono::steady_clock::now();
+            gmr::BatchIkBootstrapContext ikBootstrap{gmr::RetargetBackend::kMujoco, opts, opts.contactGround};
+            precomputedQpos =
+                batchTo.retargetBatch(playSequence.frames, *retargeter, config.offsetToGround, &ikBootstrap);
+            const double batchMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tBatch).count();
+            const gmr::BatchTrajectoryProfile prof = batchTo.lastProfile();
+            std::cout << "[batch-to-viewer] bootstrap=" << prof.bootstrapMs << "ms optimize=" << prof.optimizeMs
+                      << "ms finalize=" << prof.finalizeMs << "ms total=" << prof.totalMs << "ms wall=" << batchMs
+                      << "ms (" << prof.msPerFrame() << " ms/f)" << std::endl;
+            if (!config.outJson.empty()) {
+                writeQposJson(config.outJson, robot, "batch_trajectory_optimization_gn_cpp", playSequence.fps,
+                              retargeter->currentQpos().size(), precomputedQpos);
+                std::cout << "Saved batch TO to: " << config.outJson << std::endl;
+            }
+            if (!precomputedQpos.empty()) {
+                retargeter->setQpos(precomputedQpos.front());
+            }
+        } else if (!config.realtime) {
+            precomputedQpos.reserve(playSequence.frames.size());
+            std::cout << "[viewer] Precomputing IK (" << playSequence.frames.size()
+                      << " frames, window opens when done)..." << std::endl;
+            std::cout.flush();
+            for (std::size_t i = 0; i < playSequence.frames.size(); ++i) {
+                precomputedQpos.push_back(retargeter->retargetFrame(playSequence.frames[i], config.offsetToGround));
+                if ((i + 1) % 300 == 0 || (i + 1) == playSequence.frames.size()) {
+                    std::cout << "\r  progress: " << (i + 1) << "/" << playSequence.frames.size() << std::flush;
+                }
+            }
+            std::cout << std::endl;
+            if (!precomputedQpos.empty()) {
+                retargeter->setQpos(precomputedQpos.front());
+            }
+        }
+
         if (glfwInit() == GLFW_FALSE) {
             throw std::runtime_error("glfwInit failed.");
         }
@@ -783,44 +869,7 @@ int main(int argc, char** argv) {
         const auto frameDtDuration =
             std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(frameDt));
 
-        std::vector<Eigen::VectorXd> precomputedQpos;
-        if (useBatchTo) {
-            gmr::BatchTrajectoryConfig batchCfg;
-            batchCfg.windowSize   = config.batchToWindowSize;
-            batchCfg.windowStride = config.batchToWindowStride;
-            batchCfg.gnSteps      = config.batchToGnSteps;
-            if (config.batchToFast) {
-                batchCfg.gnSteps             = 2;
-                batchCfg.gnLineSearchAlphas    = {1.0};
-                batchCfg.windowSize            = 16;
-                batchCfg.windowStride          = 8;
-            }
-
-            gmr::BatchTrajectoryRetargeter batchTo(xmlPath, ikConfigCopy, batchCfg);
-            std::cout << "Running batch TO (" << playSequence.frames.size() << " frames, window "
-                      << batchCfg.windowSize << "/" << batchCfg.windowStride << ", gn_steps=" << batchCfg.gnSteps
-                      << ")..." << std::endl;
-            const auto tBatch = std::chrono::steady_clock::now();
-            precomputedQpos =
-                batchTo.retargetBatch(playSequence.frames, *retargeter, config.offsetToGround);
-            const double batchMs =
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tBatch).count();
-            const gmr::BatchTrajectoryProfile prof = batchTo.lastProfile();
-            std::cout << "[batch-to-viewer] optimize=" << prof.optimizeMs << "ms total=" << prof.totalMs
-                      << "ms wall=" << batchMs << "ms (" << prof.msPerFrame() << " ms/f)" << std::endl;
-            retargeter->setQpos(precomputedQpos.front());
-            syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
-        } else if (!config.realtime) {
-            precomputedQpos.reserve(playSequence.frames.size());
-            std::cout << "Precomputing retarget trajectory (" << playSequence.frames.size() << " frames)..." << std::endl;
-            for (std::size_t i = 0; i < playSequence.frames.size(); ++i) {
-                precomputedQpos.push_back(retargeter->retargetFrame(playSequence.frames[i], config.offsetToGround));
-                if ((i + 1) % 300 == 0 || (i + 1) == playSequence.frames.size()) {
-                    std::cout << "\r  progress: " << (i + 1) << "/" << playSequence.frames.size() << std::flush;
-                }
-            }
-            std::cout << std::endl;
-            retargeter->setQpos(precomputedQpos.front());
+        if (!precomputedQpos.empty()) {
             syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
         }
 

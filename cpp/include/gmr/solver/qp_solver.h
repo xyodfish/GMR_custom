@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 #include <qpOASES.hpp>
 
@@ -10,18 +11,29 @@ namespace gmr::solver {
 
 class QPSolver {
  public:
-  QPSolver();
-  ~QPSolver() = default;
+  explicit QPSolver(const std::string& backend = "daqp");
+  ~QPSolver();
+
+  QPSolver(const QPSolver&) = delete;
+  QPSolver& operator=(const QPSolver&) = delete;
 
   const QPOutput& solve(const QPData& qpData);
 
  private:
-  std::shared_ptr<qpOASES::SQProblem> solver_;
-  qpOASES::Options options_;
+  struct DaqpState;
 
-  bool initialized_ = false;
-  int nv_ = 0;
-  int nc_ = 0;
+  const QPOutput& solveQpoases(const QPData& qpData);
+  const QPOutput& solveDaqp(const QPData& qpData);
+
+  std::string backend_;
+
+  std::shared_ptr<qpOASES::SQProblem> qpoasesSolver_;
+  qpOASES::Options qpoasesOptions_;
+  bool qpoasesInitialized_ = false;
+  int qpoasesNv_ = 0;
+  int qpoasesNc_ = 0;
+
+  std::unique_ptr<DaqpState> daqpState_;
 
   QPOutput output_;
 };

@@ -1,8 +1,16 @@
 #pragma once
 
+#include <filesystem>
 #include <vector>
 
+#include "gmr/retarget/contact_ground.h"
+
 namespace gmr {
+
+    enum class GnLineSearchMode {
+        kBest,    ///< Evaluate all alphas, pick lowest cost (Python parity).
+        kArmijo,  ///< Accept first alpha that decreases cost (faster).
+    };
 
     struct BatchTrajectoryConfig {
         int windowSize              = 16;
@@ -26,6 +34,12 @@ namespace gmr {
         bool footContactFromRef     = true;
         bool smoothRootXyz          = false;
         std::vector<double> gnLineSearchAlphas = {1.0, 0.5, 0.25, 0.125};
+        GnLineSearchMode gnLineSearchMode      = GnLineSearchMode::kBest;
+        bool useBandedSolver                   = false;
+        std::filesystem::path qInitJsonPath;
+        bool parallelBootstrap                 = false;
+        bool parallelFinalize                  = false;
+        int parallelThreads                    = 0;  ///< 0 = OpenMP default
         bool verbose                = false;
     };
 

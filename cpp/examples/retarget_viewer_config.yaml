@@ -7,7 +7,7 @@ human_frame_json: ./tmp/multipleActions1_subject3_retarget_frame.json
 actual_human_height: 1.75
 
 damping: 0.5
-max_iter: 10
+max_iter: 15
 use_velocity_limit: false
 
 offset_to_ground: false

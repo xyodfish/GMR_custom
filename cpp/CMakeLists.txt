@@ -13,11 +13,25 @@ list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/devel-packages
 set(CMAKE_BUILD_RPATH "${GMR_THIRDPARTY_PREFIX}/lib;${GMR_MUJOCO_PREFIX}/lib")
 set(CMAKE_INSTALL_RPATH "${GMR_THIRDPARTY_PREFIX}/lib;${GMR_MUJOCO_PREFIX}/lib")
 
+include(FetchContent)
+set(DAQP_PROFILING OFF CACHE BOOL "" FORCE)
+set(DAQP_TEST OFF CACHE BOOL "" FORCE)
+set(DAQP_BENCHMARK OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  daqp
+  GIT_REPOSITORY https://github.com/darnstrom/daqp.git
+  GIT_TAG master
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(daqp)
+
 find_package(glog REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(qpOASES REQUIRED)
 find_package(pinocchio REQUIRED)
 find_package(mujoco REQUIRED)
+
+find_package(OpenMP)
 
 if(NOT TARGET qpOASES::qpOASES)
   add_library(qpOASES::qpOASES UNKNOWN IMPORTED)
@@ -61,15 +75,21 @@ target_include_directories(gmr_retarget_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${GMR_THIRDPARTY_PREFIX}/include
   ${GMR_MUJOCO_PREFIX}/include
+  ${daqp_SOURCE_DIR}/include
 )
 
 target_link_libraries(gmr_retarget_core PUBLIC
   Eigen3::Eigen
   qpOASES::qpOASES
+  daqpstat
   pinocchio::pinocchio
   mujoco::mujoco
   glog::glog
 )
+
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(gmr_retarget_core PUBLIC OpenMP::OpenMP_CXX)
+endif()
 
 add_executable(gmr_retarget_cli
   src/main_retarget_cli.cpp

@@ -34,10 +34,17 @@ def main() -> None:
     parser.add_argument("--body_model_dir", default=str(REPO / "assets" / "body_models"))
     parser.add_argument("--backend", default="mujoco_se3")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--quality", action="store_true",
+                        help="Offline quality preset: C++ native IK + dense GN + best line search (no --fast/--ceiling).")
+    parser.add_argument("--ceiling", action="store_true")
+    parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--contact_ground", action="store_true")
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--human_json", default=None, help="Reuse/save intermediate human JSON.")
     args = parser.parse_args()
+
+    if args.fast and args.quality:
+        parser.error("Use either --fast or --quality, not both.")
 
     frames, fps, height, src_human = load_human_motion_frames(
         args.input_file,
@@ -78,8 +85,14 @@ def main() -> None:
     ]
     if args.max_frames:
         cmd += ["--max_frames", str(args.max_frames)]
-    if args.fast:
+    if args.quality:
+        cmd += ["--gn_line_search", "best", "--no_banded_solver"]
+    elif args.fast:
         cmd.append("--fast")
+    if args.ceiling:
+        cmd.append("--ceiling")
+    if args.parallel:
+        cmd.append("--parallel")
     if args.contact_ground:
         cmd.append("--contact_ground")
     if args.benchmark:
