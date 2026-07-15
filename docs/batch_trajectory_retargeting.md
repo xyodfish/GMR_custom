@@ -89,22 +89,46 @@ contact mask 来自 **IK bootstrap 轨迹** 的脚高（`foot_contact_from_ref=T
 ### 2.1 核心代码
 
 - 类：`general_motion_retargeting/batch_trajectory_retarget.py` → `BatchTrajectoryRetargeter`
-- GVHMR CLI：`scripts/gvhmr/to_robot_batch.py`
-- SMPL-X / BVH：可仿照 GVHMR 脚本调用同一类
+- GVHMR CLI：`scripts/gvhmr/to_robot_batch.py`（兼容包装）
+- 统一 CLI：`scripts/retarget/to_robot_batch.py`（GVHMR `.pt` / SMPL-X `.npz` / LAFAN1 `.bvh`）
 
-### 2.2 GVHMR 示例
+### 2.2 示例
+
+**GVHMR `.pt`**
 
 ```bash
 conda activate gmr
 
-python scripts/gvhmr/to_robot_batch.py \
-  --gvhmr_pred_file ~/Videos/walking/hmr4d_results.pt \
+python scripts/retarget/to_robot_batch.py \
+  --input_file output/gvhmr_pt/cxk-ball_hmr4d_results.pt \
   --robot unitree_g1 \
   --contact_ground \
   --max_frames 120 \
-  --compare_ik \
   --save_path output/walking_batch.pkl
 ```
+
+**SMPL-X（AMASS `.npz`）**
+
+```bash
+python scripts/retarget/to_robot_batch.py \
+  --input_file assets/motions/walk.npz \
+  --input_type smplx \
+  --robot unitree_g1 \
+  --save_path output/walk_smplx_batch.pkl
+```
+
+**LAFAN1 BVH**
+
+```bash
+python scripts/retarget/to_robot_batch.py \
+  --input_file assets/motions/walk1_subject1.bvh \
+  --input_type bvh_lafan1 \
+  --robot unitree_g1 \
+  --contact_ground \
+  --save_path output/walk_bvh_batch.pkl
+```
+
+（`--input_type` 可省略，按扩展名自动推断：`.pt` → GVHMR，`.npz`/`.pkl` → SMPL-X，`.bvh` → LAFAN1）
 
 ### 2.3 预设档位
 
@@ -154,25 +178,44 @@ cmake --build cpp/build -j
 export LD_LIBRARY_PATH=/opt/robot/devel/lib:$LD_LIBRARY_PATH
 ```
 
-### 3.3 运行（GVHMR）
+### 3.3 运行
 
-C++ CLI 读 JSON 人体帧，需先从 `.pt` 导出：
+C++ CLI 读 JSON 人体帧。可直接用统一包装脚本从原始文件运行：
 
 ```bash
-# 1) GVHMR .pt → human_frame_json
-python scripts/tools/export_gvhmr_frames_json.py \
-  --pt_file output/gvhmr_pt/cxk-ball_hmr4d_results.pt \
-  --out_json output/cxk_ball_human_frames.json \
-  --max_frames 120
-
-# 2) C++ batch TO（默认 = quality 参数，不是 --fast）
-cpp/build/gmr_batch_to_cli \
-  --gmr_root . \
+# 一条命令：.pt / .npz / .bvh → C++ batch TO
+python scripts/tools/run_cpp_batch_to.py \
+  --input_file output/gvhmr_pt/cxk-ball_hmr4d_results.pt \
   --robot unitree_g1 \
-  --human_frame_json output/cxk_ball_human_frames.json \
-  --actual_human_height 1.7 \
-  --out_json output/cxk_ball_batch_cpp.json \
-  --max_frames 120
+  --contact_ground \
+  --out_json output/cxk_ball_batch_cpp.json
+```
+
+或先导出 JSON 再调用 `gmr_batch_to_cli`（JSON 含 `src_human` / `actual_human_height` 时 CLI 可自动读取）：
+
+```bash
+# 1) 任意格式 → human_frame_json
+python scripts/tools/export_human_frames_json.py \
+  --input_file walk.npz \
+  --out_json output/walk_human_frames.json
+
+# 2) C++ batch TO
+cpp/build/gmr_batch_to_cli \
+  --gmr_root . --robot unitree_g1 \
+  --human_frame_json output/walk_human_frames.json \
+  --out_json output/walk_batch_cpp.json \
+  --contact_ground
+```
+
+**LAFAN1 BVH 示例**
+
+```bash
+python scripts/tools/run_cpp_batch_to.py \
+  --input_file assets/motions/walk1_subject1.bvh \
+  --input_type bvh_lafan1 \
+  --robot unitree_g1 \
+  --contact_ground \
+  --out_json output/walk_bvh_batch_cpp.json
 ```
 
 ### 3.4 C++ 默认配置 = Quality，不是 Fast
@@ -193,8 +236,8 @@ enableFootPenalties = true   // 全部 foot 权重与 Python 对齐
 
 | 项目 | Python | C++ | 影响 |
 |------|--------|-----|------|
-| 多 alpha line search cost | 完整 `_window_cost` | 仅 FK **位置**项 | 4-alpha 路径略有偏差 |
-| finalize_contact | `contact_ground.fix_penetration` | 简化版 | 接地后处理可能不同 |
+| 多 alpha line search cost | 完整 `_window_cost` | 完整 `windowCost`（已对齐） | — |
+| finalize_contact | `contact_ground.fix_penetration` | `Retargeter::finalizeContact()` | 需 `--contact_ground` 开启 |
 | IK bootstrap | 完整 GMR | C++ `Retargeter` | qpos RMSE ~0.03 |
 | contact_ground CLI | 默认随 GMR | 需 `--contact_ground` / `--no_contact_ground` | 对比时注意对齐 |
 
@@ -243,16 +286,38 @@ enableFootPenalties = true   // 全部 foot 权重与 Python 对齐
 | `scripts/analysis/compare_ik_vs_batch_preset.py` | IK vs batch 预设质量指标 |
 | `scripts/analysis/compare_ik_vs_batch_gn_metrics.py` | jerk / foot slip 等 |
 | `scripts/analysis/benchmark_gvhmr_batch_to.py` | GVHMR 批量 IK vs batch |
+| `scripts/analysis/compare_py_vs_cpp_batch.py` | 同输入一键 Py vs C++ batch TO |
 | `scripts/tools/export_gvhmr_frames_json.py` | `.pt` → C++ 输入 JSON |
 
-可视化：
+可视化（PKL 或 C++ batch JSON）：
 
 ```bash
+# Python batch TO 输出
 python scripts/viz/vis_robot_motion.py \
   --robot unitree_g1 \
   --robot_motion_path output/walking_batch.pkl \
   --record_video --video_path videos/walking_batch.mp4
+
+# C++ gmr_batch_to_cli 输出
+python scripts/viz/vis_robot_motion.py \
+  --robot unitree_g1 \
+  --robot_motion_path output/cxk_ball_batch_cpp.json
+
+# GVHMR 离线 batch TO + 直接回放
+python scripts/gvhmr/to_robot_batch.py \
+  --gvhmr_pred_file output/gvhmr_pt/cxk-ball_hmr4d_results.pt \
+  --robot unitree_g1 --contact_ground --max_frames 120 --view --loop
+
+# C++ batch TO + MuJoCo 窗口（不写 JSON）
+export LD_LIBRARY_PATH=/opt/robot/devel/lib:$LD_LIBRARY_PATH
+cpp/build/gmr_retarget_viewer \
+  --backend mujoco_se3 --method batch_to \
+  --gmr_root . --robot unitree_g1 \
+  --human_frame_json output/cxk_ball_human_frames.json \
+  --actual_human_height 1.7 --contact_ground --max_frames 120 --loop
 ```
+
+GUI：`scripts/gmr_gui.py` → 数据类型 **GVHMR (.pt)** → 算法 **Batch TO (offline)**。
 
 ---
 
@@ -294,8 +359,9 @@ python scripts/viz/vis_robot_motion.py \
 
 ## 8. 后续工作
 
-- [ ] C++ line search 使用完整 window cost
-- [ ] C++ finalize_contact 对齐 Python `fix_penetration`
-- [ ] pybind 或统一 benchmark 脚本（同输入一键 Py vs C++）
+- [x] C++ line search 使用完整 window cost
+- [x] C++ finalize_contact 对齐 Python `fix_penetration`
+- [x] 统一 benchmark 脚本（`compare_py_vs_cpp_batch.py`）
+- [x] GUI / viewer 集成 batch TO 回放
+- [ ] pybind 绑定（可选，替代 subprocess CLI）
 - [ ] 稀疏 / banded 求解器进一步提速
-- [ ] GUI / viewer 集成 batch TO 回放

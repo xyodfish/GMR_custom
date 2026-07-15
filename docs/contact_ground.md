@@ -82,7 +82,7 @@ foot_ground_limit: true
 fix_robot_penetration: true
 ```
 
-**注意**：机器人穿透修正（`fixRobotPenetration`）需要 **MuJoCo 后端**（`mujoco_se3` / `mujoco_jacobian_legacy`）。Pinocchio 后端只做人体参考修复。
+**注意**：机器人穿透修正（`fixRobotPenetration`）需要 **MuJoCo 后端**（`mujoco_se3`）。Pinocchio 后端只做人体参考修复。
 
 ### `motion_retarget.py` 中的集成点
 

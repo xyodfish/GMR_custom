@@ -73,8 +73,8 @@ INPUT_TYPES = {
         "supports_batch": False,
     },
     "playback_pkl": {
-        "label": "Playback PKL",
-        "extensions": (".pkl",),
+        "label": "Playback PKL/JSON",
+        "extensions": (".pkl", ".json"),
         "script": "viz/vis_robot_motion.py",
         "supports_contact": False,
         "supports_batch": False,
@@ -88,6 +88,7 @@ INVERSE_RATE_LIMIT_TYPES = frozenset({"gvhmr_pt", "video_gvhmr"})
 RETARGET_ALGOS = {
     "ik": {"label": "Per-frame IK (GMR)"},
     "to": {"label": "Trajectory Optimization (TO)"},
+    "batch_to": {"label": "Batch TO (offline)"},
 }
 RETARGET_ALGO_LABELS = {key: cfg["label"] for key, cfg in RETARGET_ALGOS.items()}
 LABEL_TO_RETARGET_ALGO = {cfg["label"]: key for key, cfg in RETARGET_ALGOS.items()}
@@ -99,6 +100,14 @@ TO_SCRIPT_BY_INPUT = {
     "gvhmr_pt": "gvhmr/to_robot_trajectory_opt.py",
 }
 TO_SUPPORTED_INPUT_TYPES = frozenset(set(TO_SCRIPT_BY_INPUT) | {"video_gvhmr"})
+
+BATCH_TO_SCRIPT_BY_INPUT = {
+    "gvhmr_pt": "retarget/to_robot_batch.py",
+    "smplx": "retarget/to_robot_batch.py",
+    "bvh_lafan1": "retarget/to_robot_batch.py",
+    "bvh_nokov": "retarget/to_robot_batch.py",
+}
+BATCH_TO_SUPPORTED_INPUT_TYPES = frozenset(BATCH_TO_SCRIPT_BY_INPUT)
 
 TRI_STATE_LABELS = ("IK 默认", "开启", "关闭")
 ALL_ROBOTS = sorted(ROBOT_XML_DICT.keys())
@@ -133,6 +142,10 @@ class GMRRunConfig:
     to_w_velocity: float = 2.0
     to_w_acceleration: float = 10.0
     to_use_gmr_init: bool = True
+    batch_to_fast: bool = False
+    batch_to_window_size: int = 16
+    batch_to_window_stride: int = 8
+    batch_to_gn_steps: int = 3
 
 
 def robots_for_input(input_type: str) -> list[str]:
@@ -158,7 +171,15 @@ def supports_to(input_type: str) -> bool:
     return input_type in TO_SUPPORTED_INPUT_TYPES
 
 
+def supports_batch_to(input_type: str) -> bool:
+    return input_type in BATCH_TO_SUPPORTED_INPUT_TYPES
+
+
 def resolve_retarget_script(input_type: str, retarget_algo: str) -> str:
+    if retarget_algo == "batch_to":
+        if input_type not in BATCH_TO_SCRIPT_BY_INPUT:
+            raise ValueError(f"Batch TO not supported for input type: {input_type}")
+        return BATCH_TO_SCRIPT_BY_INPUT[input_type]
     if retarget_algo == "to":
         if input_type == "video_gvhmr":
             return INPUT_TYPES[input_type]["script"]
@@ -166,6 +187,24 @@ def resolve_retarget_script(input_type: str, retarget_algo: str) -> str:
             raise ValueError(f"TO not supported for input type: {input_type}")
         return TO_SCRIPT_BY_INPUT[input_type]
     return INPUT_TYPES[input_type]["script"]
+
+
+def append_batch_to_args(cmd: list[str], cfg: GMRRunConfig) -> None:
+    if cfg.retarget_algo != "batch_to":
+        return
+    cmd += ["--window_size", str(int(cfg.batch_to_window_size))]
+    cmd += ["--window_stride", str(int(cfg.batch_to_window_stride))]
+    cmd += ["--gn_steps", str(int(cfg.batch_to_gn_steps))]
+    if cfg.batch_to_fast:
+        cmd.append("--fast")
+    if cfg.loop or cfg.rate_limit:
+        cmd.append("--view")
+    if cfg.loop:
+        cmd.append("--loop")
+    if cfg.rate_limit:
+        cmd.append("--rate_limit")
+    else:
+        cmd.append("--no-rate-limit")
 
 
 def append_to_args(cmd: list[str], cfg: GMRRunConfig) -> None:
@@ -214,6 +253,11 @@ def validate_config(cfg: GMRRunConfig) -> str | None:
             return "Trajectory Optimization (TO) 暂不支持批量模式"
         if not supports_to(cfg.input_type):
             return "当前数据类型不支持 TO，请改用 Per-frame IK 或更换输入类型"
+    if cfg.retarget_algo == "batch_to":
+        if cfg.run_mode == "batch":
+            return "Batch TO 暂不支持批量模式"
+        if not supports_batch_to(cfg.input_type):
+            return "当前数据类型不支持 Batch TO（支持 GVHMR .pt / SMPL-X / BVH）"
     return None
 
 
@@ -240,7 +284,16 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
     script = SCRIPTS_DIR / resolve_retarget_script(input_type, cfg.retarget_algo)
     cmd.append(str(script))
 
-    if input_type in ("bvh_lafan1", "bvh_nokov"):
+    if cfg.retarget_algo == "batch_to" and input_type in BATCH_TO_SCRIPT_BY_INPUT:
+        cmd += ["--input_file", path, "--robot", robot]
+        if input_type in ("bvh_lafan1", "bvh_nokov"):
+            cmd += ["--input_type", input_type, "--format", meta["bvh_format"]]
+            cmd += ["--motion_fps", (cfg.motion_fps or "30").strip()]
+        elif input_type == "smplx":
+            cmd += ["--input_type", "smplx"]
+        elif input_type == "gvhmr_pt":
+            cmd += ["--input_type", "gvhmr_pt"]
+    elif input_type in ("bvh_lafan1", "bvh_nokov"):
         cmd += ["--bvh_file", path, "--robot", robot, "--format", meta["bvh_format"]]
         cmd += ["--motion_fps", (cfg.motion_fps or "30").strip()]
     elif input_type == "smplx":
@@ -297,5 +350,7 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
             append_to_args(cmd, cfg)
         elif input_type != "playback_pkl":
             append_to_args(cmd, cfg)
+    if cfg.retarget_algo == "batch_to" and input_type != "playback_pkl":
+        append_batch_to_args(cmd, cfg)
 
     return cmd

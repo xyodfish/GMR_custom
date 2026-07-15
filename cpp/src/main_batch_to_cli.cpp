@@ -43,6 +43,8 @@ namespace {
                   << " --robot <robot_name>"
                   << " --human_frame_json <json>"
                   << " --out_json <path>"
+                  << " [--src_human smplx|bvh_lafan1|bvh_nokov]"
+                  << " [--actual_human_height <m>]"
                   << " [--backend mujoco_se3]"
                   << " [--window_size 16]"
                   << " [--window_stride 8]"
@@ -50,7 +52,8 @@ namespace {
                   << " [--fast]"
                   << " [--max_frames N]"
                   << " [--benchmark]"
-                  << "\n";
+                  << "\n"
+                  << "  Or use scripts/tools/run_cpp_batch_to.py --input_file <.pt|.npz|.bvh> ...\n";
     }
 
 }  // namespace
@@ -72,11 +75,25 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Missing required args.");
         }
 
-        const double actualHumanHeight = std::stod(getArg(argc, argv, "--actual_human_height", "0"));
+        const double actualHumanHeightCli = std::stod(getArg(argc, argv, "--actual_human_height", "0"));
         const int maxFramesInput       = std::stoi(getArg(argc, argv, "--max_frames", "0"));
         const bool benchmark           = hasFlag(argc, argv, "--benchmark");
         const bool fast                = hasFlag(argc, argv, "--fast");
         const bool offsetToGround      = hasFlag(argc, argv, "--offset_to_ground");
+
+        const gmr::HumanFrameSequence sequence = gmr::loadHumanFrameSequence(humanJson);
+        if (sequence.frames.empty()) {
+            throw std::runtime_error("Empty human frame sequence.");
+        }
+
+        std::string srcHuman = getArg(argc, argv, "--src_human", "");
+        if (srcHuman.empty()) {
+            srcHuman = sequence.srcHuman.empty() ? "smplx" : sequence.srcHuman;
+        }
+        double actualHumanHeight = actualHumanHeightCli;
+        if (actualHumanHeight <= 0.0 && sequence.actualHumanHeight > 0.0) {
+            actualHumanHeight = sequence.actualHumanHeight;
+        }
 
         gmr::RetargetOptions ikOpts;
         ikOpts.damping       = std::stod(getArg(argc, argv, "--damping", "0.5"));
@@ -84,7 +101,7 @@ int main(int argc, char** argv) {
 
         const gmr::RetargetBackend backend = gmr::parseRetargetBackend(backendName);
         const std::filesystem::path robotXml = gmr::resolveRobotXml(gmrRoot, robot);
-        const std::filesystem::path ikPath   = gmr::resolveIkConfig(gmrRoot, getArg(argc, argv, "--src_human", "smplx"), robot);
+        const std::filesystem::path ikPath   = gmr::resolveIkConfig(gmrRoot, srcHuman, robot);
         gmr::IkConfig ikConfig               = gmr::loadIkConfig(ikPath, actualHumanHeight);
 
         gmr::ContactGroundCliOverrides cgCli;
@@ -110,11 +127,7 @@ int main(int argc, char** argv) {
 
         gmr::BatchTrajectoryRetargeter batchTo(robotXml, ikConfig, batchCfg);
 
-        const gmr::HumanFrameSequence sequence = gmr::loadHumanFrameSequence(humanJson);
-        if (sequence.frames.empty()) {
-            throw std::runtime_error("Empty human frame sequence.");
-        }
-        if (sequence.fps > 0.0) {
+        if (sequence.fps > 0) {
             ikRetargeter->setMotionFps(sequence.fps);
         }
 
@@ -133,6 +146,7 @@ int main(int argc, char** argv) {
 
         nlohmann::json out;
         out["robot"]      = robot;
+        out["src_human"]  = srcHuman;
         out["method"]     = "batch_trajectory_optimization_gn_cpp";
         out["num_frames"] = frameCount;
         out["fps"]        = sequence.fps;

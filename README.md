@@ -115,11 +115,9 @@ This repository includes an experimental C++ retargeting implementation in [`cpp
 
 ### What is included
 - A backend-decoupled `Retargeter` interface that outputs retargeted robot `qpos`.
-- Four backend implementations:
+- Two backend implementations:
   - `PinocchioRetargetBackend`
-  - `PinocchioLegacyRetargetBackend`
   - `MujocoRetargetBackend`
-  - `MujocoLegacyRetargetBackend`
 - QP/HQP solver stack reused from `whole_body_control`-style structure (`qp_solver`, `hqp_solver`, `qp_data`).
 - CLI for one-frame retargeting: `gmr_retarget_cli`.
 - MuJoCo viewer with YAML config: `gmr_retarget_viewer`.
@@ -164,9 +162,7 @@ cmake --build cpp/build -j
 
 ### Backend names
 - `pin_ik` (aliases: `pinocchio`, `pinocchio_ik`)
-- `pin_ik_jacobian_legacy` (aliases: `pinocchio_legacy`, `pin_legacy`)
 - `mujoco_se3` (aliases: `mujoco`, `se3`)
-- `mujoco_jacobian_legacy` (aliases: `mujoco_legacy`, `legacy`)
 
 For full details and latest C++ notes, see [`cpp/README.md`](cpp/README.md).
 

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <memory>
+#include <limits>
 #include <stdexcept>
 
 #include <mujoco/mujoco.h>
@@ -14,6 +14,8 @@
 #include "gmr/retarget/contact_ground.h"
 #include "gmr/solver/qp_solver.h"
 #include "retargeter_internal_utils.h"
+#include "causal_lbfgs_b.h"
+#include "mujoco_task_kinematics.h"
 
 #include "glog/logging.h"
 
@@ -341,6 +343,361 @@ namespace gmr {
                 currError = nextError;
             }
         }
+
+        void clipHingeQpos(Eigen::VectorXd& q) const {
+            for (int j = 0; j < model->njnt; ++j) {
+                const int jtype = model->jnt_type[j];
+                if ((jtype == mjJNT_HINGE || jtype == mjJNT_SLIDE) && model->jnt_limited[j] > 0) {
+                    const int qadr    = model->jnt_qposadr[j];
+                    const double qmin = model->jnt_range[2 * j + 0];
+                    const double qmax = model->jnt_range[2 * j + 1];
+                    q[qadr]           = std::min(std::max(q[qadr], qmin), qmax);
+                }
+            }
+        }
+
+        void buildCausalOptIndices(bool smoothRootXyz, std::vector<int>* optVidx, std::vector<int>* smoothQidx) const {
+            optVidx->clear();
+            smoothQidx->clear();
+
+            if (model->njnt > 0 && model->jnt_type[0] == mjJNT_FREE) {
+                const int nvFree = std::min(6, static_cast<int>(model->nv));
+                for (int v = 0; v < nvFree; ++v) {
+                    optVidx->push_back(v);
+                }
+                const int nSmoothRoot = std::min(3, static_cast<int>(model->nq));
+                for (int q = 0; q < nSmoothRoot; ++q) {
+                    smoothQidx->push_back(q);
+                }
+            }
+
+            for (int j = 0; j < model->njnt; ++j) {
+                const int jtype = model->jnt_type[j];
+                if (jtype != mjJNT_HINGE && jtype != mjJNT_SLIDE) {
+                    continue;
+                }
+                optVidx->push_back(model->jnt_dofadr[j]);
+                smoothQidx->push_back(model->jnt_qposadr[j]);
+            }
+
+            if (!smoothRootXyz) {
+                smoothQidx->erase(std::remove_if(smoothQidx->begin(), smoothQidx->end(), [](int q) { return q < 3; }),
+                                  smoothQidx->end());
+            }
+        }
+
+        void projectDqDdq(Eigen::VectorXd& q, const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                           const std::vector<int>& smoothQidx, const CausalRefineParams& params) const {
+            if (!params.enforceDqDdq || smoothQidx.empty()) {
+                return;
+            }
+
+            const double dt  = std::max(params.dt, 1e-9);
+            const double dt2 = dt * dt;
+
+            for (int qadr : smoothQidx) {
+                double dqLim  = params.dqMax;
+                double ddqLim = params.ddqMax;
+                if (qadr < 3) {
+                    dqLim  = std::max(params.dqMax, 2.0);
+                    ddqLim = std::max(params.ddqMax, 20.0);
+                }
+
+                double dqDelta = q[qadr] - qPrev[qadr];
+                dqDelta        = std::min(std::max(dqDelta, -dqLim * dt), dqLim * dt);
+                q[qadr]        = qPrev[qadr] + dqDelta;
+
+                const double accTarget = 2.0 * qPrev[qadr] - qPrev2[qadr];
+                double accDelta        = q[qadr] - accTarget;
+                accDelta               = std::min(std::max(accDelta, -ddqLim * dt2), ddqLim * dt2);
+                q[qadr]                = accTarget + accDelta;
+            }
+        }
+
+        void accumulateGnTasks(const std::vector<MujocoTaskRuntime>& tasks, const std::vector<int>& optVidx,
+                               Eigen::MatrixXd& H, Eigen::VectorXd& g) const {
+            const int m = static_cast<int>(optVidx.size());
+            std::vector<double> jacp(3 * model->nv, 0.0);
+            std::vector<double> jacr(3 * model->nv, 0.0);
+            Eigen::Matrix<double, 6, 1> err6;
+            Eigen::Matrix<double, 6, Eigen::Dynamic> Jnv;
+
+            for (const auto& task : tasks) {
+                mujoco_task_internal::evalFrameTask(model.get(), data.get(), task.bodyId, task.targetPos, task.targetRot,
+                                                    &err6, &Jnv, &jacp, &jacr);
+
+                Eigen::Matrix<double, 6, Eigen::Dynamic> Jopt(6, m);
+                Eigen::Matrix<double, 6, 1> weightedError = -err6;
+                for (int col = 0; col < m; ++col) {
+                    Jopt.col(col) = Jnv.col(optVidx[col]);
+                }
+                Jopt.topRows(3) *= task.posWeight;
+                Jopt.bottomRows(3) *= task.rotWeight;
+                weightedError.head<3>() *= task.posWeight;
+                weightedError.tail<3>() *= task.rotWeight;
+
+                H.noalias() += Jopt.transpose() * Jopt;
+                g.noalias() += Jopt.transpose() * weightedError;
+            }
+        }
+
+        void accumulateGnSmoothness(Eigen::MatrixXd& H, Eigen::VectorXd& g, const Eigen::VectorXd& q,
+                                    const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                    const std::vector<int>& smoothQidx, const std::vector<int>& optVidx, double wV,
+                                    double wA) const {
+            for (std::size_t k = 0; k < smoothQidx.size(); ++k) {
+                const int qadr = smoothQidx[k];
+                int vi         = -1;
+                for (std::size_t i = 0; i < optVidx.size(); ++i) {
+                    const int v = optVidx[i];
+                    const int j = model->dof_jntid[v];
+                    if (model->jnt_qposadr[j] == qadr) {
+                        vi = static_cast<int>(i);
+                        break;
+                    }
+                }
+                if (vi < 0) {
+                    continue;
+                }
+
+                if (wV > 0.0) {
+                    const double e = q[qadr] - qPrev[qadr];
+                    H(vi, vi) += wV;
+                    g[vi] += wV * e;
+                }
+                if (wA > 0.0) {
+                    const double accTarget = 2.0 * qPrev[qadr] - qPrev2[qadr];
+                    const double e         = q[qadr] - accTarget;
+                    H(vi, vi) += wA;
+                    g[vi] += wA * e;
+                }
+            }
+        }
+
+        void accumulateMinkTrackingGrad(const std::vector<MujocoTaskRuntime>& tasks, Eigen::VectorXd& gradNv,
+                                        double* trackingCost) const {
+            std::vector<double> jacp(3 * model->nv, 0.0);
+            std::vector<double> jacr(3 * model->nv, 0.0);
+            Eigen::Matrix<double, 6, 1> err6;
+            Eigen::Matrix<double, 6, Eigen::Dynamic> Jnv;
+
+            for (const auto& task : tasks) {
+                mujoco_task_internal::evalFrameTask(model.get(), data.get(), task.bodyId, task.targetPos, task.targetRot,
+                                                    &err6, &Jnv, &jacp, &jacr);
+
+                Eigen::Matrix<double, 6, 1> weightedErr = err6;
+                Eigen::Matrix<double, 6, Eigen::Dynamic> weightedJ = Jnv;
+                weightedErr.head<3>() *= task.posWeight;
+                weightedErr.tail<3>() *= task.rotWeight;
+                weightedJ.topRows(3) *= task.posWeight;
+                weightedJ.bottomRows(3) *= task.rotWeight;
+
+                *trackingCost += weightedErr.squaredNorm();
+                gradNv.noalias() += 2.0 * weightedJ.transpose() * weightedErr;
+            }
+        }
+
+        void computeLbfgsCostAndGrad(const Eigen::VectorXd& q, const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                     double wV, double wA, double* cost, Eigen::VectorXd* gradQ) const {
+            mju_copy(data->qpos, q.data(), model->nq);
+            mj_forward(model.get(), data.get());
+
+            double trackingCost = 0.0;
+            Eigen::VectorXd gradNv = Eigen::VectorXd::Zero(model->nv);
+            if (ikConfig.useTable1) {
+                accumulateMinkTrackingGrad(tasks1, gradNv, &trackingCost);
+            }
+            if (ikConfig.useTable2) {
+                accumulateMinkTrackingGrad(tasks2, gradNv, &trackingCost);
+            }
+
+            *cost = trackingCost;
+            mujoco_task_internal::scatterNvGradToQpos(model.get(), data->qpos, gradNv, gradQ);
+
+            if (wV > 0.0) {
+                const Eigen::VectorXd delta = q - qPrev;
+                *cost += wV * delta.squaredNorm();
+                *gradQ += 2.0 * wV * delta;
+            }
+            if (wA > 0.0) {
+                const Eigen::VectorXd acc = q - 2.0 * qPrev + qPrev2;
+                *cost += wA * acc.squaredNorm();
+                *gradQ += 2.0 * wA * acc;
+            }
+        }
+
+        double computeTrackingCostSq(const std::vector<MujocoTaskRuntime>& tasks) const {
+            double cost = 0.0;
+            std::vector<double> jacp(3 * model->nv, 0.0);
+            std::vector<double> jacr(3 * model->nv, 0.0);
+            Eigen::Matrix<double, 6, 1> err6;
+            Eigen::Matrix<double, 6, Eigen::Dynamic> Jnv;
+
+            for (const auto& task : tasks) {
+                mujoco_task_internal::evalFrameTask(model.get(), data.get(), task.bodyId, task.targetPos, task.targetRot,
+                                                    &err6, &Jnv, &jacp, &jacr);
+                Eigen::Matrix<double, 6, 1> weightedErr = err6;
+                weightedErr.head<3>() *= task.posWeight;
+                weightedErr.tail<3>() *= task.rotWeight;
+                cost += weightedErr.squaredNorm();
+            }
+            return cost;
+        }
+
+        double computeTrackingCostSqAll() const {
+            double cost = 0.0;
+            if (ikConfig.useTable1) {
+                cost += computeTrackingCostSq(tasks1);
+            }
+            if (ikConfig.useTable2) {
+                cost += computeTrackingCostSq(tasks2);
+            }
+            return cost;
+        }
+
+        causal_lbfgs::BoxBounds buildQposBounds() const {
+            causal_lbfgs::BoxBounds bounds;
+            bounds.lower = Eigen::VectorXd::Constant(model->nq, -std::numeric_limits<double>::infinity());
+            bounds.upper = Eigen::VectorXd::Constant(model->nq, std::numeric_limits<double>::infinity());
+            for (int j = 0; j < model->njnt; ++j) {
+                if (model->jnt_limited[j] <= 0) {
+                    continue;
+                }
+                const int jtype = model->jnt_type[j];
+                if (jtype != mjJNT_HINGE && jtype != mjJNT_SLIDE) {
+                    continue;
+                }
+                const int qadr    = model->jnt_qposadr[j];
+                bounds.lower[qadr] = model->jnt_range[2 * j + 0];
+                bounds.upper[qadr] = model->jnt_range[2 * j + 1];
+            }
+            return bounds;
+        }
+
+        double computeLbfgsObjective(const Eigen::VectorXd& q, const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                     double wV, double wA) const {
+            mju_copy(data->qpos, q.data(), model->nq);
+            mj_forward(model.get(), data.get());
+
+            double cost = computeTrackingCostSqAll();
+            if (wV > 0.0) {
+                const Eigen::VectorXd delta = q - qPrev;
+                cost += wV * delta.squaredNorm();
+            }
+            if (wA > 0.0) {
+                const Eigen::VectorXd acc = q - 2.0 * qPrev + qPrev2;
+                cost += wA * acc.squaredNorm();
+            }
+            return cost;
+        }
+
+        Eigen::VectorXd optimizeCausalGnImpl(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
+                                             const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                             const CausalRefineParams& params) {
+            updateTaskTargets(preparedHuman);
+
+            std::vector<int> optVidx;
+            std::vector<int> smoothQidx;
+            buildCausalOptIndices(params.smoothRootXyz, &optVidx, &smoothQidx);
+            const int m = static_cast<int>(optVidx.size());
+            if (m <= 0) {
+                return qInit;
+            }
+
+            Eigen::VectorXd q = qInit;
+            const double dt   = std::max(params.dt, 1e-9);
+            const double dt2  = dt * dt;
+            const double wV   = params.wVelocity / std::max(dt2, 1e-12);
+            const double wA   = params.wAcceleration / std::max(dt2 * dt2, 1e-12);
+
+            std::vector<double> dq(model->nv, 0.0);
+
+            for (int step = 0; step < params.gnSteps; ++step) {
+                mju_copy(data->qpos, q.data(), model->nq);
+                mj_forward(model.get(), data.get());
+
+                Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, m);
+                Eigen::VectorXd g = Eigen::VectorXd::Zero(m);
+
+                if (ikConfig.useTable1) {
+                    accumulateGnTasks(tasks1, optVidx, H, g);
+                }
+                if (ikConfig.useTable2) {
+                    accumulateGnTasks(tasks2, optVidx, H, g);
+                }
+                accumulateGnSmoothness(H, g, q, qPrev, qPrev2, smoothQidx, optVidx, wV, wA);
+
+                Eigen::MatrixXd Hreg = H + params.gnDamping * Eigen::MatrixXd::Identity(m, m);
+                Eigen::VectorXd dqSub = Hreg.ldlt().solve(g);
+                dqSub                 = dqSub.cwiseMax(-params.gnMaxStep).cwiseMin(params.gnMaxStep);
+
+                std::fill(dq.begin(), dq.end(), 0.0);
+                for (int vi = 0; vi < m; ++vi) {
+                    dq[optVidx[vi]] = -dqSub[vi];
+                }
+                mj_integratePos(model.get(), q.data(), dq.data(), 1.0);
+                clipHingeQpos(q);
+                projectDqDdq(q, qPrev, qPrev2, smoothQidx, params);
+            }
+
+            return q;
+        }
+
+        Eigen::VectorXd optimizeCausalLbfgsImpl(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
+                                                const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                                const CausalRefineParams& params) {
+            (void)preparedHuman;
+            const double wV = params.wVelocity;
+            const double wA = params.wAcceleration;
+
+            const causal_lbfgs::BoxBounds bounds = buildQposBounds();
+            auto costGrad = [&](const Eigen::VectorXd& q, double* cost, Eigen::VectorXd* grad) {
+                computeLbfgsCostAndGrad(q, qPrev, qPrev2, wV, wA, cost, grad);
+            };
+
+            causal_lbfgs::Options lbfgsOpts;
+            lbfgsOpts.maxIter = params.fastOptIter;
+            lbfgsOpts.ftol    = params.optTol;
+
+            const causal_lbfgs::Result result =
+                causal_lbfgs::minimizeWithCostGrad(costGrad, qInit, bounds, lbfgsOpts);
+            Eigen::VectorXd qOut = result.success ? result.x : qInit;
+            clipHingeQpos(qOut);
+            return qOut;
+        }
+
+        Eigen::VectorXd optimizeCausalRefineImpl(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
+                                                 const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                                 const CausalRefineParams& params) {
+            updateTaskTargets(preparedHuman);
+            if (params.solver == CausalSolver::kNone) {
+                return qInit;
+            }
+            if (params.solver == CausalSolver::kLbfgs) {
+                return optimizeCausalLbfgsImpl(preparedHuman, qInit, qPrev, qPrev2, params);
+            }
+            return optimizeCausalGnImpl(preparedHuman, qInit, qPrev, qPrev2, params);
+        }
+
+        Eigen::VectorXd retargetLightIkImpl(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
+            if (maxIterations <= 0) {
+                return qpos;
+            }
+
+            HumanFrame prepared = applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
+            updateTaskTargets(prepared);
+
+            const int savedMaxIter = options.maxIterations;
+            options.maxIterations  = maxIterations;
+            if (ikConfig.useTable1) {
+                solveTaskSet(tasks1);
+            }
+            if (ikConfig.useTable2) {
+                solveTaskSet(tasks2);
+            }
+            options.maxIterations = savedMaxIter;
+            return qpos;
+        }
     };
 
     MujocoRetargetBackend::MujocoRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig, RetargetOptions options)
@@ -369,6 +726,26 @@ namespace gmr {
         return impl_->prepareHumanFrame(humanFrame, offsetToGround);
     }
 
+    HumanFrame MujocoRetargetBackend::prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround) {
+        return impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
+    }
+
+    Eigen::VectorXd MujocoRetargetBackend::retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
+        return impl_->retargetLightIkImpl(humanFrame, offsetToGround, maxIterations);
+    }
+
+    Eigen::VectorXd MujocoRetargetBackend::optimizeCausalRefine(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
+                                                                const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                                                const CausalRefineParams& params) {
+        if (qInit.size() != impl_->model->nq || qPrev.size() != impl_->model->nq || qPrev2.size() != impl_->model->nq) {
+            throw std::runtime_error("optimizeCausalRefine qpos size mismatch.");
+        }
+        mju_copy(impl_->data->qpos, qInit.data(), impl_->model->nq);
+        mj_forward(impl_->model.get(), impl_->data.get());
+        impl_->syncQposFromData();
+        return impl_->optimizeCausalRefineImpl(preparedHuman, qInit, qPrev, qPrev2, params);
+    }
+
     void MujocoRetargetBackend::setQpos(const Eigen::VectorXd& qpos) {
         if (qpos.size() != impl_->model->nq) {
             throw std::runtime_error("setQpos size mismatch.");
@@ -379,6 +756,10 @@ namespace gmr {
         impl_->qvel.setZero();
         mj_forward(impl_->model.get(), impl_->data.get());
         impl_->syncQposFromData();
+    }
+
+    void MujocoRetargetBackend::finalizeContact() {
+        impl_->finalizeRobotState();
     }
 
     const Eigen::VectorXd& MujocoRetargetBackend::currentQpos() const {

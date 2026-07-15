@@ -21,8 +21,7 @@ using RowMajorMatrixXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, E
         int maxRows() const { return static_cast<int>(geomIdPairs_.size()); }
 
         /// For each geom pair, write one row into `CI` / bounds starting at `rowOffset`.
-        /// `inequalityScale`: use `1.0` when QP variable is **Δq** (same as mink). Use `1.0/dt` when variable is **qvel**
-        /// (legacy backend).
+        /// `inequalityScale`: use `1.0` when QP variable is **Δq** (same as mink).
         void fillRows(mjData* data, double dt, double inequalityScale, Eigen::Ref<RowMajorMatrixXd> CI,
                       Eigen::Ref<Eigen::VectorXd> ciLb, Eigen::Ref<Eigen::VectorXd> ciUb, int rowOffset) const;
 

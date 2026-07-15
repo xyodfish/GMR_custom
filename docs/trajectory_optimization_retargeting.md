@@ -107,6 +107,27 @@ python scripts/retarget/bvh_to_robot_trajectory_opt.py \
   --rate_limit --loop
 ```
 
+### C++ 在线因果 TO（MuJoCo viewer，不写 JSON）
+
+```bash
+export LD_LIBRARY_PATH=/opt/robot/devel/lib:$LD_LIBRARY_PATH
+
+# human_frame_json 从 GVHMR .pt 导出一次即可
+cpp/build/gmr_retarget_viewer \
+  --backend mujoco_se3 \
+  --method causal_to \
+  --gmr_root . \
+  --robot unitree_g1 \
+  --human_frame_json output/cxk_ball_human_frames.json \
+  --actual_human_height 1.7 \
+  --contact_ground \
+  --max_iter 5 \
+  --realtime --loop
+```
+
+实现：`CausalTrajectoryRetargeter`（`cpp/src/retarget/causal_trajectory_retarget.cpp`）。  
+fast 模式：帧 0 IK bootstrap → 之后 `q_{t-1}` + light IK warm start + 单帧 FK GN（vel/acc 平滑）。
+
 ```bash
 python scripts/analysis/compare_joint_trajectories.py \
   --bvh_file /path/to/walk.bvh \

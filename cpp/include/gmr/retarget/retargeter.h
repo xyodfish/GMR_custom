@@ -9,6 +9,7 @@
 
 #include <Eigen/Geometry>
 
+#include "gmr/retarget/causal_trajectory_config.h"
 #include "gmr/retarget/human_frame_types.h"
 #include "gmr/retarget/ik_config.h"
 #include "gmr/retarget/contact_ground.h"
@@ -35,9 +36,7 @@ namespace gmr {
 
     enum class RetargetBackend {
         kPinocchio,
-        kPinocchioLegacy,
         kMujoco,
-        kMujocoLegacy,
     };
 
     RetargetBackend parseRetargetBackend(const std::string& backendName);
@@ -49,7 +48,17 @@ namespace gmr {
 
         virtual Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false)      = 0;
         virtual HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const = 0;
+        /// Scale/offset human frame plus contact-ground preprocessing (same as ``retargetFrame`` input).
+        virtual HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false)    = 0;
+        /// Few IK iterations from current ``qpos`` (Python ``_light_ik_warmstart``).
+        virtual Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) = 0;
+        /// Single-frame causal temporal refine (GN or L-BFGS; Python ``_optimize_single_frame``).
+        virtual Eigen::VectorXd optimizeCausalRefine(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
+                                                     const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                                     const CausalRefineParams& params)                    = 0;
         virtual void setQpos(const Eigen::VectorXd& qpos)                                                     = 0;
+        /// Apply contact-ground penetration fix on current qpos (no-op if disabled).
+        virtual void finalizeContact()                                                                          = 0;
 
         virtual const Eigen::VectorXd& currentQpos() const                               = 0;
         virtual bool hasRootFreeFlyer() const                                            = 0;
@@ -67,7 +76,13 @@ namespace gmr {
 
         Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
+        HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false) override;
+        Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) override;
+        Eigen::VectorXd optimizeCausalRefine(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
+                                             const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                             const CausalRefineParams& params) override;
         void setQpos(const Eigen::VectorXd& qpos) override;
+        void finalizeContact() override;
 
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;
@@ -89,51 +104,13 @@ namespace gmr {
 
         Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
+        HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false) override;
+        Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) override;
+        Eigen::VectorXd optimizeCausalRefine(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
+                                             const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
+                                             const CausalRefineParams& params) override;
         void setQpos(const Eigen::VectorXd& qpos) override;
-
-        const Eigen::VectorXd& currentQpos() const override;
-        bool hasRootFreeFlyer() const override;
-        const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
-        void setMotionFps(double fps) override;
-
-       private:
-        struct Impl;
-        std::unique_ptr<Impl> impl_;
-    };
-
-    class PinocchioLegacyRetargetBackend final : public Retargeter {
-       public:
-        PinocchioLegacyRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig, RetargetOptions options = {});
-        ~PinocchioLegacyRetargetBackend() override;
-
-        PinocchioLegacyRetargetBackend(const PinocchioLegacyRetargetBackend&) = delete;
-        PinocchioLegacyRetargetBackend& operator=(const PinocchioLegacyRetargetBackend&) = delete;
-
-        Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
-        HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
-        void setQpos(const Eigen::VectorXd& qpos) override;
-
-        const Eigen::VectorXd& currentQpos() const override;
-        bool hasRootFreeFlyer() const override;
-        const std::vector<ScalarJointCoordinate>& scalarJointCoordinates() const override;
-        void setMotionFps(double fps) override;
-
-       private:
-        struct Impl;
-        std::unique_ptr<Impl> impl_;
-    };
-
-    class MujocoLegacyRetargetBackend final : public Retargeter {
-       public:
-        MujocoLegacyRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig, RetargetOptions options = {});
-        ~MujocoLegacyRetargetBackend() override;
-
-        MujocoLegacyRetargetBackend(const MujocoLegacyRetargetBackend&) = delete;
-        MujocoLegacyRetargetBackend& operator=(const MujocoLegacyRetargetBackend&) = delete;
-
-        Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
-        HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
-        void setQpos(const Eigen::VectorXd& qpos) override;
+        void finalizeContact() override;
 
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;

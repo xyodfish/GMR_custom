@@ -76,9 +76,24 @@ namespace gmr {
         nlohmann::json root;
         ifs >> root;
 
+        if (root.is_object() && root.contains("qpos_frames") && !root.contains("frames")) {
+            throw std::runtime_error(
+                "This JSON looks like a robot motion export (qpos_frames), not human_frame_json. "
+                "For gmr_retarget_viewer --method batch_to, pass the human motion JSON "
+                "(e.g. from export_human_frames_json.py). "
+                "To replay qpos output, use: python scripts/viz/vis_robot_motion.py "
+                "--robot_motion_path <this_file>.");
+        }
+
         HumanFrameSequence sequence;
         if (root.is_object() && root.contains("fps")) {
             sequence.fps = root.at("fps").get<int>();
+        }
+        if (root.is_object() && root.contains("src_human")) {
+            sequence.srcHuman = root.at("src_human").get<std::string>();
+        }
+        if (root.is_object() && root.contains("actual_human_height")) {
+            sequence.actualHumanHeight = root.at("actual_human_height").get<double>();
         }
 
         nlohmann::json framesNode = root;

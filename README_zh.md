@@ -116,11 +116,9 @@ conda install -c conda-forge libstdcxx-ng -y
 
 ### 包含内容
 - 后端解耦的 `Retargeter` 接口，输出重定向后的机器人 `qpos`。
-- 四种后端实现：
+- 两种后端实现：
   - `PinocchioRetargetBackend`
-  - `PinocchioLegacyRetargetBackend`
   - `MujocoRetargetBackend`
-  - `MujocoLegacyRetargetBackend`
 - 复用 `whole_body_control` 风格的 QP/HQP 求解栈（`qp_solver`、`hqp_solver`、`qp_data`）。
 - 单帧重定向 CLI：`gmr_retarget_cli`。
 - 带 YAML 配置的 MuJoCo viewer：`gmr_retarget_viewer`。
@@ -165,9 +163,7 @@ cmake --build cpp/build -j
 
 ### 后端名称
 - `pin_ik`（别名：`pinocchio`、`pinocchio_ik`）
-- `pin_ik_jacobian_legacy`（别名：`pinocchio_legacy`、`pin_legacy`）
 - `mujoco_se3`（别名：`mujoco`、`se3`）
-- `mujoco_jacobian_legacy`（别名：`mujoco_legacy`、`legacy`）
 
 完整说明见 [`cpp/README.md`](cpp/README.md)。
 

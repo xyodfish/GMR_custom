@@ -13,11 +13,27 @@ sys.path.insert(0, str(SCRIPTS_RETARGET_DIR))
 
 from human_json_to_robot import load_human_frames
 
+
+def _required_human_bodies(retarget) -> set[str]:
+    bodies: set[str] = set()
+    for entry in retarget.task_frames1:
+        bodies.add(entry["human_body"])
+    if retarget.use_ik_match_table2:
+        for entry in retarget.task_frames2:
+            bodies.add(entry["human_body"])
+    return bodies
+
+
+def _missing_human_bodies(frame: dict, required: set[str]) -> list[str]:
+    return sorted(body for body in required if body not in frame)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--robot", type=str, default="unitree_g1")
                         
-    parser.add_argument("--robot_motion_path", type=str, required=True)
+    parser.add_argument("--robot_motion_path", type=str, required=True,
+                        help="Robot motion .pkl (GMR) or .json (batch TO / C++ export).")
     parser.add_argument(
         "--human_frame_json",
         type=str,
@@ -57,6 +73,7 @@ if __name__ == "__main__":
 
     human_frames = None
     retarget = None
+    use_scaled_human_targets = False
     if args.human_frame_json is not None:
         if not os.path.exists(args.human_frame_json):
             raise FileNotFoundError(f"Human frame json {args.human_frame_json} not found")
@@ -65,15 +82,29 @@ if __name__ == "__main__":
         human_frames, human_fps = load_human_frames(args.human_frame_json)
         src_human = args.src_human or human_json_root.get("src_human", "bvh_lafan1")
         actual_human_height = human_json_root.get("actual_human_height")
-        if not args.show_raw_human_targets:
+        if args.show_raw_human_targets:
+            use_scaled_human_targets = False
+        else:
             retarget = GMR(
                 src_human=src_human,
                 tgt_robot=robot_type,
                 actual_human_height=actual_human_height,
                 verbose=False,
             )
+            missing = _missing_human_bodies(human_frames[0], _required_human_bodies(retarget))
+            if missing:
+                print(
+                    f"[vis_robot_motion] Warning: human JSON missing {len(missing)} bodies for "
+                    f"{src_human} IK overlay (e.g. {missing[:3]}). "
+                    "Showing robot motion only. Use a full LAFAN1 BVH for IK anchors, "
+                    "or pass --show_raw_human_targets for partial raw bones."
+                )
+                retarget = None
+            else:
+                use_scaled_human_targets = True
     
     motion_data, motion_fps, motion_root_pos, motion_root_rot, motion_dof_pos, motion_local_body_pos, motion_link_body_list, motion_qpos = load_robot_motion(robot_motion_path)
+    n_frames = len(motion_qpos) if motion_qpos is not None else len(motion_root_pos)
     
     env = RobotMotionViewer(robot_type=robot_type,
                             motion_fps=motion_fps,
@@ -85,9 +116,9 @@ if __name__ == "__main__":
         human_motion_data = None
         if human_frames is not None:
             human_frame = human_frames[frame_idx % len(human_frames)]
-            if args.show_raw_human_targets or retarget is None:
+            if args.show_raw_human_targets:
                 human_motion_data = human_frame
-            else:
+            elif use_scaled_human_targets and retarget is not None:
                 retarget.update_targets(human_frame)
                 human_motion_data = retarget.scaled_human_data
 
@@ -119,6 +150,6 @@ if __name__ == "__main__":
                 follow_camera=env.camera_follow,
             )
         frame_idx += 1
-        if frame_idx >= len(motion_root_pos):
+        if frame_idx >= n_frames:
             frame_idx = 0
     env.close()

@@ -15,6 +15,10 @@
 #include <mujoco/mujoco.h>
 #include <yaml-cpp/yaml.h>
 
+#include "gmr/retarget/batch_trajectory_config.h"
+#include "gmr/retarget/batch_trajectory_retarget.h"
+#include "gmr/retarget/causal_trajectory_config.h"
+#include "gmr/retarget/causal_trajectory_retarget.h"
 #include "gmr/retarget/human_frame_io.h"
 #include "gmr/retarget/ik_config.h"
 #include "gmr/retarget/contact_ground_config.h"
@@ -27,6 +31,7 @@ struct ViewerConfig {
     std::string backend  = "pin_ik";
     std::string srcHuman = "smplx";
     std::string humanFrameJson;
+    std::string method = "ik";  // ik | batch_to | causal_to
     double actualHumanHeight = 0.0;
 
     double damping        = 0.5;
@@ -39,6 +44,12 @@ struct ViewerConfig {
     std::optional<bool> fixRobotPenetrationOverride;
     bool loop           = false;
     bool realtime       = true;
+
+    int batchToWindowSize   = 16;
+    int batchToWindowStride = 8;
+    int batchToGnSteps      = 3;
+    bool batchToFast        = false;
+    int maxFrames           = 0;
 
     int transparentRobot  = 0;
     bool showHumanOverlay = true;
@@ -254,6 +265,7 @@ void loadConfigYaml(const std::filesystem::path& configPath, ViewerConfig* confi
     setIfPresent(root, "backend", &config->backend);
     setIfPresent(root, "src_human", &config->srcHuman);
     setIfPresent(root, "human_frame_json", &config->humanFrameJson);
+    setIfPresent(root, "method", &config->method);
     setIfPresent(root, "actual_human_height", &config->actualHumanHeight);
 
     setIfPresent(root, "damping", &config->damping);
@@ -279,6 +291,12 @@ void loadConfigYaml(const std::filesystem::path& configPath, ViewerConfig* confi
     }
     setIfPresent(root, "realtime", &config->realtime);
 
+    setIfPresent(root, "batch_to_window_size", &config->batchToWindowSize);
+    setIfPresent(root, "batch_to_window_stride", &config->batchToWindowStride);
+    setIfPresent(root, "batch_to_gn_steps", &config->batchToGnSteps);
+    setIfPresent(root, "batch_to_fast", &config->batchToFast);
+    setIfPresent(root, "max_frames", &config->maxFrames);
+
     setIfPresent(root, "transparent_robot", &config->transparentRobot);
     setIfPresent(root, "show_human_overlay", &config->showHumanOverlay);
     setIfPresent(root, "window_width", &config->windowWidth);
@@ -300,6 +318,9 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     }
     if (hasArg(argc, argv, "--human_frame_json")) {
         config->humanFrameJson = getArg(argc, argv, "--human_frame_json");
+    }
+    if (hasArg(argc, argv, "--method")) {
+        config->method = getArg(argc, argv, "--method");
     }
     if (hasArg(argc, argv, "--actual_human_height")) {
         config->actualHumanHeight = std::stod(getArg(argc, argv, "--actual_human_height"));
@@ -376,11 +397,50 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     if (hasArg(argc, argv, "--window_height")) {
         config->windowHeight = std::stoi(getArg(argc, argv, "--window_height"));
     }
+
+    if (hasArg(argc, argv, "--window_size")) {
+        config->batchToWindowSize = std::stoi(getArg(argc, argv, "--window_size"));
+    }
+    if (hasArg(argc, argv, "--window_stride")) {
+        config->batchToWindowStride = std::stoi(getArg(argc, argv, "--window_stride"));
+    }
+    if (hasArg(argc, argv, "--gn_steps")) {
+        config->batchToGnSteps = std::stoi(getArg(argc, argv, "--gn_steps"));
+    }
+    if (hasFlag(argc, argv, "--fast")) {
+        config->batchToFast = true;
+    }
+    if (hasArg(argc, argv, "--max_frames")) {
+        config->maxFrames = std::stoi(getArg(argc, argv, "--max_frames"));
+    }
+}
+
+void applyDefaults(ViewerConfig* config) {
+    if (config->gmrRoot.empty()) {
+        const std::filesystem::path cwd = std::filesystem::current_path();
+        auto isGmrRoot = [](const std::filesystem::path& p) {
+            return std::filesystem::exists(p / "assets") &&
+                   std::filesystem::exists(p / "general_motion_retargeting" / "ik_configs");
+        };
+        if (isGmrRoot(cwd)) {
+            config->gmrRoot = cwd.string();
+        } else if (isGmrRoot(cwd.parent_path())) {
+            config->gmrRoot = cwd.parent_path().string();
+        }
+    }
+    if (config->robot.empty()) {
+        config->robot = "unitree_g1";
+    }
 }
 
 void validateConfig(const ViewerConfig& config) {
     if (config.gmrRoot.empty() || config.robot.empty() || config.humanFrameJson.empty()) {
-        throw std::runtime_error("Missing required fields: gmr_root, robot, human_frame_json.");
+        throw std::runtime_error(
+            "Missing required fields: gmr_root, robot, human_frame_json. "
+            "Pass --gmr_root . --robot unitree_g1 --human_frame_json <path>, or use --config.");
+    }
+    if (config.method != "ik" && config.method != "batch_to" && config.method != "causal_to") {
+        throw std::runtime_error("Unknown --method (use ik, batch_to, or causal_to).");
     }
 }
 
@@ -548,9 +608,10 @@ void printUsage() {
               << " [--config <viewer_config.yaml>]"
               << " [--gmr_root <path_to_GMR_root>]"
               << " [--robot <robot_name>]"
-              << " [--backend <pin_ik|pin_ik_jacobian_legacy|mujoco_se3|mujoco_jacobian_legacy>]"
+              << " [--backend <pin_ik|mujoco_se3>]"
               << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
               << " [--human_frame_json <single_or_multi_frame_json>]"
+              << " [--method <ik|batch_to|causal_to>]"
               << " [--actual_human_height <float>]"
               << " [--damping <float>]"
               << " [--max_iter <int>]"
@@ -561,13 +622,17 @@ void printUsage() {
               << " [--fix_robot_penetration|--no_fix_robot_penetration]"
               << " [--loop|--no_loop]"
               << " [--realtime|--precompute]"
+              << " [--window_size <int>] [--window_stride <int>] [--gn_steps <int>] [--fast]"
+              << " [--max_frames <int>]"
               << " [--transparent_robot <0|1>]"
               << " [--hide_human_overlay|--show_human_overlay]"
               << " [--window_width <int>]"
               << " [--window_height <int>]"
               << "\n\n"
               << "Defaults: realtime=true (no precompute), loop=false, "
-                 "show_human_overlay=true.\n"
+                 "show_human_overlay=true, method=ik.\n"
+              << "batch_to: offline batch GN first, then playback (implies precompute; use mujoco_se3).\n"
+              << "causal_to: online causal FK GN per frame (implies realtime; use mujoco_se3).\n"
               << "CLI options override config file values.\n";
 }
 
@@ -583,6 +648,7 @@ int main(int argc, char** argv) {
             loadConfigYaml(getArg(argc, argv, "--config"), &config);
         }
         applyCliOverrides(argc, argv, &config);
+        applyDefaults(&config);
         validateConfig(config);
 
         const std::filesystem::path gmrRoot(config.gmrRoot);
@@ -595,25 +661,54 @@ int main(int argc, char** argv) {
         opts.useVelocityLimit = config.useVelocityLimit;
 
         const std::filesystem::path xmlPath = gmr::resolveRobotXml(gmrRoot, robot);
-        const bool pinBackend = backend == gmr::RetargetBackend::kPinocchio || backend == gmr::RetargetBackend::kPinocchioLegacy;
+        const bool pinBackend = backend == gmr::RetargetBackend::kPinocchio;
         const std::filesystem::path robotModelPath =
             pinBackend ? gmr::resolveRobotUrdf(gmrRoot, robot) : gmr::resolveRobotXml(gmrRoot, robot);
         const std::filesystem::path ikPath = gmr::resolveIkConfig(gmrRoot, config.srcHuman, robot);
         gmr::IkConfig ikConfig             = gmr::loadIkConfig(ikPath, config.actualHumanHeight);
+        const gmr::IkConfig ikConfigCopy   = ikConfig;
         gmr::ContactGroundCliOverrides cgCli;
         cgCli.enabled              = config.contactGroundOverride;
         cgCli.footGroundLimit      = config.footGroundLimitOverride;
         cgCli.fixRobotPenetration  = config.fixRobotPenetrationOverride;
-        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, cgCli);
+        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfigCopy.humanRootName, cgCli);
 
         const gmr::HumanFrameSequence sequence = gmr::loadHumanFrameSequence(config.humanFrameJson);
         if (sequence.frames.empty()) {
             throw std::runtime_error("No frames to render.");
         }
 
+        gmr::HumanFrameSequence playSequence = sequence;
+        if (config.maxFrames > 0 &&
+            playSequence.frames.size() > static_cast<std::size_t>(config.maxFrames)) {
+            playSequence.frames.resize(static_cast<std::size_t>(config.maxFrames));
+        }
+
+        const bool useBatchTo = (config.method == "batch_to");
+        const bool useCausalTo = (config.method == "causal_to");
+        if ((useBatchTo || useCausalTo) && backend != gmr::RetargetBackend::kMujoco) {
+            throw std::runtime_error("batch_to / causal_to viewer requires --backend mujoco_se3.");
+        }
+        if (useBatchTo) {
+            config.realtime = false;
+        }
+        if (useCausalTo) {
+            config.realtime = true;
+        }
+
         std::unique_ptr<gmr::Retargeter> retargeter = gmr::createRetargeter(backend, robotModelPath, std::move(ikConfig), opts);
-        if (sequence.fps > 0.0) {
-            retargeter->setMotionFps(sequence.fps);
+        if (playSequence.fps > 0.0) {
+            retargeter->setMotionFps(playSequence.fps);
+        }
+
+        std::unique_ptr<gmr::CausalTrajectoryRetargeter> causalTo;
+        if (useCausalTo) {
+            gmr::CausalTrajectoryConfig causalCfg;
+            // Causal online path: light IK only (gnSteps=0). GN refine is experimental; Python default uses L-BFGS.
+            causalTo = std::make_unique<gmr::CausalTrajectoryRetargeter>(causalCfg);
+            if (playSequence.fps > 0.0) {
+                causalTo->setMotionFps(playSequence.fps);
+            }
         }
 
         if (glfwInit() == GLFW_FALSE) {
@@ -651,7 +746,7 @@ int main(int argc, char** argv) {
         }
         const RenderQposMap qposMap =
             buildRenderQposMap(*retargeter, renderModel.get(), static_cast<int>(retargeter->currentQpos().size()),
-                               backend == gmr::RetargetBackend::kMujoco || backend == gmr::RetargetBackend::kMujocoLegacy);
+                               backend == gmr::RetargetBackend::kMujoco);
         syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
 
         const double humanPointScale         = 0.1;
@@ -670,10 +765,10 @@ int main(int argc, char** argv) {
         glfwSetCursorPosCallback(window, cursorPosCallback);
         glfwSetScrollCallback(window, scrollCallback);
 
-        const std::string cameraBodyName = resolveCameraBodyName(robot, ikConfig.robotRootName);
+        const std::string cameraBodyName = resolveCameraBodyName(robot, ikConfigCopy.robotRootName);
         int cameraBodyId                 = mj_name2id(renderModel.get(), mjOBJ_BODY, cameraBodyName.c_str());
         if (cameraBodyId < 0) {
-            cameraBodyId = mj_name2id(renderModel.get(), mjOBJ_BODY, ikConfig.robotRootName.c_str());
+            cameraBodyId = mj_name2id(renderModel.get(), mjOBJ_BODY, ikConfigCopy.robotRootName.c_str());
         }
         const double cameraDistance = resolveCameraDistance(robot, 2.5);
         cam.distance                = cameraDistance;
@@ -684,18 +779,44 @@ int main(int argc, char** argv) {
             cam.lookat[2] = renderData->xpos[3 * cameraBodyId + 2];
         }
 
-        const double frameDt = 1.0 / static_cast<double>(sequence.fps);
+        const double frameDt = 1.0 / static_cast<double>(playSequence.fps);
         const auto frameDtDuration =
             std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(frameDt));
 
         std::vector<Eigen::VectorXd> precomputedQpos;
-        if (!config.realtime) {
-            precomputedQpos.reserve(sequence.frames.size());
-            std::cout << "Precomputing retarget trajectory (" << sequence.frames.size() << " frames)..." << std::endl;
-            for (std::size_t i = 0; i < sequence.frames.size(); ++i) {
-                precomputedQpos.push_back(retargeter->retargetFrame(sequence.frames[i], config.offsetToGround));
-                if ((i + 1) % 300 == 0 || (i + 1) == sequence.frames.size()) {
-                    std::cout << "\r  progress: " << (i + 1) << "/" << sequence.frames.size() << std::flush;
+        if (useBatchTo) {
+            gmr::BatchTrajectoryConfig batchCfg;
+            batchCfg.windowSize   = config.batchToWindowSize;
+            batchCfg.windowStride = config.batchToWindowStride;
+            batchCfg.gnSteps      = config.batchToGnSteps;
+            if (config.batchToFast) {
+                batchCfg.gnSteps             = 2;
+                batchCfg.gnLineSearchAlphas    = {1.0};
+                batchCfg.windowSize            = 16;
+                batchCfg.windowStride          = 8;
+            }
+
+            gmr::BatchTrajectoryRetargeter batchTo(xmlPath, ikConfigCopy, batchCfg);
+            std::cout << "Running batch TO (" << playSequence.frames.size() << " frames, window "
+                      << batchCfg.windowSize << "/" << batchCfg.windowStride << ", gn_steps=" << batchCfg.gnSteps
+                      << ")..." << std::endl;
+            const auto tBatch = std::chrono::steady_clock::now();
+            precomputedQpos =
+                batchTo.retargetBatch(playSequence.frames, *retargeter, config.offsetToGround);
+            const double batchMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tBatch).count();
+            const gmr::BatchTrajectoryProfile prof = batchTo.lastProfile();
+            std::cout << "[batch-to-viewer] optimize=" << prof.optimizeMs << "ms total=" << prof.totalMs
+                      << "ms wall=" << batchMs << "ms (" << prof.msPerFrame() << " ms/f)" << std::endl;
+            retargeter->setQpos(precomputedQpos.front());
+            syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
+        } else if (!config.realtime) {
+            precomputedQpos.reserve(playSequence.frames.size());
+            std::cout << "Precomputing retarget trajectory (" << playSequence.frames.size() << " frames)..." << std::endl;
+            for (std::size_t i = 0; i < playSequence.frames.size(); ++i) {
+                precomputedQpos.push_back(retargeter->retargetFrame(playSequence.frames[i], config.offsetToGround));
+                if ((i + 1) % 300 == 0 || (i + 1) == playSequence.frames.size()) {
+                    std::cout << "\r  progress: " << (i + 1) << "/" << playSequence.frames.size() << std::flush;
                 }
             }
             std::cout << std::endl;
@@ -706,18 +827,32 @@ int main(int argc, char** argv) {
         std::size_t frameIdx             = 0;
         std::size_t shownIdx             = std::numeric_limits<std::size_t>::max();
         bool playbackFinished            = false;
-        gmr::HumanFrame visualHumanFrame = retargeter->prepareHumanFrame(sequence.frames.front(), config.offsetToGround);
+        gmr::HumanFrame visualHumanFrame =
+            retargeter->prepareHumanFrame(playSequence.frames.front(), config.offsetToGround);
 
-        if (config.realtime) {
-            retargeter->retargetFrame(sequence.frames.front(), config.offsetToGround);
+        if (config.realtime && !useCausalTo) {
+            retargeter->retargetFrame(playSequence.frames.front(), config.offsetToGround);
             syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
-            if (sequence.frames.size() > 1) {
+            if (playSequence.frames.size() > 1) {
+                frameIdx = 1;
+            }
+        } else if (config.realtime && useCausalTo) {
+            retargeter->setQpos(causalTo->retargetFrame(playSequence.frames.front(), *retargeter, config.offsetToGround));
+            syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
+            if (playSequence.frames.size() > 1) {
                 frameIdx = 1;
             }
         }
 
-        std::cout << "Starting playback at " << sequence.fps << " FPS (" << (config.realtime ? "realtime IK" : "precomputed") << ")"
-                  << std::endl;
+        const char* modeLabel = "precomputed IK";
+        if (useBatchTo) {
+            modeLabel = "batch_to";
+        } else if (useCausalTo) {
+            modeLabel = "causal_to";
+        } else if (config.realtime) {
+            modeLabel = "realtime IK";
+        }
+        std::cout << "Starting playback at " << playSequence.fps << " FPS (" << modeLabel << ")" << std::endl;
 
         auto lastStep      = std::chrono::steady_clock::now();
         auto playbackStart = std::chrono::steady_clock::now();
@@ -726,15 +861,24 @@ int main(int argc, char** argv) {
             auto now = std::chrono::steady_clock::now();
             if (config.realtime) {
                 while (now - lastStep >= frameDtDuration) {
-                    visualHumanFrame = retargeter->prepareHumanFrame(sequence.frames[frameIdx], config.offsetToGround);
-                    retargeter->retargetFrame(sequence.frames[frameIdx], config.offsetToGround);
+                    visualHumanFrame =
+                        retargeter->prepareHumanFrame(playSequence.frames[frameIdx], config.offsetToGround);
+                    if (useCausalTo) {
+                        retargeter->setQpos(causalTo->retargetFrame(playSequence.frames[frameIdx], *retargeter,
+                                                                    config.offsetToGround));
+                    } else {
+                        retargeter->retargetFrame(playSequence.frames[frameIdx], config.offsetToGround);
+                    }
                     syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
                     frameIdx++;
-                    if (frameIdx >= sequence.frames.size()) {
+                    if (frameIdx >= playSequence.frames.size()) {
                         if (config.loop) {
                             frameIdx = 0;
+                            if (useCausalTo) {
+                                causalTo->reset();
+                            }
                         } else {
-                            frameIdx         = sequence.frames.size() - 1;
+                            frameIdx         = playSequence.frames.size() - 1;
                             playbackFinished = true;
                             break;
                         }
@@ -752,8 +896,9 @@ int main(int argc, char** argv) {
                 if (desiredIdx != shownIdx) {
                     retargeter->setQpos(precomputedQpos[desiredIdx]);
                     syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
-                    visualHumanFrame = retargeter->prepareHumanFrame(sequence.frames[desiredIdx], config.offsetToGround);
-                    shownIdx         = desiredIdx;
+                    visualHumanFrame =
+                        retargeter->prepareHumanFrame(playSequence.frames[desiredIdx], config.offsetToGround);
+                    shownIdx = desiredIdx;
                 }
             }
 

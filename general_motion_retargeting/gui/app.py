@@ -29,6 +29,7 @@ from general_motion_retargeting.gui.core import (
     build_command,
     robots_for_input,
     supports_to,
+    supports_batch_to,
     validate_config,
 )
 from general_motion_retargeting.utils.gvhmr_env import default_gvhmr_python
@@ -174,6 +175,15 @@ def _resolve_retarget_algo(label_or_key: str) -> str:
     return LABEL_TO_RETARGET_ALGO.get(label_or_key, "ik")
 
 
+def _algo_choices_for_input(input_type: str) -> list[str]:
+    choices = [RETARGET_ALGO_LABELS["ik"]]
+    if supports_to(input_type):
+        choices.append(RETARGET_ALGO_LABELS["to"])
+    if supports_batch_to(input_type):
+        choices.append(RETARGET_ALGO_LABELS["batch_to"])
+    return choices
+
+
 def on_input_type_change(input_label: str, current_robot: str, current_algo: str):
     input_type = _resolve_input_type(input_label)
     robots = robots_for_input(input_type)
@@ -184,13 +194,14 @@ def on_input_type_change(input_label: str, current_robot: str, current_algo: str
     needs_gvhmr = INPUT_TYPES[input_type].get("needs_gvhmr", False)
     contact_default = "开启" if input_type in ("gvhmr_pt", "video_gvhmr") else "IK 默认"
     to_supported = supports_to(input_type)
+    batch_to_supported = supports_batch_to(input_type)
     algo_key = _resolve_retarget_algo(current_algo)
     if not to_supported and algo_key == "to":
         algo_key = "ik"
+    if not batch_to_supported and algo_key == "batch_to":
+        algo_key = "ik"
     algo_label = RETARGET_ALGO_LABELS[algo_key]
-    algo_choices = [RETARGET_ALGO_LABELS["ik"]]
-    if to_supported:
-        algo_choices.append(RETARGET_ALGO_LABELS["to"])
+    algo_choices = _algo_choices_for_input(input_type)
     return (
         gr.Dropdown(choices=robots, value=value),
         gr.Radio(choices=batch_choices, value="single"),
@@ -206,6 +217,7 @@ def on_input_type_change(input_label: str, current_robot: str, current_algo: str
         gr.update(open=needs_gvhmr),
         gr.Dropdown(choices=algo_choices, value=algo_label),
         gr.update(visible=to_supported and algo_key == "to"),
+        gr.update(visible=batch_to_supported and algo_key == "batch_to"),
     )
 
 
@@ -213,7 +225,8 @@ def on_retarget_algo_change(algo_label: str, input_label: str):
     input_type = _resolve_input_type(input_label)
     algo_key = _resolve_retarget_algo(algo_label)
     show_to = supports_to(input_type) and algo_key == "to"
-    return gr.update(visible=show_to)
+    show_batch_to = supports_batch_to(input_type) and algo_key == "batch_to"
+    return gr.update(visible=show_to), gr.update(visible=show_batch_to)
 
 
 def make_config(
@@ -243,6 +256,10 @@ def make_config(
     to_w_velocity,
     to_w_acceleration,
     to_use_gmr_init: bool,
+    batch_to_fast: bool,
+    batch_to_window_size,
+    batch_to_window_stride,
+    batch_to_gn_steps,
 ) -> GMRRunConfig:
     fps = "30"
     if motion_fps is not None and motion_fps != "":
@@ -274,6 +291,10 @@ def make_config(
         to_w_velocity=float(to_w_velocity or 2.0),
         to_w_acceleration=float(to_w_acceleration or 10.0),
         to_use_gmr_init=bool(to_use_gmr_init),
+        batch_to_fast=bool(batch_to_fast),
+        batch_to_window_size=int(float(batch_to_window_size or 16)),
+        batch_to_window_stride=int(float(batch_to_window_stride or 8)),
+        batch_to_gn_steps=int(float(batch_to_gn_steps or 3)),
     )
 
 
@@ -426,6 +447,23 @@ def build_app() -> gr.Blocks:
                                 to_w_acceleration = gr.Number(value=10.0, label="w_acceleration")
                             to_use_gmr_init = gr.Checkbox(value=True, label="GMR 初值 (use_gmr_init)")
 
+                        with gr.Tab("Batch TO", visible=False) as batch_to_panel:
+                            batch_to_fast = gr.Checkbox(
+                                value=False,
+                                label="Fast 档 (--fast)",
+                                info="gn_steps=2, 单 alpha, window 16/8",
+                            )
+                            with gr.Row():
+                                batch_to_window_size = gr.Number(
+                                    value=16, precision=0, minimum=4, maximum=64, label="window_size",
+                                )
+                                batch_to_window_stride = gr.Number(
+                                    value=8, precision=0, minimum=1, maximum=32, label="window_stride",
+                                )
+                                batch_to_gn_steps = gr.Number(
+                                    value=3, precision=0, minimum=1, maximum=10, label="gn_steps",
+                                )
+
                         with gr.Tab("GVHMR"):
                             with gr.Column(visible=False) as gvhmr_panel:
                                 gvhmr_root = gr.Textbox(
@@ -441,7 +479,7 @@ def build_app() -> gr.Blocks:
                                     label="静态相机 (-s)",
                                 )
 
-                        with gr.Tab("回放 (PKL)"):
+                        with gr.Tab("回放 (PKL/JSON)"):
                             with gr.Row():
                                 human_json_path = gr.Textbox(
                                     label="人体 JSON", placeholder="IK 锚点用", scale=4,
@@ -498,6 +536,10 @@ def build_app() -> gr.Blocks:
             to_w_velocity,
             to_w_acceleration,
             to_use_gmr_init,
+            batch_to_fast,
+            batch_to_window_size,
+            batch_to_window_stride,
+            batch_to_gn_steps,
         ]
 
         input_type.change(
@@ -518,13 +560,14 @@ def build_app() -> gr.Blocks:
                 more_options,
                 retarget_algo,
                 to_panel,
+                batch_to_panel,
             ],
         )
 
         retarget_algo.change(
             fn=on_retarget_algo_change,
             inputs=[retarget_algo, input_type],
-            outputs=[to_panel],
+            outputs=[to_panel, batch_to_panel],
         )
 
         pick_file_btn.click(fn=_native_file_dialog, inputs=[input_type], outputs=input_path)

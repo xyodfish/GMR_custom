@@ -231,6 +231,178 @@ namespace gmr {
         }
     }
 
+    double BatchTrajectoryRetargeter::windowCost(
+        const std::vector<Eigen::VectorXd>& qWin, const std::vector<std::vector<FrameTaskTarget>>& targets,
+        const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
+        double anchorWeight) const {
+        const int nFrames = static_cast<int>(qWin.size());
+        const int m       = static_cast<int>(optVidx_.size());
+        double cost       = 0.0;
+
+        std::vector<int> smoothV;
+        std::vector<int> smoothQ;
+        smoothV.reserve(smoothQidx_.size());
+        smoothQ.reserve(smoothQidx_.size());
+        for (int i = 0; i < m; ++i) {
+            const int v = optVidx_[i];
+            const int j = impl_->model->dof_jntid[v];
+            auto it = std::find(smoothQidx_.begin(), smoothQidx_.end(), impl_->model->jnt_qposadr[j]);
+            if (it != smoothQidx_.end()) {
+                smoothQ.push_back(*it);
+                smoothV.push_back(i);
+            }
+        }
+
+        mjModel* model = impl_->model.get();
+        mjData* data   = impl_->data.get();
+
+        for (int t = 0; t < nFrames; ++t) {
+            mju_copy(data->qpos, qWin[t].data(), model->nq);
+            mj_forward(model, data);
+            for (const auto& tgt : targets[t]) {
+                const double* xpos = &data->xpos[3 * tgt.bodyId];
+                if (tgt.posWeight > 0.0) {
+                    const Eigen::Vector3d e(xpos[0] - tgt.targetPos.x(), xpos[1] - tgt.targetPos.y(),
+                                            xpos[2] - tgt.targetPos.z());
+                    cost += tgt.posWeight * e.squaredNorm();
+                }
+                if (tgt.rotWeight > 0.0) {
+                    const Eigen::Matrix3d Rbody = bodyRotation(data, tgt.bodyId);
+                    Eigen::Quaterniond qBody(Rbody);
+                    qBody.normalize();
+                    const Eigen::Vector3d err = quatRotError(tgt.targetRot, qBody);
+                    cost += tgt.rotWeight * err.squaredNorm();
+                }
+            }
+        }
+
+        if (config_.wVelocity > 0.0 && nFrames >= 2 && !smoothQ.empty()) {
+            for (int t = 1; t < nFrames; ++t) {
+                for (std::size_t k = 0; k < smoothQ.size(); ++k) {
+                    const double e = qWin[t][smoothQ[k]] - qWin[t - 1][smoothQ[k]];
+                    cost += config_.wVelocity * e * e;
+                }
+            }
+        }
+
+        if (config_.wAcceleration > 0.0 && nFrames >= 3 && !smoothQ.empty()) {
+            for (int t = 2; t < nFrames; ++t) {
+                for (std::size_t k = 0; k < smoothQ.size(); ++k) {
+                    const double e = qWin[t][smoothQ[k]] - 2.0 * qWin[t - 1][smoothQ[k]] + qWin[t - 2][smoothQ[k]];
+                    cost += config_.wAcceleration * e * e;
+                }
+            }
+        }
+
+        if (anchorWeight > 0.0) {
+            for (int vi = 0; vi < m; ++vi) {
+                const int v    = optVidx_[vi];
+                const int qadr = model->jnt_qposadr[model->dof_jntid[v]];
+                const double e = qWin[0][qadr] - anchor[qadr];
+                cost += anchorWeight * e * e;
+            }
+        }
+
+        const bool footActive = config_.enableFootPenalties && !footBodyIds_.empty() &&
+                                (config_.wFootHeight > 0.0 || config_.wFootSlip > 0.0 || config_.wFootIkAnchor > 0.0 ||
+                                 config_.wRootXyContact > 0.0 || config_.wContactJointAnchor > 0.0);
+        if (!footActive) {
+            return cost;
+        }
+
+        const int nFeet = static_cast<int>(footBodyIds_.size());
+        std::vector<std::vector<Eigen::Vector3d>> footPos(nFrames, std::vector<Eigen::Vector3d>(nFeet));
+        for (int t = 0; t < nFrames; ++t) {
+            mju_copy(data->qpos, qWin[t].data(), model->nq);
+            mj_forward(model, data);
+            for (int f = 0; f < nFeet; ++f) {
+                const double* xpos = &data->xpos[3 * footBodyIds_[f]];
+                footPos[t][f]      = Eigen::Vector3d(xpos[0], xpos[1], xpos[2]);
+            }
+        }
+
+        std::vector<std::vector<Eigen::Vector3d>> refFootPos;
+        if (config_.wFootIkAnchor > 0.0 && !qRef.empty()) {
+            refFootPos.resize(nFrames, std::vector<Eigen::Vector3d>(nFeet));
+            for (int t = 0; t < nFrames; ++t) {
+                mju_copy(data->qpos, qRef[t].data(), model->nq);
+                mj_forward(model, data);
+                for (int f = 0; f < nFeet; ++f) {
+                    const double* xpos = &data->xpos[3 * footBodyIds_[f]];
+                    refFootPos[t][f]   = Eigen::Vector3d(xpos[0], xpos[1], xpos[2]);
+                }
+            }
+        }
+
+        for (int t = 0; t < nFrames; ++t) {
+            const int tAbs = t + frameOffset;
+            for (int f = 0; f < nFeet; ++f) {
+                bool contact = true;
+                if (!globalRefContact_.empty()) {
+                    if (tAbs >= static_cast<int>(globalRefContact_.size())) {
+                        continue;
+                    }
+                    contact = globalRefContact_[tAbs][f];
+                }
+                if (!contact) {
+                    continue;
+                }
+
+                if (config_.wFootHeight > 0.0) {
+                    const double dz = footPos[t][f].z() - groundZ_;
+                    cost += config_.wFootHeight * dz * dz;
+                }
+
+                if (config_.wFootIkAnchor > 0.0 && !refFootPos.empty()) {
+                    const Eigen::Vector2d dxy = footPos[t][f].head<2>() - refFootPos[t][f].head<2>();
+                    cost += config_.wFootIkAnchor * dxy.squaredNorm();
+                }
+            }
+
+            bool anyContact = false;
+            if (!globalRefContact_.empty() && tAbs < static_cast<int>(globalRefContact_.size())) {
+                anyContact = std::any_of(globalRefContact_[tAbs].begin(), globalRefContact_[tAbs].end(),
+                                         [](bool v) { return v; });
+            } else if (globalRefContact_.empty()) {
+                anyContact = true;
+            }
+
+            if (config_.wRootXyContact > 0.0 && anyContact && model->nq >= 2 && !qRef.empty()) {
+                const Eigen::Vector2d dxy = qWin[t].head<2>() - qRef[t].head<2>();
+                cost += config_.wRootXyContact * dxy.squaredNorm();
+            }
+
+            if (config_.wContactJointAnchor > 0.0 && anyContact && !qRef.empty()) {
+                for (int qadr : smoothQidx_) {
+                    const double e = qWin[t][qadr] - qRef[t][qadr];
+                    cost += config_.wContactJointAnchor * e * e;
+                }
+            }
+
+            if (config_.wFootSlip > 0.0 && t > 0) {
+                for (int f = 0; f < nFeet; ++f) {
+                    bool both = true;
+                    if (!globalRefContact_.empty()) {
+                        const int tPrevAbs = t - 1 + frameOffset;
+                        if (tAbs >= static_cast<int>(globalRefContact_.size()) ||
+                            tPrevAbs >= static_cast<int>(globalRefContact_.size())) {
+                            both = false;
+                        } else {
+                            both = globalRefContact_[tAbs][f] && globalRefContact_[tPrevAbs][f];
+                        }
+                    }
+                    if (!both) {
+                        continue;
+                    }
+                    const Eigen::Vector2d dxy = footPos[t][f].head<2>() - footPos[t - 1][f].head<2>();
+                    cost += config_.wFootSlip * dxy.squaredNorm();
+                }
+            }
+        }
+
+        return cost;
+    }
+
     std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::bootstrapQ(const std::vector<HumanFrame>& humanFrames,
                                                                        Retargeter& retargeter, bool offsetToGround) {
         std::vector<Eigen::VectorXd> qInit;
@@ -641,7 +813,8 @@ namespace gmr {
                 }
             } else {
                 std::vector<Eigen::VectorXd> bestQ = qWin;
-                double bestCost = std::numeric_limits<double>::infinity();
+                double bestCost =
+                    windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
                 for (double alpha : alphas) {
                     std::vector<Eigen::VectorXd> trial = qWin;
                     for (int t = 0; t < nFrames; ++t) {
@@ -652,21 +825,10 @@ namespace gmr {
                         mj_integratePos(model, trial[t].data(), dq.data(), 1.0);
                         clipHingeQpos(trial[t]);
                     }
-                    double cost = 0.0;
-                    for (int t = 0; t < nFrames; ++t) {
-                        mju_copy(data->qpos, trial[t].data(), model->nq);
-                        mj_forward(model, data);
-                        for (const auto& tgt : targets[t]) {
-                            const double* xpos = &data->xpos[3 * tgt.bodyId];
-                            if (tgt.posWeight > 0.0) {
-                                const Eigen::Vector3d e(xpos[0] - tgt.targetPos.x(), xpos[1] - tgt.targetPos.y(),
-                                                         xpos[2] - tgt.targetPos.z());
-                                cost += tgt.posWeight * e.squaredNorm();
-                            }
-                        }
-                    }
-                    if (cost < bestCost) {
-                        bestCost = cost;
+                    const double trialCost =
+                        windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight);
+                    if (trialCost < bestCost) {
+                        bestCost = trialCost;
                         bestQ    = trial;
                     }
                 }
@@ -682,6 +844,7 @@ namespace gmr {
         (void)prepared;
         (void)offsetToGround;
         retargeter.setQpos(qpos);
+        retargeter.finalizeContact();
         return retargeter.currentQpos();
     }
 

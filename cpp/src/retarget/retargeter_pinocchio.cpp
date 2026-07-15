@@ -423,6 +423,26 @@ namespace gmr {
                 currError = nextError;
             }
         }
+
+        Eigen::VectorXd retargetLightIkImpl(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
+            if (maxIterations <= 0) {
+                return qpos;
+            }
+
+            HumanFrame prepared = applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
+            updateTaskTargets(prepared);
+
+            const int savedMaxIter = options.maxIterations;
+            options.maxIterations  = maxIterations;
+            if (ikConfig.useTable1) {
+                solveTaskSet(tasks1);
+            }
+            if (ikConfig.useTable2) {
+                solveTaskSet(tasks2);
+            }
+            options.maxIterations = savedMaxIter;
+            return qpos;
+        }
     };
 
     PinocchioRetargetBackend::PinocchioRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig,
@@ -447,6 +467,20 @@ namespace gmr {
         return impl_->prepareHumanFrame(humanFrame, offsetToGround);
     }
 
+    HumanFrame PinocchioRetargetBackend::prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround) {
+        return impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
+    }
+
+    Eigen::VectorXd PinocchioRetargetBackend::retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
+        return impl_->retargetLightIkImpl(humanFrame, offsetToGround, maxIterations);
+    }
+
+    Eigen::VectorXd PinocchioRetargetBackend::optimizeCausalRefine(const HumanFrame& /*preparedHuman*/, const Eigen::VectorXd& /*qInit*/,
+                                                                  const Eigen::VectorXd& /*qPrev*/, const Eigen::VectorXd& /*qPrev2*/,
+                                                                  const CausalRefineParams& /*params*/) {
+        throw std::runtime_error("optimizeCausalRefine requires MuJoCo backend (mujoco_se3).");
+    }
+
     void PinocchioRetargetBackend::setQpos(const Eigen::VectorXd& qpos) {
         if (qpos.size() != impl_->qpos.size()) {
             throw std::runtime_error("setQpos size mismatch.");
@@ -456,6 +490,8 @@ namespace gmr {
         impl_->qvel.setZero();
         impl_->syncDataFromQpos();
     }
+
+    void PinocchioRetargetBackend::finalizeContact() {}
 
     const Eigen::VectorXd& PinocchioRetargetBackend::currentQpos() const { return impl_->qpos; }
 

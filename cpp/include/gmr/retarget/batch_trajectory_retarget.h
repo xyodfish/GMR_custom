@@ -65,6 +65,9 @@ namespace gmr {
                                                       int frameOffset, double anchorWeight);
 
         void clipHingeQpos(Eigen::VectorXd& q) const;
+        double windowCost(const std::vector<Eigen::VectorXd>& qWin,
+                          const std::vector<std::vector<FrameTaskTarget>>& targets, const Eigen::VectorXd& anchor,
+                          const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight) const;
         Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared,
                                      bool offsetToGround);
 

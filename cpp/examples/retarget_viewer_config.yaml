@@ -13,7 +13,7 @@ use_velocity_limit: false
 offset_to_ground: false
 loop: true
 realtime: true
-backend: mujoco_se3 # pin_ik / pin_ik_jacobian_legacy / mujoco_se3 / mujoco_jacobian_legacy
+backend: mujoco_se3 # pin_ik / mujoco_se3
 
 transparent_robot: 0
 show_human_overlay: true
