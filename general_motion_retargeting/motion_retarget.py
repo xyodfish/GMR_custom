@@ -260,6 +260,8 @@ class GeneralMotionRetargeting:
             if foot_ground_limit_obj.geom_ids:
                 self.ik_limits.append(foot_ground_limit_obj)
 
+        self.contact_ground.foot_ground_limit_enabled = foot_ground_limit_obj is not None
+
         if self.verbose and self.contact_ground.enabled:
             print(
                 "[GMR] contact_ground enabled: "

@@ -28,17 +28,17 @@ def add_optional_bool_arg(parser, name, help_text):
     parser.set_defaults(**{name: None})
 
 
-def joint_velocity_metric(qpos_seq: np.ndarray) -> float:
+def joint_velocity_metric(qpos_seq: np.ndarray, dt: float = 1.0 / 30.0) -> float:
     if len(qpos_seq) < 2:
         return 0.0
-    diffs = np.diff(qpos_seq, axis=0)
+    diffs = np.diff(qpos_seq, axis=0) / max(dt, 1e-12)
     return float(np.mean(np.linalg.norm(diffs, axis=1)))
 
 
-def joint_acceleration_metric(qpos_seq: np.ndarray) -> float:
+def joint_acceleration_metric(qpos_seq: np.ndarray, dt: float = 1.0 / 30.0) -> float:
     if len(qpos_seq) < 3:
         return 0.0
-    acc = qpos_seq[2:] - 2.0 * qpos_seq[1:-1] + qpos_seq[:-2]
+    acc = (qpos_seq[2:] - 2.0 * qpos_seq[1:-1] + qpos_seq[:-2]) / max(dt * dt, 1e-12)
     return float(np.mean(np.linalg.norm(acc, axis=1)))
 
 
@@ -96,10 +96,26 @@ if __name__ == "__main__":
         default="fast",
         help="fast: refine current frame only (default). full: joint L-BFGS-B over window (slow).",
     )
+    parser.add_argument(
+        "--solver",
+        choices=["gn", "lbfgs"],
+        default="gn",
+        help="fast-mode solver: gn=Jacobian Gauss-Newton (default, real-time); lbfgs=legacy scipy.",
+    )
     parser.add_argument("--w_velocity", type=float, default=2.0)
     parser.add_argument("--w_acceleration", type=float, default=10.0)
     parser.add_argument("--w_anchor", type=float, default=50.0)
     parser.add_argument("--ik_warmstart_iters", type=int, default=3)
+    parser.add_argument("--gn_steps", type=int, default=3)
+    parser.add_argument("--gn_damping", type=float, default=0.05)
+    parser.add_argument("--gn_max_step", type=float, default=0.08)
+    parser.add_argument("--dq_max", type=float, default=8.0, help="Hard |dq| limit (rad/s or m/s).")
+    parser.add_argument("--ddq_max", type=float, default=80.0, help="Hard |ddq| limit (rad/s^2).")
+    add_optional_bool_arg(
+        parser,
+        "enforce_dq_ddq",
+        "Project each frame onto q/dq/ddq box limits (default: on).",
+    )
     parser.add_argument("--fast_opt_iter", type=int, default=5)
     parser.add_argument("--max_opt_iter", type=int, default=25)
     add_optional_bool_arg(
@@ -142,12 +158,20 @@ if __name__ == "__main__":
     sw_cfg = SlidingWindowConfig(
         window_size=args.window_size,
         mode=args.mode,
+        solver=args.solver,
         w_velocity=args.w_velocity,
         w_acceleration=args.w_acceleration,
         w_anchor=args.w_anchor,
         ik_warmstart_iters=args.ik_warmstart_iters,
+        gn_steps=args.gn_steps,
+        gn_damping=args.gn_damping,
+        gn_max_step=args.gn_max_step,
+        dq_max=args.dq_max,
+        ddq_max=args.ddq_max,
+        enforce_dq_ddq=True if args.enforce_dq_ddq is None else args.enforce_dq_ddq,
         fast_opt_iter=args.fast_opt_iter,
         max_opt_iter=args.max_opt_iter,
+        dt=1.0 / aligned_fps,
     )
     sw_retarget = SlidingWindowRetargeter(gmr, sw_cfg)
 
@@ -165,6 +189,7 @@ if __name__ == "__main__":
 
     viewer = RobotMotionViewer(
         robot_type=args.robot,
+        camera_follow=True,
         motion_fps=aligned_fps,
         transparent_robot=0,
         record_video=args.record_video,
@@ -201,7 +226,8 @@ if __name__ == "__main__":
         if now - fps_start >= 2.0:
             print(
                 f"[sliding-window] retarget FPS: {fps_counter / (now - fps_start):.1f}, "
-                f"last frame: {elapsed_ms:.1f} ms, mode={args.mode}, window={args.window_size}"
+                f"last frame: {elapsed_ms:.1f} ms, mode={args.mode}, solver={args.solver}, "
+                f"window={args.window_size}"
             )
             fps_counter = 0
             fps_start = now
@@ -213,7 +239,7 @@ if __name__ == "__main__":
                 human_pos_offset=np.array([0.0, 0.0, 0.0]),
                 show_human_body_name=False,
                 rate_limit=args.rate_limit,
-                follow_camera=False,
+                follow_camera=True,
             )
         else:
             viewer.step(
@@ -224,21 +250,22 @@ if __name__ == "__main__":
                 human_pos_offset=np.array([0.0, 0.0, 0.0]),
                 show_human_body_name=False,
                 rate_limit=args.rate_limit,
-                follow_camera=False,
+                follow_camera=True,
             )
 
         frame_idx += 1
 
     sw_arr = np.asarray(sw_qpos_list)
+    dt = 1.0 / aligned_fps
     print(
-        f"[metrics] sliding-window  vel={joint_velocity_metric(sw_arr):.5f}, "
-        f"acc={joint_acceleration_metric(sw_arr):.5f}"
+        f"[metrics] sliding-window  vel={joint_velocity_metric(sw_arr, dt):.5f}, "
+        f"acc={joint_acceleration_metric(sw_arr, dt):.5f}"
     )
     if ik_qpos_list is not None:
         ik_arr = np.asarray(ik_qpos_list)
         print(
-            f"[metrics] per-frame IK      vel={joint_velocity_metric(ik_arr):.5f}, "
-            f"acc={joint_acceleration_metric(ik_arr):.5f}"
+            f"[metrics] per-frame IK      vel={joint_velocity_metric(ik_arr, dt):.5f}, "
+            f"acc={joint_acceleration_metric(ik_arr, dt):.5f}"
         )
 
     if args.save_path is not None:

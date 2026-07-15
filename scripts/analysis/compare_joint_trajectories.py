@@ -75,10 +75,10 @@ def finite_diff(x: np.ndarray, fps: float, order: int) -> np.ndarray:
     if order == 0:
         return x
     dt = 1.0 / fps
-    out = np.gradient(x, dt, axis=0, edge_order=1)
-    if order == 1:
-        return out
-    return np.gradient(out, dt, axis=0, edge_order=1)
+    out = x
+    for _ in range(order):
+        out = np.gradient(out, dt, axis=0, edge_order=1)
+    return out
 
 
 def per_joint_metrics(a: np.ndarray, b: np.ndarray, fps: float) -> dict[str, np.ndarray]:
@@ -105,11 +105,22 @@ def run_gvhmr_compare(
     window_size: int,
     w_velocity: float,
     w_acceleration: float,
+    candidate_method: str = "sw",
+    max_frames: int | None = None,
+    max_opt_iter: int = 25,
+    fast_opt_iter: int = 5,
+    to_mode: str = "fast",
+    fix_window_prefix: bool = False,
+    use_gmr_init: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, float, list[str]]:
     from general_motion_retargeting import GeneralMotionRetargeting as GMR
     from general_motion_retargeting.sliding_window_retarget import (
         SlidingWindowConfig,
         SlidingWindowRetargeter,
+    )
+    from general_motion_retargeting.trajectory_optimization_retarget import (
+        TrajectoryOptimizationConfig,
+        TrajectoryOptimizationRetargeter,
     )
     from general_motion_retargeting.utils.smpl import (
         load_gvhmr_pred_file,
@@ -123,6 +134,8 @@ def run_gvhmr_compare(
     human_frames, fps = get_gvhmr_data_offline_fast(
         smplx_data, body_model, smplx_output, tgt_fps=30
     )
+    if max_frames is not None:
+        human_frames = human_frames[:max_frames]
 
     gmr_kwargs = dict(
         actual_human_height=actual_human_height,
@@ -135,22 +148,136 @@ def run_gvhmr_compare(
         motion_fps=fps,
     )
     ik = GMR(**gmr_kwargs)
-    sw = SlidingWindowRetargeter(
-        GMR(**gmr_kwargs),
-        SlidingWindowConfig(
-            window_size=window_size,
-            w_velocity=w_velocity,
-            w_acceleration=w_acceleration,
-        ),
-    )
+    if candidate_method == "sw":
+        candidate = SlidingWindowRetargeter(
+            GMR(**gmr_kwargs),
+            SlidingWindowConfig(
+                window_size=window_size,
+                solver="gn",
+                w_velocity=w_velocity,
+                w_acceleration=w_acceleration,
+                dt=1.0 / fps,
+            ),
+        )
+    elif candidate_method == "to":
+        mode = "fast" if fix_window_prefix or to_mode == "fast" else "full"
+        candidate = TrajectoryOptimizationRetargeter(
+            GMR(**gmr_kwargs),
+            TrajectoryOptimizationConfig(
+                window_size=window_size,
+                mode=mode,
+                w_velocity=w_velocity,
+                w_acceleration=w_acceleration,
+                max_opt_iter=max_opt_iter,
+                fast_opt_iter=fast_opt_iter,
+                use_gmr_init=use_gmr_init,
+            ),
+        )
+    else:
+        raise ValueError(f"Unknown candidate_method: {candidate_method}")
 
-    ik_qpos, sw_qpos = [], []
-    for frame in human_frames:
+    ik_qpos, cand_qpos = [], []
+    for i, frame in enumerate(human_frames):
         ik_qpos.append(ik.retarget(frame).copy())
-        sw_qpos.append(sw.retarget(frame).copy())
+        cand_qpos.append(candidate.retarget(frame).copy())
+        if (i + 1) % 10 == 0:
+            print(f"  processed {i + 1}/{len(human_frames)} frames")
 
     dof_names = get_dof_names(robot)
-    return np.asarray(ik_qpos), np.asarray(sw_qpos), float(fps), dof_names
+    return np.asarray(ik_qpos), np.asarray(cand_qpos), float(fps), dof_names
+
+
+def run_bvh_compare(
+    bvh_file: pathlib.Path,
+    robot: str,
+    bvh_format: str,
+    contact_ground: bool | None,
+    foot_ground_limit: bool | None,
+    fix_robot_penetration: bool | None,
+    motion_fps: int,
+    window_size: int,
+    w_velocity: float,
+    w_acceleration: float,
+    candidate_method: str = "sw",
+    solver: str = "gn",
+    gn_steps: int = 3,
+    max_frames: int | None = None,
+    start_frame: int = 0,
+    max_opt_iter: int = 25,
+    fast_opt_iter: int = 5,
+    to_mode: str = "fast",
+    fix_window_prefix: bool = False,
+    use_gmr_init: bool = True,
+) -> tuple[np.ndarray, np.ndarray, float, list[str]]:
+    from general_motion_retargeting import GeneralMotionRetargeting as GMR
+    from general_motion_retargeting.sliding_window_retarget import (
+        SlidingWindowConfig,
+        SlidingWindowRetargeter,
+    )
+    from general_motion_retargeting.trajectory_optimization_retarget import (
+        TrajectoryOptimizationConfig,
+        TrajectoryOptimizationRetargeter,
+    )
+    from general_motion_retargeting.utils.lafan1 import load_bvh_file
+
+    human_frames, actual_human_height = load_bvh_file(str(bvh_file), format=bvh_format)
+    fps = float(motion_fps)
+    dt = 1.0 / fps
+    end = len(human_frames) if max_frames is None else min(len(human_frames), start_frame + max_frames)
+    human_frames = human_frames[start_frame:end]
+    src_human = f"bvh_{bvh_format}"
+
+    gmr_kwargs = dict(
+        actual_human_height=actual_human_height,
+        src_human=src_human,
+        tgt_robot=robot,
+        verbose=False,
+        contact_ground=contact_ground,
+        foot_ground_limit=foot_ground_limit,
+        fix_robot_penetration=fix_robot_penetration,
+        motion_fps=fps,
+    )
+    ik = GMR(**gmr_kwargs)
+    ik.set_motion_fps(fps)
+    if candidate_method == "sw":
+        candidate = SlidingWindowRetargeter(
+            GMR(**gmr_kwargs),
+            SlidingWindowConfig(
+                window_size=window_size,
+                solver=solver,
+                w_velocity=w_velocity,
+                w_acceleration=w_acceleration,
+                gn_steps=gn_steps,
+                dt=dt,
+            ),
+        )
+    elif candidate_method == "to":
+        mode = "fast" if fix_window_prefix or to_mode == "fast" else "full"
+        candidate = TrajectoryOptimizationRetargeter(
+            GMR(**gmr_kwargs),
+            TrajectoryOptimizationConfig(
+                window_size=window_size,
+                mode=mode,
+                w_velocity=w_velocity,
+                w_acceleration=w_acceleration,
+                max_opt_iter=max_opt_iter,
+                fast_opt_iter=fast_opt_iter,
+                use_gmr_init=use_gmr_init,
+            ),
+        )
+        candidate.set_motion_fps(fps)
+    else:
+        raise ValueError(f"Unknown candidate_method: {candidate_method}")
+
+    ik_qpos, cand_qpos = [], []
+    for i, frame in enumerate(human_frames):
+        ik_qpos.append(ik.retarget(frame).copy())
+        cand_qpos.append(candidate.retarget(frame).copy())
+        if (i + 1) % 50 == 0:
+            print(f"  processed {i + 1}/{len(human_frames)} frames")
+
+    dof_names = get_dof_names(robot)
+    return np.asarray(ik_qpos), np.asarray(cand_qpos), fps, dof_names
 
 
 def run_smplx_compare(
@@ -162,11 +289,22 @@ def run_smplx_compare(
     window_size: int,
     w_velocity: float,
     w_acceleration: float,
+    candidate_method: str = "sw",
+    max_frames: int | None = None,
+    max_opt_iter: int = 25,
+    fast_opt_iter: int = 5,
+    to_mode: str = "fast",
+    fix_window_prefix: bool = False,
+    use_gmr_init: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, float, list[str]]:
     from general_motion_retargeting import GeneralMotionRetargeting as GMR
     from general_motion_retargeting.sliding_window_retarget import (
         SlidingWindowConfig,
         SlidingWindowRetargeter,
+    )
+    from general_motion_retargeting.trajectory_optimization_retarget import (
+        TrajectoryOptimizationConfig,
+        TrajectoryOptimizationRetargeter,
     )
     from general_motion_retargeting.utils.smpl import load_smplx_file, get_smplx_data_offline_fast
 
@@ -177,6 +315,8 @@ def run_smplx_compare(
     human_frames, fps = get_smplx_data_offline_fast(
         smplx_data, body_model, smplx_output, tgt_fps=30
     )
+    if max_frames is not None:
+        human_frames = human_frames[:max_frames]
 
     gmr_kwargs = dict(
         actual_human_height=actual_human_height,
@@ -189,22 +329,43 @@ def run_smplx_compare(
         motion_fps=fps,
     )
     ik = GMR(**gmr_kwargs)
-    sw = SlidingWindowRetargeter(
-        GMR(**gmr_kwargs),
-        SlidingWindowConfig(
-            window_size=window_size,
-            w_velocity=w_velocity,
-            w_acceleration=w_acceleration,
-        ),
-    )
+    if candidate_method == "sw":
+        candidate = SlidingWindowRetargeter(
+            GMR(**gmr_kwargs),
+            SlidingWindowConfig(
+                window_size=window_size,
+                solver="gn",
+                w_velocity=w_velocity,
+                w_acceleration=w_acceleration,
+                dt=1.0 / fps,
+            ),
+        )
+    elif candidate_method == "to":
+        mode = "fast" if fix_window_prefix or to_mode == "fast" else "full"
+        candidate = TrajectoryOptimizationRetargeter(
+            GMR(**gmr_kwargs),
+            TrajectoryOptimizationConfig(
+                window_size=window_size,
+                mode=mode,
+                w_velocity=w_velocity,
+                w_acceleration=w_acceleration,
+                max_opt_iter=max_opt_iter,
+                fast_opt_iter=fast_opt_iter,
+                use_gmr_init=use_gmr_init,
+            ),
+        )
+    else:
+        raise ValueError(f"Unknown candidate_method: {candidate_method}")
 
-    ik_qpos, sw_qpos = [], []
-    for frame in human_frames:
+    ik_qpos, cand_qpos = [], []
+    for i, frame in enumerate(human_frames):
         ik_qpos.append(ik.retarget(frame).copy())
-        sw_qpos.append(sw.retarget(frame).copy())
+        cand_qpos.append(candidate.retarget(frame).copy())
+        if (i + 1) % 50 == 0:
+            print(f"  processed {i + 1}/{len(human_frames)} frames")
 
     dof_names = get_dof_names(robot)
-    return np.asarray(ik_qpos), np.asarray(sw_qpos), float(fps), dof_names
+    return np.asarray(ik_qpos), np.asarray(cand_qpos), float(fps), dof_names
 
 
 def select_joint_indices(
@@ -246,7 +407,7 @@ def plot_joint_curves(
     y_a = finite_diff(baseline, fps, derivative)
     y_b = finite_diff(candidate, fps, derivative)
 
-    ylabel = {0: "position", 1: "velocity", 2: "acceleration"}[derivative]
+    ylabel = {0: "position", 1: "velocity", 2: "acceleration", 3: "jerk"}[derivative]
 
     for ax, j in zip(axes, joint_indices):
         name = dof_names[j] if j < len(dof_names) else f"dof_{j}"
@@ -270,13 +431,104 @@ def plot_joint_curves(
     print(f"Saved plot: {output}")
 
 
+def global_metrics(
+    baseline: np.ndarray,
+    candidate: np.ndarray,
+    fps: float,
+    labels: tuple[str, str],
+) -> dict:
+    dt = 1.0 / fps
+    vel_a = finite_diff(baseline, fps, 1)
+    vel_b = finite_diff(candidate, fps, 1)
+    acc_a = finite_diff(baseline, fps, 2)
+    acc_b = finite_diff(candidate, fps, 2)
+    jerk_a = finite_diff(baseline, fps, 3)
+    jerk_b = finite_diff(candidate, fps, 3)
+
+    def _norm_mean(x: np.ndarray) -> float:
+        if len(x) == 0:
+            return 0.0
+        return float(np.mean(np.linalg.norm(x, axis=1)))
+
+    qpos_rmse = float(np.sqrt(np.mean((baseline - candidate) ** 2)))
+    qpos_mae = float(np.mean(np.linalg.norm(baseline - candidate, axis=1)))
+
+    return {
+        "fps": fps,
+        "n_frames": int(len(baseline)),
+        "labels": list(labels),
+        labels[0]: {
+            "vel_mean": _norm_mean(vel_a),
+            "acc_mean": _norm_mean(acc_a),
+            "jerk_mean": _norm_mean(jerk_a),
+        },
+        labels[1]: {
+            "vel_mean": _norm_mean(vel_b),
+            "acc_mean": _norm_mean(acc_b),
+            "jerk_mean": _norm_mean(jerk_b),
+        },
+        "delta_pct": {
+            "vel": 100.0 * (_norm_mean(vel_b) - _norm_mean(vel_a)) / max(_norm_mean(vel_a), 1e-9),
+            "acc": 100.0 * (_norm_mean(acc_b) - _norm_mean(acc_a)) / max(_norm_mean(acc_a), 1e-9),
+            "jerk": 100.0 * (_norm_mean(jerk_b) - _norm_mean(jerk_a)) / max(_norm_mean(jerk_a), 1e-9),
+        },
+        "qpos_rmse": qpos_rmse,
+        "qpos_mae": qpos_mae,
+        "per_joint_vel_rmse_mean": float(np.mean(per_joint_metrics(baseline, candidate, fps)["vel_rmse"])),
+        "per_joint_acc_rmse_mean": float(np.mean(per_joint_metrics(baseline, candidate, fps)["acc_rmse"])),
+    }
+
+
+def print_global_summary(summary: dict) -> None:
+    la, lb = summary["labels"]
+    print("\nGlobal trajectory metrics:")
+    print(f"  frames={summary['n_frames']}  fps={summary['fps']:.1f}")
+    print(f"  qpos RMSE={summary['qpos_rmse']:.4f}  MAE={summary['qpos_mae']:.4f}")
+    print(f"  {la:18s}  vel={summary[la]['vel_mean']:.5f}  acc={summary[la]['acc_mean']:.5f}  jerk={summary[la]['jerk_mean']:.5f}")
+    print(f"  {lb:18s}  vel={summary[lb]['vel_mean']:.5f}  acc={summary[lb]['acc_mean']:.5f}  jerk={summary[lb]['jerk_mean']:.5f}")
+    print(
+        f"  {lb} vs {la}:  "
+        f"vel {summary['delta_pct']['vel']:+.1f}%  "
+        f"acc {summary['delta_pct']['acc']:+.1f}%  "
+        f"jerk {summary['delta_pct']['jerk']:+.1f}%"
+    )
+
+
+def save_motion_pkl(path: pathlib.Path, qpos: np.ndarray, fps: float, method: str) -> None:
+    import pickle
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(
+            {
+                "fps": fps,
+                "root_pos": qpos[:, :3],
+                "root_rot": qpos[:, 3:7][:, [1, 2, 3, 0]],
+                "dof_pos": qpos[:, 7:],
+                "local_body_pos": None,
+                "link_body_list": None,
+                "qpos": qpos,
+                "method": method,
+            },
+            f,
+        )
+    print(f"Saved motion: {path}")
+
+
 def print_metric_table(
     dof_names: list[str],
     metrics: dict[str, np.ndarray],
     joint_indices: list[int],
+    labels: tuple[str, str] = ("baseline", "candidate"),
 ) -> None:
+    la, lb = labels
     print("\nPer-joint smoothness (std) and method difference (RMSE):")
-    print(f"{'joint':32s}  vel_std_IK  vel_std_SW  acc_std_IK  acc_std_SW  vel_rmse  acc_rmse")
+    print(
+        f"{'joint':32s}  "
+        f"{'vel_'+la[:6]:>10s}  {'vel_'+lb[:6]:>10s}  "
+        f"{'acc_'+la[:6]:>10s}  {'acc_'+lb[:6]:>10s}  "
+        f"vel_rmse  acc_rmse"
+    )
     for j in joint_indices:
         name = dof_names[j] if j < len(dof_names) else f"dof_{j}"
         print(
@@ -300,11 +552,15 @@ def main() -> None:
     parser.add_argument("--candidate", type=str, default=None, help="Candidate motion .pkl")
     parser.add_argument("--gvhmr_pred_file", type=str, default=None)
     parser.add_argument("--smplx_file", type=str, default=None)
+    parser.add_argument("--bvh_file", type=str, default=None)
+    parser.add_argument("--bvh_format", choices=["lafan1", "nokov"], default="lafan1")
+    parser.add_argument("--motion_fps", type=int, default=30)
+    parser.add_argument("--start_frame", type=int, default=0)
     parser.add_argument("--labels", nargs=2, default=["per-frame IK", "sliding-window"])
     parser.add_argument("--output", type=str, default="output/joint_trajectory_compare.png")
     parser.add_argument(
         "--plot",
-        choices=["position", "velocity", "acceleration", "all"],
+        choices=["position", "velocity", "acceleration", "jerk", "all"],
         default="all",
     )
     parser.add_argument(
@@ -322,6 +578,21 @@ def main() -> None:
     parser.add_argument("--window_size", type=int, default=8)
     parser.add_argument("--w_velocity", type=float, default=2.0)
     parser.add_argument("--w_acceleration", type=float, default=10.0)
+    parser.add_argument(
+        "--candidate_method",
+        choices=["sw", "to"],
+        default="sw",
+        help="Offline candidate retargeter when using --gvhmr_pred_file / --smplx_file / --bvh_file.",
+    )
+    parser.add_argument("--max_frames", type=int, default=None)
+    parser.add_argument("--max_opt_iter", type=int, default=25)
+    parser.add_argument("--fast_opt_iter", type=int, default=5)
+    parser.add_argument("--to_mode", choices=["fast", "full"], default="fast")
+    parser.add_argument("--fix_window_prefix", action="store_true", default=False)
+    parser.add_argument("--use_gmr_init", action="store_true", default=True)
+    parser.add_argument("--no-use_gmr_init", dest="use_gmr_init", action="store_false")
+    parser.add_argument("--save_motions", action="store_true", default=False)
+    parser.add_argument("--metrics_json", type=str, default=None)
     add_optional_bool_arg(parser, "contact_ground", "Enable contact_ground during offline run.")
     add_optional_bool_arg(parser, "foot_ground_limit", "Enable foot_ground_limit.")
     add_optional_bool_arg(parser, "fix_robot_penetration", "Enable fix_robot_penetration.")
@@ -348,6 +619,13 @@ def main() -> None:
             args.window_size,
             args.w_velocity,
             args.w_acceleration,
+            args.candidate_method,
+            args.max_frames,
+            args.max_opt_iter,
+            args.fast_opt_iter,
+            args.to_mode,
+            args.fix_window_prefix,
+            args.use_gmr_init,
         )
         n = len(traj_a)
         t = np.arange(n, dtype=float) / fps
@@ -362,11 +640,44 @@ def main() -> None:
             args.window_size,
             args.w_velocity,
             args.w_acceleration,
+            args.candidate_method,
+            args.max_frames,
+            args.max_opt_iter,
+            args.fast_opt_iter,
+            args.to_mode,
+            args.fix_window_prefix,
+            args.use_gmr_init,
+        )
+        n = len(traj_a)
+        t = np.arange(n, dtype=float) / fps
+    elif args.bvh_file:
+        print(f"Running offline compare on BVH: {args.bvh_file}")
+        traj_a, traj_b, fps, dof_names = run_bvh_compare(
+            pathlib.Path(args.bvh_file),
+            args.robot,
+            args.bvh_format,
+            args.contact_ground,
+            args.foot_ground_limit,
+            args.fix_robot_penetration,
+            args.motion_fps,
+            args.window_size,
+            args.w_velocity,
+            args.w_acceleration,
+            args.candidate_method,
+            max_frames=args.max_frames,
+            start_frame=args.start_frame,
+            max_opt_iter=args.max_opt_iter,
+            fast_opt_iter=args.fast_opt_iter,
+            to_mode=args.to_mode,
+            fix_window_prefix=args.fix_window_prefix,
+            use_gmr_init=args.use_gmr_init,
         )
         n = len(traj_a)
         t = np.arange(n, dtype=float) / fps
     else:
-        parser.error("Provide --baseline/--candidate, or --gvhmr_pred_file, or --smplx_file.")
+        parser.error(
+            "Provide --baseline/--candidate, or --gvhmr_pred_file, or --smplx_file, or --bvh_file."
+        )
 
     width = min(traj_a.shape[1], traj_b.shape[1], len(dof_names))
     traj_a = traj_a[:, :width]
@@ -375,19 +686,36 @@ def main() -> None:
     if traj_a.shape[1] != len(dof_names):
         dof_names = [f"qpos_{i}" for i in range(traj_a.shape[1])]
 
+    labels = tuple(args.labels)
     metrics = per_joint_metrics(traj_a, traj_b, fps)
+    summary = global_metrics(traj_a, traj_b, fps, labels)
     joint_indices = select_joint_indices(dof_names, args.joints, args.top_k, metrics)
-    print_metric_table(dof_names, metrics, joint_indices)
+    print_global_summary(summary)
+    print_metric_table(dof_names, metrics, joint_indices, labels)
 
     out = pathlib.Path(args.output)
     stem = out.stem
     suffix = out.suffix or ".png"
     parent = out.parent
 
+    if args.metrics_json:
+        import json
+
+        metrics_path = pathlib.Path(args.metrics_json)
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(metrics_path, "w", encoding="utf-8") as f:
+            json.dump({"global": summary, "per_joint_indices": joint_indices}, f, indent=2)
+        print(f"Saved metrics: {metrics_path}")
+
+    if args.save_motions:
+        save_motion_pkl(parent / f"{stem}_ik.pkl", traj_a, fps, labels[0])
+        save_motion_pkl(parent / f"{stem}_to.pkl", traj_b, fps, labels[1])
+
     plot_map = {
         "position": 0,
         "velocity": 1,
         "acceleration": 2,
+        "jerk": 3,
     }
     to_plot = list(plot_map.keys()) if args.plot == "all" else [args.plot]
     for name in to_plot:
@@ -397,7 +725,7 @@ def main() -> None:
             traj_b,
             dof_names,
             joint_indices,
-            tuple(args.labels),
+            labels,
             parent / f"{stem}_{name}{suffix}",
             plot_map[name],
         )

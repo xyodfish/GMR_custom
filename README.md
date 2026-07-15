@@ -23,7 +23,7 @@ This repo is licensed under the [MIT License](LICENSE).
 
 # News & Updates
 - **2026-07-13:** Added **Unitree H2** (`unitree_h2`) with SMPL-X and LAFAN1 BVH IK configs, `contact_ground` preset, and tuned `bvh_lafan1_to_h2.json`. Real-time retargeting via `bvh_to_robot.py` / `human_json_to_robot.py`; playback with IK-target overlays via `vis_robot_motion.py --human_frame_json`.
-- **2026-06-26:** Added decoupled contact/ground mode controls and offline analysis tooling for BVH retargeting. See [`docs/contact_ground.md`](docs/contact_ground.md), [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and `scripts/analysis/analyze_contact_modes.py`.
+- **2026-06-26:** Added decoupled contact/ground mode controls and offline analysis tooling for BVH retargeting. See [`docs/contact_ground.md`](docs/contact_ground.md) and [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md).
 - **2026-04-15:** This repository adds an experimental C++ retargeting feature set based on GMR. See the new "C++ Feature (Experimental)" section and [`cpp/README.md`](cpp/README.md).
 - **2026-01-21:** GMR now supports [Xsens](https://www.xsens.com/) BVH offline data.
 - **2026-01-12:** GMR now supports [Fourier GR3](https://www.fftai.com/), the 17th humanoid robot in the repo.
@@ -370,13 +370,13 @@ By default you should see the visualization of the retargeted robot motion in a 
   - `--contact_ground` / `--no-contact_ground`: old contact-ground alignment and foot-lock strategy.
   - `--foot_ground_limit` / `--no-foot_ground_limit`: experimental IK/QP foot-ground limit.
   - `--fix_robot_penetration` / `--no-fix_robot_penetration`: post-retarget root lift for robot ground penetration.
-- Per-robot contact body presets and tuning are documented in [`docs/contact_ground.md`](docs/contact_ground.md). Quantitative mode comparison is documented in [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md), and can be reproduced with `scripts/analysis/analyze_contact_modes.py`.
+- Per-robot contact body presets and tuning are documented in [`docs/contact_ground.md`](docs/contact_ground.md). Historical mode comparison: [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md). Live A/B video: `scripts/analysis/bvh_compare_contact_ground.py`.
 
 Example contact mode analysis:
 
 ```bash
-conda run -n py310 python scripts/analysis/analyze_contact_modes.py \
-  --bvh_dir /data2/Documents/lafan1 \
+conda run -n py310 python scripts/analysis/bvh_compare_contact_ground.py \
+  --bvh_file /path/to/motion.bvh \
   --robot unitree_g1 \
   --format lafan1 \
   --motion_fps 30 \
@@ -635,7 +635,7 @@ There is no single automatic score for all robots yet. A practical workflow:
 
 1. **Visual**: use real-time `bvh_to_robot.py` or playback with `vis_robot_motion.py --human_frame_json` and check foot anchors, leg crossing, and ground contact.
 2. **Pickle stats**: inspect `root_pos[:,2]`, knee joint means, and joint-limit saturation from saved `.pkl` files.
-3. **Contact metrics**: use `scripts/analysis/analyze_contact_modes.py` for penetration, foot slip, and IK error summaries (currently documented for G1; extend `--robot` for other platforms).
+3. **Contact metrics**: use `scripts/analysis/batch_lafan1_retarget_compare.py` or `scripts/analysis/bvh_compare_contact_ground.py` for foot slip and penetration comparisons.
 
 For H2 LAFAN1, IK config lives at `general_motion_retargeting/ik_configs/bvh_lafan1_to_h2.json`. Robot assets live at `assets/unitree_h2/`.
 

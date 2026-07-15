@@ -94,6 +94,9 @@ namespace gmr {
             cfg.enableFootLock = j.value("enable_foot_lock", cfg.enableFootLock);
             cfg.footLockEmaAlpha = j.value("foot_lock_ema_alpha", cfg.footLockEmaAlpha);
             cfg.fixRobotPenetration = j.value("fix_robot_penetration", cfg.fixRobotPenetration);
+            cfg.footGroundLimitEnabled = j.value("foot_ground_limit_enabled", cfg.footGroundLimitEnabled);
+            cfg.penetrationExcludeFeetWhenFootLimit =
+                j.value("penetration_exclude_feet_when_foot_limit", cfg.penetrationExcludeFeetWhenFootLimit);
             cfg.penetrationMargin = j.value("penetration_margin", cfg.penetrationMargin);
             cfg.lyingHipHeightThreshold = j.value("lying_hip_height_threshold", cfg.lyingHipHeightThreshold);
             cfg.lowPoseFootHeightThreshold = j.value("low_pose_foot_height_threshold", cfg.lowPoseFootHeightThreshold);
@@ -125,7 +128,7 @@ namespace gmr {
 
     ContactGroundConfig buildContactGroundConfig(const std::filesystem::path& gmrRoot, const std::string& robot,
                                                  const std::filesystem::path& ikConfigPath, const std::string& humanRootName,
-                                                 const std::optional<bool>& cliOverride) {
+                                                 const ContactGroundCliOverrides& cliOverrides) {
         const auto presetsPath = gmrRoot / "general_motion_retargeting/ik_configs/contact_ground_presets.json";
         const nlohmann::json presets = loadJsonFile(presetsPath);
         nlohmann::json merged = stripMeta(presets.at("_default"));
@@ -142,8 +145,17 @@ namespace gmr {
         if (!merged.contains("human_root_name")) {
             cfg.humanRootName = humanRootName;
         }
-        if (cliOverride.has_value()) {
-            cfg.enabled = *cliOverride;
+        if (ikRoot.contains("foot_ground_limit") && ikRoot.at("foot_ground_limit").is_object()) {
+            cfg.footGroundLimitEnabled = ikRoot.at("foot_ground_limit").value("enabled", cfg.footGroundLimitEnabled);
+        }
+        if (cliOverrides.enabled.has_value()) {
+            cfg.enabled = *cliOverrides.enabled;
+        }
+        if (cliOverrides.footGroundLimit.has_value()) {
+            cfg.footGroundLimitEnabled = *cliOverrides.footGroundLimit;
+        }
+        if (cliOverrides.fixRobotPenetration.has_value()) {
+            cfg.fixRobotPenetration = *cliOverrides.fixRobotPenetration;
         }
         return cfg;
     }

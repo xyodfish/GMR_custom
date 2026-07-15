@@ -4,6 +4,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -27,6 +28,8 @@ namespace gmr {
         bool enableFootLock = true;
         double footLockEmaAlpha = 0.05;
         bool fixRobotPenetration = true;
+        bool footGroundLimitEnabled = false;
+        bool penetrationExcludeFeetWhenFootLimit = true;
         double penetrationMargin = 0.01;
         double lyingHipHeightThreshold = 0.45;
         double lowPoseFootHeightThreshold = 0.20;
@@ -77,6 +80,7 @@ namespace gmr {
         double lastRootLift_ = 0.0;
 
         bool isLowPose() const;
+        std::pair<const std::vector<int>&, double> penetrationTargets() const;
     };
 
 }  // namespace gmr

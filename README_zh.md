@@ -24,7 +24,7 @@
 # 新闻与更新
 - **2026-07-14：** 新增滑动窗口运动学 TO 重定向（`SlidingWindowRetargeter`）、GVHMR/SMPL-X CLI 及评估脚本。算法说明、用法与性能对比见 [`docs/sliding_window_retargeting.md`](docs/sliding_window_retargeting.md)。
 - **2026-07-13：** 新增 **Unitree H2**（`unitree_h2`），包含 SMPL-X 与 LAFAN1 BVH 的 IK 配置、`contact_ground` preset，以及调优后的 `bvh_lafan1_to_h2.json`。可通过 `bvh_to_robot.py` / `human_json_to_robot.py` 实时重定向；通过 `vis_robot_motion.py --human_frame_json` 回放并叠加 IK 目标锚点。
-- **2026-06-26：** 新增解耦的接触/地面模式控制与 BVH 离线分析工具。详见 [`docs/contact_ground.md`](docs/contact_ground.md)、[`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md) 及 `scripts/analysis/analyze_contact_modes.py`。
+- **2026-06-26：** 新增解耦的接触/地面模式控制与 BVH 离线分析工具。详见 [`docs/contact_ground.md`](docs/contact_ground.md)、[`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md)。
 - **2026-04-15：** 基于 GMR 新增实验性 C++ 重定向功能，见「C++ 功能（实验性）」章节及 [`cpp/README.md`](cpp/README.md)。
 - **2026-01-21：** 支持 [Xsens](https://www.xsens.com/) BVH 离线数据。
 - **2026-01-12：** 支持 [Fourier GR3](https://www.fftai.com/)，为本仓库第 17 款人形机器人。
@@ -374,13 +374,13 @@ python scripts/retarget/bvh_to_robot.py --bvh_file <bvh路径> --robot <机器�
   - `--contact_ground` / `--no-contact_ground`：人体脚接触对齐与脚锁定。
   - `--foot_ground_limit` / `--no-foot_ground_limit`：实验性 IK/QP 脚-地面不等式约束。
   - `--fix_robot_penetration` / `--no-fix_robot_penetration`：IK 后抬高 root 修复机器人穿地。
-- 各机器人接触体 preset 见 [`docs/contact_ground.md`](docs/contact_ground.md)。定量模式对比见 [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md)，可用 `scripts/analysis/analyze_contact_modes.py` 复现。
+- 各机器人接触体 preset 见 [`docs/contact_ground.md`](docs/contact_ground.md)。历史模式对比见 [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md)；录屏 A/B 用 `scripts/analysis/bvh_compare_contact_ground.py`。
 
 接触模式分析示例：
 
 ```bash
-conda run -n py310 python scripts/analysis/analyze_contact_modes.py \
-  --bvh_dir /data2/Documents/lafan1 \
+conda run -n py310 python scripts/analysis/bvh_compare_contact_ground.py \
+  --bvh_file /path/to/motion.bvh \
   --robot unitree_g1 \
   --format lafan1 \
   --motion_fps 30 \
@@ -598,7 +598,7 @@ MuJoCo 窗口快捷键：
 
 1. **视觉检查**：用实时 `bvh_to_robot.py`，或 `vis_robot_motion.py --human_frame_json` 回放，观察脚锚点、是否交叉腿、地面接触。
 2. **Pickle 统计**：从 `.pkl` 检查 `root_pos[:,2]`、膝关节均值、关节限位饱和比例。
-3. **接触指标**：用 `scripts/analysis/analyze_contact_modes.py` 分析穿透、脚滑、IK 误差（当前文档以 G1 为主，其他平台需扩展 `--robot`）。
+3. **接触指标**：用 `scripts/analysis/batch_lafan1_retarget_compare.py` 或 `scripts/analysis/bvh_compare_contact_ground.py` 分析脚滑与穿透。
 
 H2 LAFAN1 的 IK 配置：`general_motion_retargeting/ik_configs/bvh_lafan1_to_h2.json`。机器人资产：`assets/unitree_h2/`。
 

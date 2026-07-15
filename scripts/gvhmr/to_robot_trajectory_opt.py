@@ -1,4 +1,4 @@
-"""GVHMR .pt retargeting with causal sliding-window optimization."""
+"""GVHMR .pt retargeting with independent causal trajectory optimization."""
 
 import argparse
 import os
@@ -9,9 +9,9 @@ import numpy as np
 
 from general_motion_retargeting import GeneralMotionRetargeting as GMR
 from general_motion_retargeting import RobotMotionViewer, PLANAR_BASE_ROBOTS
-from general_motion_retargeting.sliding_window_retarget import (
-    SlidingWindowConfig,
-    SlidingWindowRetargeter,
+from general_motion_retargeting.trajectory_optimization_retarget import (
+    TrajectoryOptimizationConfig,
+    TrajectoryOptimizationRetargeter,
 )
 from general_motion_retargeting.utils.smpl import (
     load_gvhmr_pred_file,
@@ -27,17 +27,16 @@ def add_optional_bool_arg(parser, name, help_text):
     parser.set_defaults(**{name: None})
 
 
-def joint_velocity_metric(qpos_seq: np.ndarray, dt: float = 1.0 / 30.0) -> float:
+def joint_velocity_metric(qpos_seq: np.ndarray) -> float:
     if len(qpos_seq) < 2:
         return 0.0
-    diffs = np.diff(qpos_seq, axis=0) / max(dt, 1e-12)
-    return float(np.mean(np.linalg.norm(diffs, axis=1)))
+    return float(np.mean(np.linalg.norm(np.diff(qpos_seq, axis=0), axis=1)))
 
 
-def joint_acceleration_metric(qpos_seq: np.ndarray, dt: float = 1.0 / 30.0) -> float:
+def joint_acceleration_metric(qpos_seq: np.ndarray) -> float:
     if len(qpos_seq) < 3:
         return 0.0
-    acc = (qpos_seq[2:] - 2.0 * qpos_seq[1:-1] + qpos_seq[:-2]) / max(dt * dt, 1e-12)
+    acc = qpos_seq[2:] - 2.0 * qpos_seq[1:-1] + qpos_seq[:-2]
     return float(np.mean(np.linalg.norm(acc, axis=1)))
 
 
@@ -45,14 +44,9 @@ if __name__ == "__main__":
     REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
     parser = argparse.ArgumentParser(
-        description="GVHMR retargeting with causal sliding-window optimization.",
+        description="GVHMR retargeting with independent causal TO (FK + smoothness).",
     )
-    parser.add_argument(
-        "--gvhmr_pred_file",
-        type=str,
-        required=True,
-        help="Path to hmr4d_results.pt from GVHMR.",
-    )
+    parser.add_argument("--gvhmr_pred_file", type=str, required=True)
     parser.add_argument(
         "--robot",
         choices=[
@@ -87,66 +81,52 @@ if __name__ == "__main__":
     parser.add_argument("--loop", action="store_true", default=False)
     parser.add_argument("--record_video", action="store_true", default=False)
     parser.add_argument("--video_path", type=str, default=None)
-    parser.add_argument(
-        "--rate_limit",
-        dest="rate_limit",
-        action="store_true",
-        help="Limit playback to motion FPS.",
-    )
-    parser.add_argument(
-        "--no-rate-limit",
-        dest="rate_limit",
-        action="store_false",
-        help="Render as fast as possible.",
-    )
+    parser.add_argument("--rate_limit", dest="rate_limit", action="store_true")
+    parser.add_argument("--no-rate-limit", dest="rate_limit", action="store_false")
     parser.set_defaults(rate_limit=False)
     parser.add_argument(
         "--compare_ik",
         action="store_true",
-        help="Also run per-frame IK and print smoothness metrics at the end.",
+        help="Also run per-frame GMR IK for end-of-run metrics.",
     )
     parser.add_argument("--window_size", type=int, default=8)
-    parser.add_argument(
-        "--mode",
-        choices=["fast", "full"],
-        default="fast",
-    )
-    parser.add_argument(
-        "--solver",
-        choices=["gn", "lbfgs"],
-        default="gn",
-    )
     parser.add_argument("--w_velocity", type=float, default=2.0)
     parser.add_argument("--w_acceleration", type=float, default=10.0)
-    parser.add_argument("--w_anchor", type=float, default=50.0)
-    parser.add_argument("--ik_warmstart_iters", type=int, default=3)
-    parser.add_argument("--gn_steps", type=int, default=3)
-    parser.add_argument("--gn_damping", type=float, default=0.05)
-    parser.add_argument("--gn_max_step", type=float, default=0.08)
-    parser.add_argument("--dq_max", type=float, default=8.0)
-    parser.add_argument("--ddq_max", type=float, default=80.0)
-    add_optional_bool_arg(
-        parser,
-        "enforce_dq_ddq",
-        "Project each frame onto q/dq/ddq box limits (default: on).",
-    )
-    parser.add_argument("--fast_opt_iter", type=int, default=5)
+    parser.add_argument("--w_anchor", type=float, default=20.0)
     parser.add_argument("--max_opt_iter", type=int, default=25)
-    add_optional_bool_arg(
-        parser,
-        "contact_ground",
-        "Enable streaming contact/ground fix (recommended for GVHMR).",
+    parser.add_argument("--fast_opt_iter", type=int, default=5)
+    parser.add_argument(
+        "--to_mode",
+        choices=["fast", "full"],
+        default="fast",
+        help="fast: single-frame FK TO (~real-time). full: joint window (offline).",
     )
-    add_optional_bool_arg(
-        parser,
-        "foot_ground_limit",
-        "Enable QP foot-ground inequality limit (default: IK config).",
+    parser.add_argument(
+        "--use_gmr_init",
+        action="store_true",
+        default=True,
+        help="Warm-start each frame with GMR IK (default on).",
     )
-    add_optional_bool_arg(
-        parser,
-        "fix_robot_penetration",
-        "Enable post-IK robot root lift penetration repair (default: IK config).",
+    parser.add_argument(
+        "--no-use_gmr_init",
+        dest="use_gmr_init",
+        action="store_false",
+        help="Pure FK GN without per-frame IK warm start.",
     )
+    parser.add_argument(
+        "--fix_window_prefix",
+        action="store_true",
+        help="Deprecated alias for --to_mode fast.",
+    )
+    parser.add_argument(
+        "--max_frames",
+        type=int,
+        default=None,
+        help="Process only the first N human frames (default: all).",
+    )
+    add_optional_bool_arg(parser, "contact_ground", "Enable contact_ground.")
+    add_optional_bool_arg(parser, "foot_ground_limit", "Enable foot_ground_limit.")
+    add_optional_bool_arg(parser, "fix_robot_penetration", "Enable fix_robot_penetration.")
 
     args = parser.parse_args()
 
@@ -154,10 +134,12 @@ if __name__ == "__main__":
     smplx_data, body_model, smplx_output, actual_human_height = load_gvhmr_pred_file(
         args.gvhmr_pred_file, smplx_folder
     )
-    tgt_fps = 30
     human_frames, aligned_fps = get_gvhmr_data_offline_fast(
-        smplx_data, body_model, smplx_output, tgt_fps=tgt_fps
+        smplx_data, body_model, smplx_output, tgt_fps=30
     )
+    if args.max_frames is not None:
+        human_frames = human_frames[: args.max_frames]
+        print(f"Using first {len(human_frames)} frames @ {aligned_fps:.1f} fps")
 
     gmr_kwargs = dict(
         actual_human_height=actual_human_height,
@@ -170,39 +152,29 @@ if __name__ == "__main__":
     )
     gmr = GMR(**gmr_kwargs)
 
-    sw_cfg = SlidingWindowConfig(
+    to_cfg = TrajectoryOptimizationConfig(
         window_size=args.window_size,
-        mode=args.mode,
-        solver=args.solver,
+        mode="fast" if args.fix_window_prefix or args.to_mode == "fast" else "full",
         w_velocity=args.w_velocity,
         w_acceleration=args.w_acceleration,
         w_anchor=args.w_anchor,
-        ik_warmstart_iters=args.ik_warmstart_iters,
-        gn_steps=args.gn_steps,
-        gn_damping=args.gn_damping,
-        gn_max_step=args.gn_max_step,
-        dq_max=args.dq_max,
-        ddq_max=args.ddq_max,
-        enforce_dq_ddq=True if args.enforce_dq_ddq is None else args.enforce_dq_ddq,
-        fast_opt_iter=args.fast_opt_iter,
         max_opt_iter=args.max_opt_iter,
-        dt=1.0 / aligned_fps,
+        fast_opt_iter=args.fast_opt_iter,
+        use_gmr_init=args.use_gmr_init,
     )
-    sw_retarget = SlidingWindowRetargeter(gmr, sw_cfg)
-
+    to_retarget = TrajectoryOptimizationRetargeter(gmr, to_cfg)
     compare_gmr = GMR(**gmr_kwargs) if args.compare_ik else None
 
     stem = pathlib.Path(args.gvhmr_pred_file).parent.name
-    default_video = f"videos/{args.robot}_sw_gvhmr_{stem}.mp4"
     viewer = RobotMotionViewer(
         robot_type=args.robot,
         motion_fps=aligned_fps,
         transparent_robot=0,
         record_video=args.record_video,
-        video_path=args.video_path or default_video,
+        video_path=args.video_path or f"videos/{args.robot}_to_gvhmr_{stem}.mp4",
     )
 
-    sw_qpos_list = []
+    qpos_list = []
     ik_qpos_list = [] if args.compare_ik else None
     frame_idx = 0
     fps_counter = 0
@@ -217,8 +189,8 @@ if __name__ == "__main__":
 
         t0 = time.perf_counter()
         human_frame = human_frames[frame_idx]
-        qpos = sw_retarget.retarget(human_frame)
-        sw_qpos_list.append(qpos.copy())
+        qpos = to_retarget.retarget(human_frame)
+        qpos_list.append(qpos.copy())
 
         if compare_gmr is not None:
             ik_qpos_list.append(compare_gmr.retarget(human_frame).copy())
@@ -228,8 +200,8 @@ if __name__ == "__main__":
         now = time.time()
         if now - fps_start >= 2.0:
             print(
-                f"[sliding-window] retarget FPS: {fps_counter / (now - fps_start):.1f}, "
-                f"last frame: {elapsed_ms:.1f} ms, mode={args.mode}, solver={args.solver}, window={args.window_size}"
+                f"[trajectory-opt] FPS: {fps_counter / (now - fps_start):.1f}, "
+                f"last frame: {elapsed_ms:.1f} ms, window={args.window_size}"
             )
             fps_counter = 0
             fps_start = now
@@ -255,19 +227,19 @@ if __name__ == "__main__":
                 follow_camera=True,
             )
 
-        frame_idx += 1
+        if not args.loop:
+            frame_idx += 1
 
-    sw_arr = np.asarray(sw_qpos_list)
-    dt = 1.0 / aligned_fps
+    arr = np.asarray(qpos_list)
     print(
-        f"[metrics] sliding-window  vel={joint_velocity_metric(sw_arr, dt):.5f}, "
-        f"acc={joint_acceleration_metric(sw_arr, dt):.5f}"
+        f"[metrics] trajectory-opt  vel={joint_velocity_metric(arr):.5f}, "
+        f"acc={joint_acceleration_metric(arr):.5f}"
     )
     if ik_qpos_list is not None:
         ik_arr = np.asarray(ik_qpos_list)
         print(
-            f"[metrics] per-frame IK      vel={joint_velocity_metric(ik_arr, dt):.5f}, "
-            f"acc={joint_acceleration_metric(ik_arr, dt):.5f}"
+            f"[metrics] per-frame IK      vel={joint_velocity_metric(ik_arr):.5f}, "
+            f"acc={joint_acceleration_metric(ik_arr):.5f}"
         )
 
     if args.save_path is not None:
@@ -276,30 +248,16 @@ if __name__ == "__main__":
         save_dir = os.path.dirname(args.save_path)
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
-
-        if args.robot in PLANAR_BASE_ROBOTS:
-            motion_data = {
-                "fps": aligned_fps,
-                "qpos": sw_arr,
-                "root_pos": sw_arr[:, :3],
-                "root_rot": np.zeros((len(sw_arr), 4), dtype=np.float64),
-                "dof_pos": sw_arr[:, 3:],
-                "local_body_pos": None,
-                "link_body_list": None,
-                "method": "sliding_window_gvhmr",
-                "window_size": args.window_size,
-            }
-        else:
-            motion_data = {
-                "fps": aligned_fps,
-                "root_pos": sw_arr[:, :3],
-                "root_rot": sw_arr[:, 3:7][:, [1, 2, 3, 0]],
-                "dof_pos": sw_arr[:, 7:],
-                "local_body_pos": None,
-                "link_body_list": None,
-                "method": "sliding_window_gvhmr",
-                "window_size": args.window_size,
-            }
+        motion_data = {
+            "fps": aligned_fps,
+            "root_pos": arr[:, :3],
+            "root_rot": arr[:, 3:7][:, [1, 2, 3, 0]],
+            "dof_pos": arr[:, 7:],
+            "local_body_pos": None,
+            "link_body_list": None,
+            "method": "trajectory_optimization",
+            "window_size": args.window_size,
+        }
         with open(args.save_path, "wb") as f:
             pickle.dump(motion_data, f)
         print(f"Saved to {args.save_path}")

@@ -125,6 +125,7 @@ if __name__ == "__main__":
     )
     
     robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
+                                            camera_follow=True,
                                             motion_fps=aligned_fps,
                                             transparent_robot=0,
                                             record_video=args.record_video,
@@ -177,7 +178,7 @@ if __name__ == "__main__":
                 human_pos_offset=np.array([0.0, 0.0, 0.0]),
                 show_human_body_name=False,
                 rate_limit=args.rate_limit,
-                follow_camera=False,
+                follow_camera=True,
             )
         else:
             robot_motion_viewer.step(
@@ -188,7 +189,7 @@ if __name__ == "__main__":
                 human_pos_offset=np.array([0.0, 0.0, 0.0]),
                 show_human_body_name=False,
                 rate_limit=args.rate_limit,
-                follow_camera=False,
+                follow_camera=True,
             )
         if args.save_path is not None:
             qpos_list.append(qpos)

@@ -68,9 +68,19 @@ C++ 与 Python **共用** `general_motion_retargeting/ik_configs/contact_ground_
 ```bash
 --contact_ground        # 强制启用
 --no_contact_ground     # 强制关闭
+--foot_ground_limit     # 启用 foot_ground_limit（影响穿透修复目标选择）
+--no_foot_ground_limit
+--fix_robot_penetration
+--no_fix_robot_penetration
 ```
 
-Viewer YAML 示例：`contact_ground: true`
+Viewer YAML 示例：
+
+```yaml
+contact_ground: true
+foot_ground_limit: true
+fix_robot_penetration: true
+```
 
 **注意**：机器人穿透修正（`fixRobotPenetration`）需要 **MuJoCo 后端**（`mujoco_se3` / `mujoco_jacobian_legacy`）。Pinocchio 后端只做人体参考修复。
 
@@ -80,6 +90,15 @@ Viewer YAML 示例：`contact_ground: true`
 2. **`update_targets()`** — 若启用，在设置 IK 目标前调用 `process_human_frame(human_data)`。
 3. **`retarget()`** — IK 迭代结束后调用 `fix_robot_penetration(model, data)` 调整 `qpos[2]`。
 
+### 穿透修复与 `foot_ground_limit` 协同（2025-07）
+
+启用 `foot_ground_limit`（IK 内脚底 QP 约束）时，直立姿态下 `fix_robot_penetration` **仅监控躯干 geom**，避免 IK 压脚后再抬 root 导致踏空。低姿态（躺/蹲）仍监控全身（脚+躯干+腿+臂）。
+
+Python：`ContactGroundPipeline._penetration_targets()`  
+C++：`ContactGroundPipeline::penetrationTargets()`
+
+配置：`foot_ground_limit.enabled`（IK JSON）或 CLI `--foot_ground_limit` 会设置 `footGroundLimitEnabled`。
+
 ## 配置层级
 
 配置按以下顺序合并（后者覆盖前者）：
@@ -87,7 +106,10 @@ Viewer YAML 示例：`contact_ground: true`
 1. `contact_ground_presets.json` 中的 `_default`
 2. `contact_ground_presets.json` 中的机器人条目（如 `unitree_g1`、`fourier_n1`）
 3. IK JSON 中的 `contact_ground` 块（如 `bvh_lafan1_to_g1.json`）
-4. CLI 参数 `--contact_ground` / `--no-contact_ground`（仅覆盖 `enabled`）
+4. CLI 参数（Python / C++ 均已支持）：
+   - `--contact_ground` / `--no_contact_ground`（或 C++ `--no_contact_ground`）
+   - `--foot_ground_limit` / `--no_foot_ground_limit`
+   - `--fix_robot_penetration` / `--no_fix_robot_penetration`
 
 ### IK JSON 最简写法（推荐）
 

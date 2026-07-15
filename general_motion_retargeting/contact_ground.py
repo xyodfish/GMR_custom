@@ -395,6 +395,10 @@ class ContactGroundPipeline:
         self.foot_bodies = list(cfg.get("foot_bodies", []))
         self.enable_foot_lock = bool(cfg.get("enable_foot_lock", True))
         self.fix_penetration = bool(cfg.get("fix_robot_penetration", True))
+        self.foot_ground_limit_enabled = bool(cfg.get("foot_ground_limit_enabled", False))
+        self.penetration_exclude_feet_when_foot_limit = bool(
+            cfg.get("penetration_exclude_feet_when_foot_limit", True)
+        )
         self.penetration_margin = _as_float(cfg.get("penetration_margin", 0.01), 0.01)
         self.penetration_max_iterations = _as_int(cfg.get("penetration_max_iterations", 3), 3)
         self.floor_geom_name = str(cfg.get("floor_geom_name", "floor"))
@@ -535,6 +539,9 @@ class ContactGroundPipeline:
     def _penetration_targets(self) -> tuple[list[int], float]:
         if self._is_low_pose():
             return self.lying_ground_geom_ids, self.lying_penetration_margin
+        if self.foot_ground_limit_enabled and self.penetration_exclude_feet_when_foot_limit:
+            # Feet are constrained during IK; only repair trunk penetration in upright motion.
+            return self.trunk_geom_ids, self.penetration_margin
         return self.ground_geom_ids, self.penetration_margin
 
     def fix_robot_penetration(self, model: mj.MjModel, data: mj.MjData) -> float:

@@ -51,6 +51,10 @@ namespace {
                   << " [--offset_to_ground]"
                   << " [--contact_ground]"
                   << " [--no_contact_ground]"
+                  << " [--foot_ground_limit]"
+                  << " [--no_foot_ground_limit]"
+                  << " [--fix_robot_penetration]"
+                  << " [--no_fix_robot_penetration]"
                   << " [--max_frames <int, 0=all>]"
                   << " --out_json <path>"
                   << "\n";
@@ -92,14 +96,26 @@ int main(int argc, char** argv) {
         const std::filesystem::path ikPath = gmr::resolveIkConfig(gmrRoot, srcHuman, robot);
         gmr::IkConfig ikConfig             = gmr::loadIkConfig(ikPath, actualHumanHeight);
 
-        std::optional<bool> contactGroundOverride;
+        gmr::ContactGroundCliOverrides cgCli;
         if (hasFlag(argc, argv, "--contact_ground")) {
-            contactGroundOverride = true;
+            cgCli.enabled = true;
         }
         if (hasFlag(argc, argv, "--no_contact_ground")) {
-            contactGroundOverride = false;
+            cgCli.enabled = false;
         }
-        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, contactGroundOverride);
+        if (hasFlag(argc, argv, "--foot_ground_limit")) {
+            cgCli.footGroundLimit = true;
+        }
+        if (hasFlag(argc, argv, "--no_foot_ground_limit")) {
+            cgCli.footGroundLimit = false;
+        }
+        if (hasFlag(argc, argv, "--fix_robot_penetration")) {
+            cgCli.fixRobotPenetration = true;
+        }
+        if (hasFlag(argc, argv, "--no_fix_robot_penetration")) {
+            cgCli.fixRobotPenetration = false;
+        }
+        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, cgCli);
 
         std::unique_ptr<gmr::Retargeter> retargeter = gmr::createRetargeter(backend, robotModelPath, std::move(ikConfig), opts);
         const gmr::HumanFrameSequence sequence      = gmr::loadHumanFrameSequence(humanFrameJson);

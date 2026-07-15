@@ -4,6 +4,7 @@
 #include <cmath>
 #include <set>
 #include <stdexcept>
+#include <utility>
 
 namespace gmr {
 
@@ -265,19 +266,29 @@ namespace gmr {
         return false;
     }
 
+    std::pair<const std::vector<int>&, double> ContactGroundPipeline::penetrationTargets() const {
+        if (isLowPose()) {
+            return {lyingGroundGeomIds_, config_.lyingPenetrationMargin};
+        }
+        if (config_.footGroundLimitEnabled && config_.penetrationExcludeFeetWhenFootLimit) {
+            return {trunkGeomIds_, config_.penetrationMargin};
+        }
+        return {groundGeomIds_, config_.penetrationMargin};
+    }
+
     // IK / retarget 解完机器人姿态之后，检查机器人指定 geom 是否穿地；
     // 如果穿地，就直接把机器人 root 的 z 方向 qpos[2] 抬高一点。
-    // 正常姿态：检查脚部 + 躯干 geom 是否穿地； 低姿态：额外检查腿部 + 手臂 geom 是否穿地。
+    // 正常姿态：检查脚部 + 躯干 geom（foot_ground_limit 时仅躯干）；
+    // 低姿态：额外检查腿部 + 手臂 geom。
     double ContactGroundPipeline::fixRobotPenetration(mjModel* model, mjData* data) {
         lastRootLift_ = 0.0;
         if (!config_.enabled || !config_.fixRobotPenetration || model == nullptr || data == nullptr) {
             return 0.0;
         }
 
-        const bool lowPose              = isLowPose();
-        const std::vector<int>& geomIds = lowPose ? lyingGroundGeomIds_ : groundGeomIds_;
-        const double margin             = lowPose ? config_.lyingPenetrationMargin : config_.penetrationMargin;
-        lastRootLift_ = fixRobotGroundPenetration(model, data, geomIds, floorGeomId_, margin, config_.penetrationMaxIterations);
+        const auto [geomIds, margin] = penetrationTargets();
+        lastRootLift_ =
+            fixRobotGroundPenetration(model, data, geomIds, floorGeomId_, margin, config_.penetrationMaxIterations);
         return lastRootLift_;
     }
 

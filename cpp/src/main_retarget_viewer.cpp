@@ -35,6 +35,8 @@ struct ViewerConfig {
 
     bool offsetToGround = false;
     std::optional<bool> contactGroundOverride;
+    std::optional<bool> footGroundLimitOverride;
+    std::optional<bool> fixRobotPenetrationOverride;
     bool loop           = false;
     bool realtime       = true;
 
@@ -262,6 +264,12 @@ void loadConfigYaml(const std::filesystem::path& configPath, ViewerConfig* confi
     if (root["contact_ground"]) {
         config->contactGroundOverride = root["contact_ground"].as<bool>();
     }
+    if (root["foot_ground_limit"]) {
+        config->footGroundLimitOverride = root["foot_ground_limit"].as<bool>();
+    }
+    if (root["fix_robot_penetration"]) {
+        config->fixRobotPenetrationOverride = root["fix_robot_penetration"].as<bool>();
+    }
     setIfPresent(root, "loop", &config->loop);
 
     bool precompute = false;
@@ -323,6 +331,18 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     }
     if (hasFlag(argc, argv, "--no_contact_ground")) {
         config->contactGroundOverride = false;
+    }
+    if (hasFlag(argc, argv, "--foot_ground_limit")) {
+        config->footGroundLimitOverride = true;
+    }
+    if (hasFlag(argc, argv, "--no_foot_ground_limit")) {
+        config->footGroundLimitOverride = false;
+    }
+    if (hasFlag(argc, argv, "--fix_robot_penetration")) {
+        config->fixRobotPenetrationOverride = true;
+    }
+    if (hasFlag(argc, argv, "--no_fix_robot_penetration")) {
+        config->fixRobotPenetrationOverride = false;
     }
 
     if (hasFlag(argc, argv, "--loop")) {
@@ -536,6 +556,9 @@ void printUsage() {
               << " [--max_iter <int>]"
               << " [--use_velocity_limit|--no_use_velocity_limit]"
               << " [--offset_to_ground|--no_offset_to_ground]"
+              << " [--contact_ground|--no_contact_ground]"
+              << " [--foot_ground_limit|--no_foot_ground_limit]"
+              << " [--fix_robot_penetration|--no_fix_robot_penetration]"
               << " [--loop|--no_loop]"
               << " [--realtime|--precompute]"
               << " [--transparent_robot <0|1>]"
@@ -577,7 +600,11 @@ int main(int argc, char** argv) {
             pinBackend ? gmr::resolveRobotUrdf(gmrRoot, robot) : gmr::resolveRobotXml(gmrRoot, robot);
         const std::filesystem::path ikPath = gmr::resolveIkConfig(gmrRoot, config.srcHuman, robot);
         gmr::IkConfig ikConfig             = gmr::loadIkConfig(ikPath, config.actualHumanHeight);
-        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, config.contactGroundOverride);
+        gmr::ContactGroundCliOverrides cgCli;
+        cgCli.enabled              = config.contactGroundOverride;
+        cgCli.footGroundLimit      = config.footGroundLimitOverride;
+        cgCli.fixRobotPenetration  = config.fixRobotPenetrationOverride;
+        opts.contactGround = gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, cgCli);
 
         const gmr::HumanFrameSequence sequence = gmr::loadHumanFrameSequence(config.humanFrameJson);
         if (sequence.frames.empty()) {
