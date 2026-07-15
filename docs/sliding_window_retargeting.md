@@ -2,7 +2,8 @@
 
 本文档描述 GMR 中 **SlidingWindowRetargeter** 的算法原理、使用方法，以及与旧版逐帧 IK 的性能/效果对比。
 
-> **注意**：若需要**脱离 GMR 逐帧 IK 的独立因果 TO**（直接 FK 跟踪 + 平滑，优化器内不调用 mink），请参见 [`trajectory_optimization_retargeting.md`](trajectory_optimization_retargeting.md) 中的 `TrajectoryOptimizationRetargeter`。
+> **注意**：若需要**脱离 GMR 逐帧 IK 的独立因果 TO**（直接 FK 跟踪 + 平滑，优化器内不调用 mink），请参见 [`trajectory_optimization_retargeting.md`](trajectory_optimization_retargeting.md) 中的 `TrajectoryOptimizationRetargeter`。  
+> 若需要 **离线整段 motion 多帧联合 GN**（paper-style batch retargeting），请参见 [`batch_trajectory_retargeting.md`](batch_trajectory_retargeting.md) 中的 `BatchTrajectoryRetargeter`。
 
 ---
 

@@ -5,10 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(GMR_THIRDPARTY_PREFIX "/opt/robot/devel/x86_64-Linux-GNU-9.4.0" CACHE PATH "Third-party install prefix")
-set(GMR_MUJOCO_PREFIX "/opt/robot/devel_control/x86_64-Linux-GNU-9.4.0" CACHE PATH "MuJoCo install prefix")
-list(PREPEND CMAKE_PREFIX_PATH "${GMR_THIRDPARTY_PREFIX}")
-list(PREPEND CMAKE_PREFIX_PATH "${GMR_MUJOCO_PREFIX}")
+set(GMR_THIRDPARTY_PREFIX "/opt/robot/devel" CACHE PATH "Third-party install prefix")
+set(GMR_MUJOCO_PREFIX "/opt/robot/devel" CACHE PATH "MuJoCo install prefix")
+list(PREPEND CMAKE_PREFIX_PATH "${GMR_THIRDPARTY_PREFIX}" "${GMR_MUJOCO_PREFIX}")
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/devel-packages")
 
 set(CMAKE_BUILD_RPATH "${GMR_THIRDPARTY_PREFIX}/lib;${GMR_MUJOCO_PREFIX}/lib")
 set(CMAKE_INSTALL_RPATH "${GMR_THIRDPARTY_PREFIX}/lib;${GMR_MUJOCO_PREFIX}/lib")
@@ -18,6 +18,13 @@ find_package(Eigen3 REQUIRED)
 find_package(qpOASES REQUIRED)
 find_package(pinocchio REQUIRED)
 find_package(mujoco REQUIRED)
+
+if(NOT TARGET qpOASES::qpOASES)
+  add_library(qpOASES::qpOASES UNKNOWN IMPORTED)
+  set_target_properties(qpOASES::qpOASES PROPERTIES
+    IMPORTED_LOCATION "${qpOASES_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${qpOASES_INCLUDE_DIR}")
+endif()
 find_package(glfw3 QUIET)
 if(NOT glfw3_FOUND)
   find_library(GLFW_LIBRARY NAMES glfw REQUIRED)
@@ -48,6 +55,7 @@ add_library(gmr_retarget_core STATIC
   src/retarget/retargeter_pinocchio_legacy.cpp
   src/retarget/retargeter_mujoco.cpp
   src/retarget/retargeter_mujoco_legacy.cpp
+  src/retarget/batch_trajectory_retarget.cpp
 )
 
 target_include_directories(gmr_retarget_core PUBLIC
@@ -58,7 +66,7 @@ target_include_directories(gmr_retarget_core PUBLIC
 
 target_link_libraries(gmr_retarget_core PUBLIC
   Eigen3::Eigen
-  qpOASES
+  qpOASES::qpOASES
   pinocchio::pinocchio
   mujoco::mujoco
   glog::glog
@@ -77,6 +85,14 @@ add_executable(gmr_retarget_batch_cli
 )
 
 target_link_libraries(gmr_retarget_batch_cli PRIVATE
+  gmr_retarget_core
+)
+
+add_executable(gmr_batch_to_cli
+  src/main_batch_to_cli.cpp
+)
+
+target_link_libraries(gmr_batch_to_cli PRIVATE
   gmr_retarget_core
 )
 

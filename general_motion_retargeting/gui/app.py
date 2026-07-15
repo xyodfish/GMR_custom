@@ -18,13 +18,17 @@ import gradio as gr
 from general_motion_retargeting.gui.core import (
     DEFAULT_GVHMR_ROOT,
     GMRRunConfig,
+    GUI_APP_TITLE,
     INPUT_TYPE_LABELS,
     INPUT_TYPES,
     LABEL_TO_INPUT_TYPE,
+    LABEL_TO_RETARGET_ALGO,
     REPO_ROOT,
+    RETARGET_ALGO_LABELS,
     TRI_STATE_LABELS,
     build_command,
     robots_for_input,
+    supports_to,
     validate_config,
 )
 from general_motion_retargeting.utils.gvhmr_env import default_gvhmr_python
@@ -164,7 +168,13 @@ def _native_save_pkl_dialog() -> str:
     return path or ""
 
 
-def on_input_type_change(input_label: str, current_robot: str):
+def _resolve_retarget_algo(label_or_key: str) -> str:
+    if label_or_key in RETARGET_ALGO_LABELS:
+        return label_or_key
+    return LABEL_TO_RETARGET_ALGO.get(label_or_key, "ik")
+
+
+def on_input_type_change(input_label: str, current_robot: str, current_algo: str):
     input_type = _resolve_input_type(input_label)
     robots = robots_for_input(input_type)
     value = current_robot if current_robot in robots else (robots[0] if robots else "unitree_g1")
@@ -173,6 +183,14 @@ def on_input_type_change(input_label: str, current_robot: str):
     is_playback = input_type == "playback_pkl"
     needs_gvhmr = INPUT_TYPES[input_type].get("needs_gvhmr", False)
     contact_default = "开启" if input_type in ("gvhmr_pt", "video_gvhmr") else "IK 默认"
+    to_supported = supports_to(input_type)
+    algo_key = _resolve_retarget_algo(current_algo)
+    if not to_supported and algo_key == "to":
+        algo_key = "ik"
+    algo_label = RETARGET_ALGO_LABELS[algo_key]
+    algo_choices = [RETARGET_ALGO_LABELS["ik"]]
+    if to_supported:
+        algo_choices.append(RETARGET_ALGO_LABELS["to"])
     return (
         gr.Dropdown(choices=robots, value=value),
         gr.Radio(choices=batch_choices, value="single"),
@@ -186,7 +204,16 @@ def on_input_type_change(input_label: str, current_robot: str):
         gr.update(visible=needs_gvhmr),
         gr.update(value=default_gvhmr_python()),
         gr.update(open=needs_gvhmr),
+        gr.Dropdown(choices=algo_choices, value=algo_label),
+        gr.update(visible=to_supported and algo_key == "to"),
     )
+
+
+def on_retarget_algo_change(algo_label: str, input_label: str):
+    input_type = _resolve_input_type(input_label)
+    algo_key = _resolve_retarget_algo(algo_label)
+    show_to = supports_to(input_type) and algo_key == "to"
+    return gr.update(visible=show_to)
 
 
 def make_config(
@@ -194,6 +221,7 @@ def make_config(
     run_mode: str,
     input_path: str,
     robot: str,
+    retarget_algo_label: str,
     motion_fps,
     human_json_path: str,
     save_path: str,
@@ -210,6 +238,11 @@ def make_config(
     gvhmr_root: str,
     gvhmr_python: str,
     gvhmr_static_cam: bool,
+    to_mode: str,
+    to_window_size,
+    to_w_velocity,
+    to_w_acceleration,
+    to_use_gmr_init: bool,
 ) -> GMRRunConfig:
     fps = "30"
     if motion_fps is not None and motion_fps != "":
@@ -219,6 +252,7 @@ def make_config(
         run_mode=run_mode,
         input_path=input_path or "",
         robot=robot,
+        retarget_algo=_resolve_retarget_algo(retarget_algo_label),
         motion_fps=fps,
         human_json_path=human_json_path or "",
         save_path=save_path or "",
@@ -235,6 +269,11 @@ def make_config(
         gvhmr_root=gvhmr_root or "",
         gvhmr_python=gvhmr_python or "",
         gvhmr_static_cam=bool(gvhmr_static_cam),
+        to_mode=to_mode or "fast",
+        to_window_size=int(float(to_window_size or 8)),
+        to_w_velocity=float(to_w_velocity or 2.0),
+        to_w_acceleration=float(to_w_acceleration or 10.0),
+        to_use_gmr_init=bool(to_use_gmr_init),
     )
 
 
@@ -295,12 +334,12 @@ def build_app() -> gr.Blocks:
     default_robots = robots_for_input("bvh_lafan1")
     explorer_root = str(_explorer_root())
 
-    with gr.Blocks(title="GMR Retargeting") as demo:
+    with gr.Blocks(title=GUI_APP_TITLE) as demo:
         gr.HTML(
-            """
+            f"""
             <div id="gmr-header">
-              <h1>GMR Retargeting</h1>
-              <p>运动重定向</p>
+              <h1>{GUI_APP_TITLE}</h1>
+              <p>运动重定向 · IK / TO</p>
             </div>
             """
         )
@@ -324,6 +363,12 @@ def build_app() -> gr.Blocks:
                         choices=default_robots,
                         value="unitree_h2" if "unitree_h2" in default_robots else default_robots[0],
                         label="机器人",
+                        scale=2,
+                    )
+                    retarget_algo = gr.Dropdown(
+                        choices=list(RETARGET_ALGO_LABELS.values()),
+                        value=RETARGET_ALGO_LABELS["ik"],
+                        label="重定向算法",
                         scale=2,
                     )
                     motion_fps = gr.Number(
@@ -364,6 +409,22 @@ def build_app() -> gr.Blocks:
                                 contact_ground = gr.Dropdown(TRI_STATE_LABELS, value="开启", label="接触对齐")
                                 fix_robot_penetration = gr.Dropdown(TRI_STATE_LABELS, value="开启", label="修复穿地")
                                 foot_ground_limit = gr.Dropdown(TRI_STATE_LABELS, value="IK 默认", label="脚地 QP")
+
+                        with gr.Tab("TO 参数", visible=False) as to_panel:
+                            with gr.Row():
+                                to_mode = gr.Dropdown(
+                                    choices=["fast", "full"],
+                                    value="fast",
+                                    label="TO 模式",
+                                    info="fast=实时；full=整窗离线",
+                                )
+                                to_window_size = gr.Number(
+                                    value=8, precision=0, minimum=1, maximum=64, label="窗口长度",
+                                )
+                            with gr.Row():
+                                to_w_velocity = gr.Number(value=2.0, label="w_velocity")
+                                to_w_acceleration = gr.Number(value=10.0, label="w_acceleration")
+                            to_use_gmr_init = gr.Checkbox(value=True, label="GMR 初值 (use_gmr_init)")
 
                         with gr.Tab("GVHMR"):
                             with gr.Column(visible=False) as gvhmr_panel:
@@ -415,6 +476,7 @@ def build_app() -> gr.Blocks:
             run_mode,
             input_path,
             robot,
+            retarget_algo,
             motion_fps,
             human_json_path,
             save_path,
@@ -431,11 +493,16 @@ def build_app() -> gr.Blocks:
             gvhmr_root,
             gvhmr_python,
             gvhmr_static_cam,
+            to_mode,
+            to_window_size,
+            to_w_velocity,
+            to_w_acceleration,
+            to_use_gmr_init,
         ]
 
         input_type.change(
             fn=on_input_type_change,
-            inputs=[input_type, robot],
+            inputs=[input_type, robot, retarget_algo],
             outputs=[
                 robot,
                 run_mode,
@@ -449,7 +516,15 @@ def build_app() -> gr.Blocks:
                 gvhmr_panel,
                 gvhmr_python,
                 more_options,
+                retarget_algo,
+                to_panel,
             ],
+        )
+
+        retarget_algo.change(
+            fn=on_retarget_algo_change,
+            inputs=[retarget_algo, input_type],
+            outputs=[to_panel],
         )
 
         pick_file_btn.click(fn=_native_file_dialog, inputs=[input_type], outputs=input_path)

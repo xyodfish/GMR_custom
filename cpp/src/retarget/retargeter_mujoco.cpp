@@ -113,7 +113,8 @@ namespace gmr {
                 for (const auto& entry : src) {
                     const int bodyId = mj_name2id(model.get(), mjOBJ_BODY, entry.robotBodyName.c_str());
                     if (bodyId < 0) {
-                        throw std::runtime_error("Body not found in MuJoCo model: " + entry.robotBodyName);
+                        LOG(WARNING) << "Body not found in MuJoCo model, skip IK task: " << entry.robotBodyName;
+                        continue;
                     }
 
                     MujocoTaskRuntime task;

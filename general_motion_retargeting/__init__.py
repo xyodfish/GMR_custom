@@ -16,6 +16,11 @@ from .trajectory_optimization_retarget import (
     TrajectoryOptimizationConfig,
     TrajectoryOptimizationRetargeter,
 )
+from .batch_trajectory_retarget import BatchTrajectoryConfig, BatchTrajectoryRetargeter
+from .batch_trajectory_retarget import (  # deprecated aliases
+    ClipTrajectoryConfig,
+    ClipTrajectoryRetargeter,
+)
 from .robot_motion_viewer import RobotMotionViewer, draw_frame
 from .data_loader import load_robot_motion
 from .kinematics_model import KinematicsModel

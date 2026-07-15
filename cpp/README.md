@@ -17,25 +17,45 @@
 - 带 YAML 运行配置的 MuJoCo viewer：`gmr_retarget_viewer`（仅渲染）。
 
 ## 依赖
-默认 prefix：
-- `/opt/robot/devel/x86_64-Linux-GNU-9.4.0`
+默认 prefix：`/opt/robot/devel`（glog / qpOASES / pinocchio / mujoco / nlohmann_json / yaml-cpp 等）
 
-必需 package：
-- `Eigen3`
-- `qpOASES`
-- `pinocchio`
-- `mujoco`
-- `nlohmann_json` header（`nlohmann/json.hpp`）
-- `yaml-cpp`（`yaml-cpp/yaml.h`）
+若 `find_package(mujoco)` 失败，先安装 CMake 包描述（库/头文件已在 devel 时）：
+```bash
+./cpp/scripts/install_devel_cmake_packages.sh /opt/robot/devel
+```
 
 ## 编译
 ```bash
-cd /data/open_src_code/GMR_custom
-cmake -S cpp -B cpp/build \
-  -DGMR_THIRDPARTY_PREFIX=/opt/robot/devel/x86_64-Linux-GNU-9.4.0 \
-  -DGMR_MUJOCO_PREFIX=/opt/robot/devel_control/x86_64-Linux-GNU-9.4.0
+cd GMR_custom
+cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
 cmake --build cpp/build -j
+export LD_LIBRARY_PATH=/opt/robot/devel/lib:$LD_LIBRARY_PATH
 ```
+
+## Batch TO（C++ 滑窗 GN）
+
+离线 batch 轨迹优化，对应 Python `BatchTrajectoryRetargeter` / `to_robot_batch.py`。
+
+完整算法、性能对比、quality vs `--fast` 说明见 [`docs/batch_trajectory_retargeting.md`](../docs/batch_trajectory_retargeting.md)。
+
+**默认配置是 quality 档**（`gn_steps=3`，4-alpha line search，foot penalties 全开），不是牺牲质量的 fast 版；仅 `--fast` 才降为 `gn_steps=2` + 单 alpha。
+
+```bash
+# 1) GVHMR .pt -> human_frame_json
+python scripts/tools/export_gvhmr_frames_json.py \
+  --pt_file output/gvhmr_pt/cxk-ball_hmr4d_results.pt \
+  --out_json output/cxk_ball_human_frames.json --max_frames 120
+
+# 2) C++ batch TO
+cpp/build/gmr_batch_to_cli \
+  --gmr_root . --robot unitree_g1 \
+  --human_frame_json output/cxk_ball_human_frames.json \
+  --actual_human_height 1.7 \
+  --out_json output/cxk_ball_batch_cpp.json \
+  --max_frames 120
+```
+
+`--fast`：gn_steps=2 + 单步 line search（更快，质量略降）。
 
 ## 运行 retarget，并打印/保存 qpos
 ```bash

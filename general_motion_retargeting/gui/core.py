@@ -85,8 +85,24 @@ INPUT_TYPE_LABELS = {key: cfg["label"] for key, cfg in INPUT_TYPES.items()}
 LABEL_TO_INPUT_TYPE = {cfg["label"]: key for key, cfg in INPUT_TYPES.items()}
 INVERSE_RATE_LIMIT_TYPES = frozenset({"gvhmr_pt", "video_gvhmr"})
 
+RETARGET_ALGOS = {
+    "ik": {"label": "Per-frame IK (GMR)"},
+    "to": {"label": "Trajectory Optimization (TO)"},
+}
+RETARGET_ALGO_LABELS = {key: cfg["label"] for key, cfg in RETARGET_ALGOS.items()}
+LABEL_TO_RETARGET_ALGO = {cfg["label"]: key for key, cfg in RETARGET_ALGOS.items()}
+
+TO_SCRIPT_BY_INPUT = {
+    "bvh_lafan1": "retarget/bvh_to_robot_trajectory_opt.py",
+    "bvh_nokov": "retarget/bvh_to_robot_trajectory_opt.py",
+    "smplx": "retarget/smplx_to_robot_trajectory_opt.py",
+    "gvhmr_pt": "gvhmr/to_robot_trajectory_opt.py",
+}
+TO_SUPPORTED_INPUT_TYPES = frozenset(set(TO_SCRIPT_BY_INPUT) | {"video_gvhmr"})
+
 TRI_STATE_LABELS = ("IK 默认", "开启", "关闭")
 ALL_ROBOTS = sorted(ROBOT_XML_DICT.keys())
+GUI_APP_TITLE = "GMR Retargeting"
 
 
 @dataclass
@@ -95,6 +111,7 @@ class GMRRunConfig:
     run_mode: str
     input_path: str
     robot: str
+    retarget_algo: str = "ik"
     motion_fps: str = "30"
     human_json_path: str = ""
     save_path: str = ""
@@ -111,6 +128,11 @@ class GMRRunConfig:
     gvhmr_root: str = ""
     gvhmr_python: str = ""
     gvhmr_static_cam: bool = True
+    to_mode: str = "fast"
+    to_window_size: int = 8
+    to_w_velocity: float = 2.0
+    to_w_acceleration: float = 10.0
+    to_use_gmr_init: bool = True
 
 
 def robots_for_input(input_type: str) -> list[str]:
@@ -130,6 +152,31 @@ def tri_state_to_args(name: str, value: str) -> list[str]:
     if value == "关闭":
         return [f"--no-{name}"]
     return []
+
+
+def supports_to(input_type: str) -> bool:
+    return input_type in TO_SUPPORTED_INPUT_TYPES
+
+
+def resolve_retarget_script(input_type: str, retarget_algo: str) -> str:
+    if retarget_algo == "to":
+        if input_type == "video_gvhmr":
+            return INPUT_TYPES[input_type]["script"]
+        if input_type not in TO_SCRIPT_BY_INPUT:
+            raise ValueError(f"TO not supported for input type: {input_type}")
+        return TO_SCRIPT_BY_INPUT[input_type]
+    return INPUT_TYPES[input_type]["script"]
+
+
+def append_to_args(cmd: list[str], cfg: GMRRunConfig) -> None:
+    if cfg.retarget_algo != "to":
+        return
+    cmd += ["--to_mode", cfg.to_mode]
+    cmd += ["--window_size", str(int(cfg.to_window_size))]
+    cmd += ["--w_velocity", str(float(cfg.to_w_velocity))]
+    cmd += ["--w_acceleration", str(float(cfg.to_w_acceleration))]
+    if not cfg.to_use_gmr_init:
+        cmd.append("--no-use_gmr_init")
 
 
 def default_save_path(input_path: str, robot: str) -> str:
@@ -162,6 +209,11 @@ def validate_config(cfg: GMRRunConfig) -> str | None:
             return f"未找到 GVHMR demo 脚本: {demo_script}"
     if cfg.input_type == "video_gvhmr" and p.suffix.lower() not in VIDEO_EXTENSIONS:
         return f"视频模式需要 {', '.join(VIDEO_EXTENSIONS)} 格式文件"
+    if cfg.retarget_algo == "to":
+        if cfg.run_mode == "batch":
+            return "Trajectory Optimization (TO) 暂不支持批量模式"
+        if not supports_to(cfg.input_type):
+            return "当前数据类型不支持 TO，请改用 Per-frame IK 或更换输入类型"
     return None
 
 
@@ -185,7 +237,7 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
         ]
         return cmd
 
-    script = SCRIPTS_DIR / meta["script"]
+    script = SCRIPTS_DIR / resolve_retarget_script(input_type, cfg.retarget_algo)
     cmd.append(str(script))
 
     if input_type in ("bvh_lafan1", "bvh_nokov"):
@@ -197,6 +249,8 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
         cmd += ["--gvhmr_pred_file", path, "--robot", robot]
     elif input_type == "video_gvhmr":
         cmd += ["--video", path, "--robot", robot]
+        if cfg.retarget_algo == "to":
+            cmd += ["--retarget_algo", "to"]
         gvhmr_root = cfg.gvhmr_root.strip() or str(DEFAULT_GVHMR_ROOT)
         cmd += ["--gvhmr_root", gvhmr_root]
         if cfg.gvhmr_python.strip():
@@ -237,5 +291,11 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
     if cfg.record_video:
         cmd.append("--record_video")
         cmd += ["--video_path", cfg.video_path.strip()]
+
+    if cfg.retarget_algo == "to":
+        if input_type == "video_gvhmr":
+            append_to_args(cmd, cfg)
+        elif input_type != "playback_pkl":
+            append_to_args(cmd, cfg)
 
     return cmd

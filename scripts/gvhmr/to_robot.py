@@ -47,6 +47,13 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--max_frames",
+        type=int,
+        default=None,
+        help="Process only the first N human frames.",
+    )
+
+    parser.add_argument(
         "--body_model_dir",
         type=str,
         default=str((REPO_ROOT / "assets" / "body_models").resolve()),
@@ -121,6 +128,9 @@ if __name__ == "__main__":
     # align fps
     tgt_fps = 30
     smplx_data_frames, aligned_fps = get_gvhmr_data_offline_fast(smplx_data, body_model, smplx_output, tgt_fps=tgt_fps)
+    if args.max_frames is not None:
+        smplx_data_frames = smplx_data_frames[: args.max_frames]
+        print(f"[GMR] using first {len(smplx_data_frames)} frames")
     
     
    

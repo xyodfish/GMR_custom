@@ -14,8 +14,8 @@ def load_robot_motion(motion_file):
         motion_root_pos = motion_data["root_pos"]
         motion_root_rot = motion_data["root_rot"][:, [3, 0, 1, 2]] # from xyzw to wxyz
         motion_dof_pos = motion_data["dof_pos"]
-        motion_local_body_pos = motion_data["local_body_pos"]
-        motion_link_body_list = motion_data["link_body_list"]
+        motion_local_body_pos = motion_data.get("local_body_pos")
+        motion_link_body_list = motion_data.get("link_body_list")
         motion_qpos = motion_data.get("qpos")
         if motion_qpos is not None:
             motion_qpos = np.asarray(motion_qpos)

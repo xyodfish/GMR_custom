@@ -15,7 +15,11 @@ scripts/
 
 ```bash
 python scripts/gmr_gui.py
+```
 
+`gmr_gui` 可在界面选择 **Per-frame IK** 或 **Trajectory Optimization (TO)**（BVH / SMPL-X / GVHMR / 视频）。应用标题常量：`general_motion_retargeting/gui/core.py` → `GUI_APP_TITLE`。
+
+```bash
 python scripts/retarget/bvh_to_robot.py --bvh_file ... --robot unitree_g1
 python scripts/retarget/bvh_to_robot_trajectory_opt.py --bvh_file ... --robot unitree_g1
 python scripts/retarget/smplx_to_robot.py --smplx_file ... --robot unitree_g1

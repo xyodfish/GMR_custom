@@ -11,7 +11,7 @@
 | 窗口优化 | fast 仅当前帧；full 联合窗口 | **默认联合优化整个因果窗口** |
 | GMR 角色 | 求解核心 | 仅预处理 + 可选初值 |
 
----
+> **离线 batch**：整段 motion 重叠滑窗 + 多帧 GN，见 [`batch_trajectory_retargeting.md`](batch_trajectory_retargeting.md)（`BatchTrajectoryRetargeter`，非因果）。
 
 ## 1. 算法
 
