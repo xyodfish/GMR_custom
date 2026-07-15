@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,51 @@ def gvhmr_pred_path(gvhmr_root: Path, video_path: Path) -> Path:
     return gvhmr_root / "outputs" / "demo" / video_path.stem / "hmr4d_results.pt"
 
 
+def gvhmr_demo_dir(gvhmr_root: Path, video_path: Path) -> Path:
+    return gvhmr_root / "outputs" / "demo" / video_path.stem
+
+
+def gvhmr_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    # User-site numpy 2.x can break chumpy during SMPL render.
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def gvhmr_output_artifacts(video: Path) -> tuple[str, ...]:
+    stem = video.stem
+    return (
+        "hmr4d_results.pt",
+        "1_incam.mp4",
+        "2_global.mp4",
+        f"{stem}_3_incam_global_horiz.mp4",
+    )
+
+
+def copy_gvhmr_outputs(gvhmr_root: Path, video: Path, dest_dir: Path) -> list[Path]:
+    demo_dir = gvhmr_demo_dir(gvhmr_root, video)
+    copied: list[Path] = []
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for name in gvhmr_output_artifacts(video):
+        src = demo_dir / name
+        if not src.is_file():
+            continue
+        dst = dest_dir / name
+        shutil.copy2(src, dst)
+        copied.append(dst)
+        print(f"[copy] -> {dst}")
+    return copied
+
+
+def gvhmr_render_videos_missing(gvhmr_root: Path, video: Path) -> bool:
+    demo_dir = gvhmr_demo_dir(gvhmr_root, video)
+    for name in ("1_incam.mp4", "2_global.mp4"):
+        if not (demo_dir / name).is_file():
+            return True
+    merged = demo_dir / f"{video.stem}_3_incam_global_horiz.mp4"
+    return not merged.is_file()
+
+
 def run_one(
     video: Path,
     gvhmr_root: Path,
@@ -42,14 +88,17 @@ def run_one(
         return None
 
     pred = gvhmr_pred_path(gvhmr_root, video)
-    if pred.is_file() and not force:
-        print(f"[reuse] {pred}")
-    else:
+    need_inference = force or not pred.is_file()
+    need_render = force or gvhmr_render_videos_missing(gvhmr_root, video)
+
+    if need_inference or need_render:
+        if pred.is_file() and not need_inference and need_render:
+            print(f"[render] {pred.parent} missing human overlay videos")
         cmd = [gvhmr_python, str(gvhmr_root / "tools" / "demo" / "demo.py"), f"--video={video}"]
         if static_cam:
             cmd.append("-s")
         print(f"[GVHMR] {' '.join(cmd)}")
-        proc = subprocess.run(cmd, cwd=str(gvhmr_root))
+        proc = subprocess.run(cmd, cwd=str(gvhmr_root), env=gvhmr_subprocess_env())
         if proc.returncode != 0:
             if pred.is_file():
                 print(
@@ -60,12 +109,17 @@ def run_one(
                 raise subprocess.CalledProcessError(proc.returncode, cmd)
         if not pred.is_file():
             raise FileNotFoundError(f"GVHMR finished but no output: {pred}")
+    else:
+        print(f"[reuse] {pred}")
 
     if copy_to is not None:
-        copy_to.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(pred, copy_to)
-        print(f"[copy] -> {copy_to}")
-        return copy_to
+        copied = copy_gvhmr_outputs(gvhmr_root, video, copy_to.parent)
+        if len(copied) <= 1:
+            print(
+                f"[warn] only copied {len(copied)} artifact(s) to {copy_to.parent}; "
+                "GVHMR render may have failed (check PYTHONNOUSERSITE=1 / gvhmr env)"
+            )
+        return copy_to.parent / "hmr4d_results.pt"
     return pred
 
 

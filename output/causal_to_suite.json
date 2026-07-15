@@ -1,0 +1,261 @@
+{
+  "robot": "unitree_g1",
+  "max_frames": 200,
+  "contact_ground": true,
+  "solver": "lbfgs",
+  "dataset_note": "LAFAN1 = Ubisoft La Forge mocap BVH (walk/run/jump/dance/sports/...); gvhmr = monocular video pose (.pt). Non-commercial research use for LAFAN1.",
+  "summary": {
+    "n_ok": 11,
+    "mean_ms_per_frame": 4.630458777272728,
+    "max_ms_per_frame": 6.354003175000007,
+    "mean_jerk_change_pct": -3.004732859351607,
+    "mean_foot_slip_change_pct": 72.79356311599942,
+    "jerk_improved_count": 7,
+    "foot_slip_improved_count": 3,
+    "realtime_30fps_count": 11
+  },
+  "motions": [
+    {
+      "name": "walk1_subject5.bvh",
+      "theme": "walk",
+      "input": "/home/xiayu/Workspace/data/lafan1/walk1_subject5.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 3.81994832,
+      "timing_max_frame_ms": 8.419222,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.010480999947486828,
+      "ik": {
+        "jerk_mean": 2633.2396735500374,
+        "foot_slip_total": 0.20480657472069752
+      },
+      "causal": {
+        "jerk_mean": 2794.6437829359916,
+        "foot_slip_total": 0.8793952338457025
+      },
+      "jerk_change_pct": 6.129487984219645,
+      "foot_slip_change_pct": 329.37841963568167
+    },
+    {
+      "name": "walk4_subject1.bvh",
+      "theme": "walk",
+      "input": "/home/xiayu/Workspace/data/lafan1/walk4_subject1.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 5.092709275000003,
+      "timing_max_frame_ms": 9.479692,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.0066685088809106344,
+      "ik": {
+        "jerk_mean": 1509.419458203125,
+        "foot_slip_total": 0.2658110367076664
+      },
+      "causal": {
+        "jerk_mean": 1398.3406892468959,
+        "foot_slip_total": 0.23989547982938425
+      },
+      "jerk_change_pct": -7.359039155919052,
+      "foot_slip_change_pct": -9.74961656945177
+    },
+    {
+      "name": "run2_subject4.bvh",
+      "theme": "run",
+      "input": "/home/xiayu/Workspace/data/lafan1/run2_subject4.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 5.042467625000001,
+      "timing_max_frame_ms": 11.730116,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.010406433808102779,
+      "ik": {
+        "jerk_mean": 5748.812833105811,
+        "foot_slip_total": 0.8539632561188305
+      },
+      "causal": {
+        "jerk_mean": 5839.424530806925,
+        "foot_slip_total": 0.7940526868569725
+      },
+      "jerk_change_pct": 1.5761810365316953,
+      "foot_slip_change_pct": -7.015590990898716
+    },
+    {
+      "name": "sprint1_subject4.bvh",
+      "theme": "sprint",
+      "input": "/home/xiayu/Workspace/data/lafan1/sprint1_subject4.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 4.828642644999999,
+      "timing_max_frame_ms": 8.4116,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.00973151052905274,
+      "ik": {
+        "jerk_mean": 2251.350484298606,
+        "foot_slip_total": 0.5567471573693633
+      },
+      "causal": {
+        "jerk_mean": 2290.1219334699604,
+        "foot_slip_total": 0.745705134939606
+      },
+      "jerk_change_pct": 1.7221418629287106,
+      "foot_slip_change_pct": 33.93963939808356
+    },
+    {
+      "name": "jumps1_subject1.bvh",
+      "theme": "jumps",
+      "input": "/home/xiayu/Workspace/data/lafan1/jumps1_subject1.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 4.431597459999999,
+      "timing_max_frame_ms": 9.465069,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.010919868745295835,
+      "ik": {
+        "jerk_mean": 1782.8782973772466,
+        "foot_slip_total": 0.360133839569022
+      },
+      "causal": {
+        "jerk_mean": 1691.9189407622039,
+        "foot_slip_total": 0.424502247104207
+      },
+      "jerk_change_pct": -5.101826453821946,
+      "foot_slip_change_pct": 17.873468267301867
+    },
+    {
+      "name": "dance1_subject1.bvh",
+      "theme": "dance",
+      "input": "/home/xiayu/Workspace/data/lafan1/dance1_subject1.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 4.0729878600000005,
+      "timing_max_frame_ms": 7.046725,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.00633510163681524,
+      "ik": {
+        "jerk_mean": 1657.0762683840512,
+        "foot_slip_total": 0.0868503392051548
+      },
+      "causal": {
+        "jerk_mean": 1701.6783354387373,
+        "foot_slip_total": 0.35619119672633415
+      },
+      "jerk_change_pct": 2.691612203111279,
+      "foot_slip_change_pct": 310.120674238188
+    },
+    {
+      "name": "fightAndSports1_subject1.bvh",
+      "theme": "sports",
+      "input": "/home/xiayu/Workspace/data/lafan1/fightAndSports1_subject1.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 4.281839155000003,
+      "timing_max_frame_ms": 7.634859,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.004739388713271318,
+      "ik": {
+        "jerk_mean": 569.8165049029348,
+        "foot_slip_total": 0.030658600689105794
+      },
+      "causal": {
+        "jerk_mean": 547.9325758950846,
+        "foot_slip_total": 0.04572572199477284
+      },
+      "jerk_change_pct": -3.8405221364337225,
+      "foot_slip_change_pct": 49.14484342731593
+    },
+    {
+      "name": "fallAndGetUp1_subject1.bvh",
+      "theme": "fall",
+      "input": "/home/xiayu/Workspace/data/lafan1/fallAndGetUp1_subject1.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 5.6380666449999985,
+      "timing_max_frame_ms": 14.489091,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.01743660614723821,
+      "ik": {
+        "jerk_mean": 4640.24575591847,
+        "foot_slip_total": 0.2876951175936208
+      },
+      "causal": {
+        "jerk_mean": 3994.3658966648104,
+        "foot_slip_total": 0.1818830127346573
+      },
+      "jerk_change_pct": -13.919087333464246,
+      "foot_slip_change_pct": -36.779249416539194
+    },
+    {
+      "name": "ground1_subject5.bvh",
+      "theme": "ground",
+      "input": "/home/xiayu/Workspace/data/lafan1/ground1_subject5.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 3.5974283699999976,
+      "timing_max_frame_ms": 8.43262,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.00846209759645408,
+      "ik": {
+        "jerk_mean": 2125.574432863321,
+        "foot_slip_total": 0.3331384200091736
+      },
+      "causal": {
+        "jerk_mean": 1881.6591135578444,
+        "foot_slip_total": 0.4330072411345487
+      },
+      "jerk_change_pct": -11.475265957960493,
+      "foot_slip_change_pct": 29.97817577529035
+    },
+    {
+      "name": "aiming1_subject1.bvh",
+      "theme": "aiming",
+      "input": "/home/xiayu/Workspace/data/lafan1/aiming1_subject1.bvh",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "bvh_lafan1",
+      "timing_ms_per_frame": 3.7753560200000003,
+      "timing_max_frame_ms": 7.94324,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.014788052101662428,
+      "ik": {
+        "jerk_mean": 1358.4566830306057,
+        "foot_slip_total": 0.17223558062592134
+      },
+      "causal": {
+        "jerk_mean": 1348.1946342561857,
+        "foot_slip_total": 0.24767623010084772
+      },
+      "jerk_change_pct": -0.7554196539801489,
+      "foot_slip_change_pct": 43.800850672530906
+    },
+    {
+      "name": "cxk-ball",
+      "theme": "gvhmr_sports",
+      "input": "/home/xiayu/Workspace/open_source_code/GMR_custom/output/gvhmr_pt/cxk-ball_hmr4d_results.pt",
+      "n_frames": 200,
+      "fps": 30.0,
+      "src_human": "smplx",
+      "timing_ms_per_frame": 6.354003175000007,
+      "timing_max_frame_ms": 8.821913,
+      "realtime_30fps": true,
+      "rmse_vs_ik": 0.018728322287179414,
+      "ik": {
+        "jerk_mean": 4239.374753838847,
+        "foot_slip_total": 0.7771248519610646
+      },
+      "causal": {
+        "jerk_mean": 4124.050031400711,
+        "foot_slip_total": 1.0882668350097313
+      },
+      "jerk_change_pct": -2.720323848079405,
+      "foot_slip_change_pct": 40.037579838491055
+    }
+  ]
+}

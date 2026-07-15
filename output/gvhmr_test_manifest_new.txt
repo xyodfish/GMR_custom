@@ -1,0 +1,2 @@
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_12.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_12/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_4.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_4/hmr4d_results.pt

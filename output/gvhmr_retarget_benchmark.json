@@ -1,0 +1,272 @@
+{
+  "robot": "unitree_g1",
+  "max_frames": 200,
+  "contact_ground": true,
+  "methods_tested": [
+    "ik",
+    "py_batch_to",
+    "cpp_batch_to"
+  ],
+  "summary": {
+    "ik": {
+      "kind": "online",
+      "mean_ms_per_frame": 1.8586171274849523,
+      "max_ms_per_frame": 2.0293160100118257,
+      "realtime_30fps_count": 6,
+      "mean_jerk_change_pct": 0.0,
+      "mean_foot_slip_change_pct": 0.0,
+      "mean_rmse_vs_ik": 0.0,
+      "n_clips": 6
+    },
+    "py_batch_to": {
+      "kind": "offline",
+      "mean_ms_per_frame": 30.303977497496817,
+      "max_ms_per_frame": 35.62733204002143,
+      "realtime_30fps_count": 5,
+      "mean_jerk_change_pct": -6.556168086922607,
+      "mean_foot_slip_change_pct": -20.158597363943546,
+      "mean_rmse_vs_ik": 0.006428391307327312,
+      "n_clips": 6
+    },
+    "cpp_batch_to": {
+      "kind": "offline",
+      "mean_ms_per_frame": 4.368880725833333,
+      "max_ms_per_frame": 6.299966960000001,
+      "realtime_30fps_count": 6,
+      "mean_jerk_change_pct": -6.556167786832645,
+      "mean_foot_slip_change_pct": -20.158597467813596,
+      "mean_rmse_vs_ik": 0.006428391305517381,
+      "n_clips": 6
+    }
+  },
+  "clips": [
+    {
+      "pt_file": "/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_12/hmr4d_results.pt",
+      "clip_name": "gait_track_12",
+      "n_frames": 200,
+      "fps": 30.0,
+      "methods": {
+        "ik": {
+          "kind": "online",
+          "ms_per_frame": 1.404587145007099,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0,
+          "jerk_mean": 883.6320252860952,
+          "foot_slip_total": 0.4602837605492872,
+          "jerk_change_pct": 0.0,
+          "foot_slip_change_pct": 0.0
+        },
+        "py_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 27.343781194940675,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.003017580523138325,
+          "jerk_mean": 884.3400014026784,
+          "foot_slip_total": 0.09022250538473887,
+          "jerk_change_pct": 0.0801211473015514,
+          "foot_slip_change_pct": -80.3985034629355
+        },
+        "cpp_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 3.17679926,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.00301758052313856,
+          "jerk_mean": 884.3400014020108,
+          "foot_slip_total": 0.09022250538470548,
+          "jerk_change_pct": 0.08012114722600308,
+          "foot_slip_change_pct": -80.39850346294273
+        }
+      }
+    },
+    {
+      "pt_file": "/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_14/hmr4d_results.pt",
+      "clip_name": "gait_track_14",
+      "n_frames": 200,
+      "fps": 30.0,
+      "methods": {
+        "ik": {
+          "kind": "online",
+          "ms_per_frame": 2.000315349941957,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0,
+          "jerk_mean": 670.6043780579341,
+          "foot_slip_total": 0.13042438912763976,
+          "jerk_change_pct": 0.0,
+          "foot_slip_change_pct": 0.0
+        },
+        "py_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 31.185830350004835,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.004571828203500841,
+          "jerk_mean": 545.060805826123,
+          "foot_slip_total": 0.12284901106871401,
+          "jerk_change_pct": -18.720959233130046,
+          "foot_slip_change_pct": -5.808252666234156
+        },
+        "cpp_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 5.06041359,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.004571828185867993,
+          "jerk_mean": 545.0608175987647,
+          "foot_slip_total": 0.12284901022590948,
+          "jerk_change_pct": -18.720957477602923,
+          "foot_slip_change_pct": -5.80825331243579
+        }
+      }
+    },
+    {
+      "pt_file": "/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_4/hmr4d_results.pt",
+      "clip_name": "gait_track_4",
+      "n_frames": 200,
+      "fps": 30.0,
+      "methods": {
+        "ik": {
+          "kind": "online",
+          "ms_per_frame": 2.0293160100118257,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0,
+          "jerk_mean": 2167.4667720576426,
+          "foot_slip_total": 0.0776983850236489,
+          "jerk_change_pct": 0.0,
+          "foot_slip_change_pct": 0.0
+        },
+        "py_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 35.62733204002143,
+          "realtime_30fps": false,
+          "rmse_vs_ik": 0.0002918125960506454,
+          "jerk_mean": 2165.9205834166605,
+          "foot_slip_total": 0.07686935127681352,
+          "jerk_change_pct": -0.07133620966720818,
+          "foot_slip_change_pct": -1.0669896762758284
+        },
+        "cpp_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 6.299966960000001,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0002918125960506386,
+          "jerk_mean": 2165.9205834166664,
+          "foot_slip_total": 0.07686935127681707,
+          "jerk_change_pct": -0.07133620966693544,
+          "foot_slip_change_pct": -1.066989676271256
+        }
+      }
+    },
+    {
+      "pt_file": "/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/sports2d_walk/hmr4d_results.pt",
+      "clip_name": "sports2d_walk",
+      "n_frames": 200,
+      "fps": 30.0,
+      "methods": {
+        "ik": {
+          "kind": "online",
+          "ms_per_frame": 2.012946024988196,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0,
+          "jerk_mean": 9373.1899637432,
+          "foot_slip_total": 0.21149544694039055,
+          "jerk_change_pct": 0.0,
+          "foot_slip_change_pct": 0.0
+        },
+        "py_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 28.806548770007794,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.009315200378260753,
+          "jerk_mean": 8936.729225028941,
+          "foot_slip_total": 0.1930041399223809,
+          "jerk_change_pct": -4.656480242079264,
+          "foot_slip_change_pct": -8.74312297759363
+        },
+        "cpp_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 3.8045496100000005,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.009315200381507021,
+          "jerk_mean": 8936.729220496145,
+          "foot_slip_total": 0.19300413996765595,
+          "jerk_change_pct": -4.656480290438426,
+          "foot_slip_change_pct": -8.743122956186536
+        }
+      }
+    },
+    {
+      "pt_file": "/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/tennis/hmr4d_results.pt",
+      "clip_name": "tennis",
+      "n_frames": 200,
+      "fps": 30.0,
+      "methods": {
+        "ik": {
+          "kind": "online",
+          "ms_per_frame": 1.716952595015755,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0,
+          "jerk_mean": 4251.644407767209,
+          "foot_slip_total": 0.8766009441596558,
+          "jerk_change_pct": 0.0,
+          "foot_slip_change_pct": 0.0
+        },
+        "py_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 30.210561330022756,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.009615216410533029,
+          "jerk_mean": 4115.113661691203,
+          "foot_slip_total": 0.8223973482497106,
+          "jerk_change_pct": -3.2112456494852153,
+          "foot_slip_change_pct": -6.183383245372497
+        },
+        "cpp_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 4.09591433,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0096152164088935,
+          "jerk_mean": 4115.113668305778,
+          "foot_slip_total": 0.8223973482661233,
+          "jerk_change_pct": -3.2112454939083332,
+          "foot_slip_change_pct": -6.183383243500179
+        }
+      }
+    },
+    {
+      "pt_file": "/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/walking/hmr4d_results.pt",
+      "clip_name": "walking",
+      "n_frames": 200,
+      "fps": 30.0,
+      "methods": {
+        "ik": {
+          "kind": "online",
+          "ms_per_frame": 1.9875856399448821,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.0,
+          "jerk_mean": 7726.85653508088,
+          "foot_slip_total": 0.9536243603994158,
+          "jerk_change_pct": 0.0,
+          "foot_slip_change_pct": 0.0
+        },
+        "py_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 28.649811299983412,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.011758709732480286,
+          "jerk_mean": 6741.1330760511155,
+          "foot_slip_total": 0.774807089067546,
+          "jerk_change_pct": -12.757108334475463,
+          "foot_slip_change_pct": -18.751332155249678
+        },
+        "cpp_batch_to": {
+          "kind": "offline",
+          "ms_per_frame": 3.775640605,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.011758709737646575,
+          "jerk_mean": 6741.133071250436,
+          "foot_slip_total": 0.7748070890647291,
+          "jerk_change_pct": -12.757108396605249,
+          "foot_slip_change_pct": -18.751332155545075
+        }
+      }
+    }
+  ]
+}

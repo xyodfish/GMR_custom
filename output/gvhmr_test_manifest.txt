@@ -1,0 +1,3 @@
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/walking.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/walking/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/tennis.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/tennis/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/sports2d_walk.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/sports2d_walk/hmr4d_results.pt

@@ -1,1 +1,1 @@
-/home/xiayu/Videos/cxk-ball.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/output/gvhmr_pt/cxk-ball_hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_14.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/gait_track_14/hmr4d_results.pt
