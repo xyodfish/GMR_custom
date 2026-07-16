@@ -103,6 +103,8 @@ namespace gmr {
             cfg.lowPoseMaxHipHeight = j.value("low_pose_max_hip_height", cfg.lowPoseMaxHipHeight);
             cfg.lyingPenetrationMargin = j.value("lying_penetration_margin", cfg.lyingPenetrationMargin);
             cfg.penetrationMaxIterations = j.value("penetration_max_iterations", cfg.penetrationMaxIterations);
+            cfg.pinocchioPenetrationMode = j.value("pinocchio_penetration_mode", cfg.pinocchioPenetrationMode);
+            cfg.pinocchioFootClearance = j.value("pinocchio_foot_clearance", cfg.pinocchioFootClearance);
             cfg.airborneHeightThreshold = j.value("airborne_height_threshold", cfg.airborneHeightThreshold);
             cfg.airborneOffsetDecay = j.value("airborne_offset_decay", cfg.airborneOffsetDecay);
             cfg.floorGeomName = j.value("floor_geom_name", cfg.floorGeomName);

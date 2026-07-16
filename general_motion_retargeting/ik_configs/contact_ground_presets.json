@@ -18,6 +18,8 @@
         "low_pose_max_hip_height": 0.65,
         "lying_penetration_margin": 0.02,
         "penetration_max_iterations": 5,
+        "pinocchio_penetration_mode": "hppfcl",
+        "pinocchio_foot_clearance": 0.0,
         "airborne_height_threshold": 0.15,
         "airborne_offset_decay": 1.0,
         "floor_geom_name": "floor",
@@ -29,6 +31,7 @@
     },
     "unitree_g1": {
         "enabled": true,
+        "pinocchio_foot_clearance": 0.05,
         "robot_foot_bodies": [
             "left_ankle_roll_link",
             "right_ankle_roll_link"

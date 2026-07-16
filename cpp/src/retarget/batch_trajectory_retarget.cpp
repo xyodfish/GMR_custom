@@ -20,8 +20,8 @@
 #endif
 
 #include "batch_trajectory_banded_solver.h"
-#include "retargeter_internal_utils.h"
 #include "gmr/solver/qp_solver.h"
+#include "retargeter_internal_utils.h"
 
 namespace gmr {
     namespace {
@@ -50,7 +50,9 @@ namespace gmr {
             return R;
         }
 
-        int gnScalarBandwidth(int m) { return 2 * m; }
+        int gnScalarBandwidth(int m) {
+            return 2 * m;
+        }
 
         Eigen::Vector3d mjJacColumn(const double* jac, int nv, int v) {
             return Eigen::Vector3d(jac[v], jac[nv + v], jac[2 * nv + v]);
@@ -93,7 +95,7 @@ namespace gmr {
     };
 
     BatchTrajectoryRetargeter::BatchTrajectoryRetargeter(const std::filesystem::path& robotModelPath, IkConfig ikConfig,
-                                                       BatchTrajectoryConfig config)
+                                                         BatchTrajectoryConfig config)
         : config_(std::move(config)),
           ikConfig_(std::move(ikConfig)),
           impl_(std::make_unique<Impl>()),
@@ -187,8 +189,7 @@ namespace gmr {
         }
 
         if (!config_.smoothRootXyz) {
-            smoothQidx_.erase(std::remove_if(smoothQidx_.begin(), smoothQidx_.end(), [](int q) { return q < 3; }),
-                              smoothQidx_.end());
+            smoothQidx_.erase(std::remove_if(smoothQidx_.begin(), smoothQidx_.end(), [](int q) { return q < 3; }), smoothQidx_.end());
         }
     }
 
@@ -200,10 +201,10 @@ namespace gmr {
         mjModel* model = impl_->model.get();
         const int m    = static_cast<int>(optVidx_.size());
         for (int i = 0; i < m; ++i) {
-            const int v = optVidx_[i];
-            const int j = model->dof_jntid[v];
+            const int v                     = optVidx_[i];
+            const int j                     = model->dof_jntid[v];
             qToOptV_[model->jnt_qposadr[j]] = i;
-            auto it = std::find(smoothQidx_.begin(), smoothQidx_.end(), model->jnt_qposadr[j]);
+            auto it                         = std::find(smoothQidx_.begin(), smoothQidx_.end(), model->jnt_qposadr[j]);
             if (it != smoothQidx_.end()) {
                 smoothQ_.push_back(*it);
                 smoothV_.push_back(i);
@@ -213,9 +214,9 @@ namespace gmr {
 
     void BatchTrajectoryRetargeter::ensureGnWorkspace(int nFrames) const {
         mjModel* model = impl_->model.get();
-        const int m      = static_cast<int>(optVidx_.size());
-        const int nvar   = nFrames * m;
-        const int bw     = gnScalarBandwidth(m);
+        const int m    = static_cast<int>(optVidx_.size());
+        const int nvar = nFrames * m;
+        const int bw   = gnScalarBandwidth(m);
 
         gnWs_->g.resize(nvar);
         gnWs_->dqFlat.resize(nvar);
@@ -313,8 +314,7 @@ namespace gmr {
         return scaled;
     }
 
-    BatchTrajectoryRetargeter::FrameTargets BatchTrajectoryRetargeter::targetsForPrepared(
-        const HumanFrame& prepared) const {
+    BatchTrajectoryRetargeter::FrameTargets BatchTrajectoryRetargeter::targetsForPrepared(const HumanFrame& prepared) const {
         FrameTargets out;
 
         auto fillFromTasks = [&](const std::vector<IkTaskEntry>& tasks) {
@@ -328,12 +328,11 @@ namespace gmr {
                     continue;
                 }
                 const auto [targetPos, targetRot] = retarget_internal::applyBodyOffset(
-                    bodyIt->second.position, bodyIt->second.orientation, taskPosOffset(task, ikConfig_.groundHeight),
-                    task.rotOffset);
+                    bodyIt->second.position, bodyIt->second.orientation, taskPosOffset(task, ikConfig_.groundHeight), task.rotOffset);
                 FrameTaskTarget tgt;
-                tgt.bodyId     = bodyId;
-                tgt.targetPos  = targetPos;
-                tgt.targetRot  = targetRot;
+                tgt.bodyId    = bodyId;
+                tgt.targetPos = targetPos;
+                tgt.targetRot = targetRot;
                 tgt.targetRot.normalize();
                 out[bodyId] = tgt;
             }
@@ -363,7 +362,7 @@ namespace gmr {
 
     void BatchTrajectoryRetargeter::applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat,
                                                         double alpha) const {
-        mjModel* model = impl_->model.get();
+        mjModel* model    = impl_->model.get();
         const int nFrames = static_cast<int>(qWin.size());
         const int m       = static_cast<int>(optVidx_.size());
         std::vector<double> dq(model->nv, 0.0);
@@ -377,10 +376,9 @@ namespace gmr {
         }
     }
 
-    double BatchTrajectoryRetargeter::windowCost(
-        const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
-        const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
-        double anchorWeight) const {
+    double BatchTrajectoryRetargeter::windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
+                                                 const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
+                                                 double anchorWeight) const {
         const int nFrames = static_cast<int>(qWin.size());
         double cost       = 0.0;
         double fkCost     = 0.0;
@@ -411,10 +409,9 @@ namespace gmr {
                     continue;
                 }
                 const FrameTaskTarget& tgt = tgtIt->second;
-                const double* xpos = &data->xpos[3 * entry.bodyId];
+                const double* xpos         = &data->xpos[3 * entry.bodyId];
                 if (entry.posWeight > 0.0) {
-                    const Eigen::Vector3d e(xpos[0] - tgt.targetPos.x(), xpos[1] - tgt.targetPos.y(),
-                                            xpos[2] - tgt.targetPos.z());
+                    const Eigen::Vector3d e(xpos[0] - tgt.targetPos.x(), xpos[1] - tgt.targetPos.y(), xpos[2] - tgt.targetPos.z());
                     fkCost += entry.posWeight * e.squaredNorm();
                 }
                 if (entry.rotWeight > 0.0) {
@@ -463,14 +460,13 @@ namespace gmr {
 
         if (!footActive) {
             if (config_.verbose && frameOffset == 0) {
-                std::cerr << "[batch-to-cpp] windowCost breakdown fk=" << fkCost << " vel=" << velCost
-                          << " acc=" << accCost << " foot=" << footCost << " total=" << cost << "\n";
+                std::cerr << "[batch-to-cpp] windowCost breakdown fk=" << fkCost << " vel=" << velCost << " acc=" << accCost
+                          << " foot=" << footCost << " total=" << cost << "\n";
             }
             return cost;
         }
 
-        const bool useGlobalRefFoot =
-            config_.wFootIkAnchor > 0.0 && !globalRefFootPos_.empty() && !qRef.empty();
+        const bool useGlobalRefFoot = config_.wFootIkAnchor > 0.0 && !globalRefFootPos_.empty() && !qRef.empty();
 
         for (int t = 0; t < nFrames; ++t) {
             const int tAbs = t + frameOffset;
@@ -499,8 +495,7 @@ namespace gmr {
 
             bool anyContact = false;
             if (!globalRefContact_.empty() && tAbs < static_cast<int>(globalRefContact_.size())) {
-                anyContact = std::any_of(globalRefContact_[tAbs].begin(), globalRefContact_[tAbs].end(),
-                                         [](bool v) { return v; });
+                anyContact = std::any_of(globalRefContact_[tAbs].begin(), globalRefContact_[tAbs].end(), [](bool v) { return v; });
             } else if (globalRefContact_.empty()) {
                 anyContact = true;
             }
@@ -522,8 +517,7 @@ namespace gmr {
                     bool both = true;
                     if (!globalRefContact_.empty()) {
                         const int tPrevAbs = t - 1 + frameOffset;
-                        if (tAbs >= static_cast<int>(globalRefContact_.size()) ||
-                            tPrevAbs >= static_cast<int>(globalRefContact_.size())) {
+                        if (tAbs >= static_cast<int>(globalRefContact_.size()) || tPrevAbs >= static_cast<int>(globalRefContact_.size())) {
                             both = false;
                         } else {
                             both = globalRefContact_[tAbs][f] && globalRefContact_[tPrevAbs][f];
@@ -563,15 +557,14 @@ namespace gmr {
             mju_copy(data->qpos, qRef[t].data(), model->nq);
             mj_forward(model, data);
             for (int f = 0; f < nFeet; ++f) {
-                const double* xpos = &data->xpos[3 * footBodyIds_[f]];
+                const double* xpos      = &data->xpos[3 * footBodyIds_[f]];
                 globalRefFootPos_[t][f] = Eigen::Vector3d(xpos[0], xpos[1], xpos[2]);
             }
         }
     }
 
-    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::bootstrapQ(const std::vector<HumanFrame>& humanFrames,
-                                                                       Retargeter& retargeter, bool offsetToGround,
-                                                                       const BatchIkBootstrapContext* ikBootstrap) {
+    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
+                                                                       bool offsetToGround, const BatchIkBootstrapContext* ikBootstrap) {
         if (!config_.qInitJsonPath.empty()) {
             return loadQInitFromJson(config_.qInitJsonPath, humanFrames.size());
         }
@@ -588,8 +581,7 @@ namespace gmr {
         }
 
 #if defined(_OPENMP)
-        const bool canParallel =
-            config_.parallelBootstrap && ikBootstrap != nullptr && n > 1;
+        const bool canParallel = config_.parallelBootstrap && ikBootstrap != nullptr && n > 1;
         if (canParallel) {
             const int nThreads = config_.parallelThreads > 0 ? config_.parallelThreads : omp_get_max_threads();
             std::vector<std::unique_ptr<Retargeter>> workers(static_cast<std::size_t>(nThreads));
@@ -601,8 +593,7 @@ namespace gmr {
             for (int i = 0; i < n; ++i) {
                 const int tid = omp_get_thread_num();
                 qInit[static_cast<std::size_t>(i)] =
-                    workers[static_cast<std::size_t>(tid)]->retargetFrame(humanFrames[static_cast<std::size_t>(i)],
-                                                                          offsetToGround);
+                    workers[static_cast<std::size_t>(tid)]->retargetFrame(humanFrames[static_cast<std::size_t>(i)], offsetToGround);
             }
             return qInit;
         }
@@ -632,7 +623,7 @@ namespace gmr {
     }
 
     std::vector<std::vector<bool>> BatchTrajectoryRetargeter::batchContactMask(const std::vector<Eigen::VectorXd>& qRef) const {
-        const int nFeet = static_cast<int>(footBodyIds_.size());
+        const int nFeet   = static_cast<int>(footBodyIds_.size());
         const int nFrames = static_cast<int>(qRef.size());
         std::vector<std::vector<bool>> contact(nFrames, std::vector<bool>(nFeet, false));
         if (nFeet == 0 || nFrames == 0) {
@@ -662,8 +653,8 @@ namespace gmr {
         return contact;
     }
 
-    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeSlidingWindows(
-        const std::vector<Eigen::VectorXd>& qInit, const std::vector<FrameTargets>& targets) {
+    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeSlidingWindows(const std::vector<Eigen::VectorXd>& qInit,
+                                                                                   const std::vector<FrameTargets>& targets) {
         const int n = static_cast<int>(qInit.size());
         const int H = config_.windowSize;
 
@@ -697,8 +688,7 @@ namespace gmr {
                 anchorW = std::max(anchorW, config_.windowAnchorWeight);
             }
 
-            const std::vector<Eigen::VectorXd> qOpt =
-                optimizeGnWindow(qWin, tgtWin, qOut[start], refWin, start, anchorW);
+            const std::vector<Eigen::VectorXd> qOpt = optimizeGnWindow(qWin, tgtWin, qOut[start], refWin, start, anchorW);
 
             int commitEnd = start + config_.windowStride;
             if (wi == 0) {
@@ -714,10 +704,11 @@ namespace gmr {
         return qOut;
     }
 
-    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeGnWindow(
-        const std::vector<Eigen::VectorXd>& qInit, const std::vector<FrameTargets>& targets,
-        const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight,
-        const QpWindowOptions* qpOpts) {
+    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeGnWindow(const std::vector<Eigen::VectorXd>& qInit,
+                                                                             const std::vector<FrameTargets>& targets,
+                                                                             const Eigen::VectorXd& anchor,
+                                                                             const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
+                                                                             double anchorWeight, const QpWindowOptions* qpOpts) {
         std::vector<Eigen::VectorXd> qWin = qInit;
         const int nFrames                 = static_cast<int>(qWin.size());
         const int m                       = static_cast<int>(optVidx_.size());
@@ -732,9 +723,8 @@ namespace gmr {
         const bool footActive = config_.enableFootPenalties && !footBodyIds_.empty() &&
                                 (config_.wFootHeight > 0.0 || config_.wFootSlip > 0.0 || config_.wFootIkAnchor > 0.0 ||
                                  config_.wRootXyContact > 0.0 || config_.wContactJointAnchor > 0.0);
-        const int nFeet = static_cast<int>(footBodyIds_.size());
-        const bool useGlobalRefFoot =
-            config_.wFootIkAnchor > 0.0 && !globalRefFootPos_.empty() && !qRef.empty();
+        const int nFeet             = static_cast<int>(footBodyIds_.size());
+        const bool useGlobalRefFoot = config_.wFootIkAnchor > 0.0 && !globalRefFootPos_.empty() && !qRef.empty();
 
         const bool logCost = config_.verbose;
         double costBefore  = 0.0;
@@ -750,7 +740,7 @@ namespace gmr {
                 mju_copy(data->qpos, qWin[t].data(), model->nq);
                 mj_forward(model, data);
                 const int off = t * m;
-                const int nv    = model->nv;
+                const int nv  = model->nv;
 
                 for (const auto& entry : trackEntries_) {
                     auto tgtIt = targets[t].find(entry.bodyId);
@@ -758,7 +748,7 @@ namespace gmr {
                         continue;
                     }
                     const FrameTaskTarget& tgt = tgtIt->second;
-                    const double* xpos = &data->xpos[3 * entry.bodyId];
+                    const double* xpos         = &data->xpos[3 * entry.bodyId];
                     Eigen::Vector3d bodyPos(xpos[0], xpos[1], xpos[2]);
 
                     if (entry.posWeight > 0.0) {
@@ -791,17 +781,17 @@ namespace gmr {
 
                 if (footActive) {
                     for (int f = 0; f < nFeet; ++f) {
-                        const int bid = footBodyIds_[f];
+                        const int bid      = footBodyIds_[f];
                         const double* fpos = &data->xpos[3 * bid];
-                        ws.footPos[t][f] = Eigen::Vector3d(fpos[0], fpos[1], fpos[2]);
+                        ws.footPos[t][f]   = Eigen::Vector3d(fpos[0], fpos[1], fpos[2]);
                         mj_jac(model, data, ws.jacp.data(), nullptr, fpos, bid);
                         Eigen::MatrixXd Jxy(2, m);
                         Eigen::RowVectorXd Jz(m);
                         for (int col = 0; col < m; ++col) {
                             const Eigen::Vector3d jcol = mjJacColumn(ws.jacp.data(), nv, optVidx_[col]);
-                            Jxy(0, col) = jcol.x();
-                            Jxy(1, col) = jcol.y();
-                            Jz(col)     = jcol.z();
+                            Jxy(0, col)                = jcol.x();
+                            Jxy(1, col)                = jcol.y();
+                            Jz(col)                    = jcol.z();
                         }
                         ws.footJxy[t][f] = Jxy;
                         ws.footJz[t][f]  = Jz;
@@ -811,8 +801,8 @@ namespace gmr {
 
             if (anchorWeight > 0.0) {
                 for (int vi = 0; vi < m; ++vi) {
-                    const int v    = optVidx_[vi];
-                    const int qadr = model->jnt_qposadr[model->dof_jntid[v]];
+                    const int v      = optVidx_[vi];
+                    const int qadr   = model->jnt_qposadr[model->dof_jntid[v]];
                     const double err = qWin[0][qadr] - anchor[qadr];
                     ws.Hdense(vi, vi) += anchorWeight;
                     ws.g[vi] += anchorWeight * err;
@@ -882,7 +872,7 @@ namespace gmr {
                         }
 
                         if (config_.wFootHeight > 0.0) {
-                            const double err = ws.footPos[t][f].z() - groundZ_;
+                            const double err             = ws.footPos[t][f].z() - groundZ_;
                             const Eigen::RowVectorXd& Jz = ws.footJz[t][f];
                             const double w               = config_.wFootHeight;
                             ws.Hdense.block(offT, offT, m, m).noalias() += w * Jz.transpose() * Jz;
@@ -890,10 +880,9 @@ namespace gmr {
                         }
 
                         if (useGlobalRefFoot && tAbs < static_cast<int>(globalRefFootPos_.size())) {
-                            const Eigen::Vector2d err =
-                                ws.footPos[t][f].head<2>() - globalRefFootPos_[tAbs][f].head<2>();
+                            const Eigen::Vector2d err  = ws.footPos[t][f].head<2>() - globalRefFootPos_[tAbs][f].head<2>();
                             const Eigen::MatrixXd& Jxy = ws.footJxy[t][f];
-                            const double w               = config_.wFootIkAnchor;
+                            const double w             = config_.wFootIkAnchor;
                             ws.Hdense.block(offT, offT, m, m).noalias() += w * Jxy.transpose() * Jxy;
                             ws.g.segment(offT, m).noalias() += w * Jxy.transpose() * err;
                         }
@@ -901,8 +890,7 @@ namespace gmr {
 
                     bool anyContact = false;
                     if (!globalRefContact_.empty() && tAbs < static_cast<int>(globalRefContact_.size())) {
-                        anyContact = std::any_of(globalRefContact_[tAbs].begin(), globalRefContact_[tAbs].end(),
-                                                 [](bool v) { return v; });
+                        anyContact = std::any_of(globalRefContact_[tAbs].begin(), globalRefContact_[tAbs].end(), [](bool v) { return v; });
                     } else if (globalRefContact_.empty()) {
                         anyContact = true;
                     }
@@ -913,9 +901,9 @@ namespace gmr {
                             if (it == qToOptV_.end()) {
                                 continue;
                             }
-                            const int vi   = it->second;
+                            const int vi     = it->second;
                             const double err = qWin[t][qadr] - qRef[t][qadr];
-                            const double w     = config_.wRootXyContact;
+                            const double w   = config_.wRootXyContact;
                             ws.Hdense(offT + vi, offT + vi) += w;
                             ws.g[offT + vi] += w * err;
                         }
@@ -923,8 +911,8 @@ namespace gmr {
 
                     if (config_.wContactJointAnchor > 0.0 && anyContact) {
                         for (std::size_t k = 0; k < smoothV_.size(); ++k) {
-                            const int vi   = smoothV_[k];
-                            const int qadr = smoothQ_[k];
+                            const int vi     = smoothV_[k];
+                            const int qadr   = smoothQ_[k];
                             const double err = qWin[t][qadr] - qRef[t][qadr];
                             const double w   = config_.wContactJointAnchor;
                             ws.Hdense(offT + vi, offT + vi) += w;
@@ -948,10 +936,10 @@ namespace gmr {
                                 continue;
                             }
                             const Eigen::Vector2d err = ws.footPos[t][f].head<2>() - ws.footPos[t - 1][f].head<2>();
-                            const int offPrev           = (t - 1) * m;
-                            const Eigen::MatrixXd& Jt   = ws.footJxy[t][f];
-                            const Eigen::MatrixXd& Jp   = ws.footJxy[t - 1][f];
-                            const double w              = config_.wFootSlip;
+                            const int offPrev         = (t - 1) * m;
+                            const Eigen::MatrixXd& Jt = ws.footJxy[t][f];
+                            const Eigen::MatrixXd& Jp = ws.footJxy[t - 1][f];
+                            const double w            = config_.wFootSlip;
                             ws.Hdense.block(offT, offT, m, m).noalias() += w * Jt.transpose() * Jt;
                             ws.Hdense.block(offPrev, offPrev, m, m).noalias() += w * Jp.transpose() * Jp;
                             ws.Hdense.block(offT, offPrev, m, m).noalias() -= w * Jt.transpose() * Jp;
@@ -994,8 +982,8 @@ namespace gmr {
                 std::vector<HingePair> hingePairs;
                 hingePairs.reserve(static_cast<std::size_t>(m));
                 for (int vi = 0; vi < m; ++vi) {
-                    const int v = optVidx_[vi];
-                    const int j = model->dof_jntid[v];
+                    const int v     = optVidx_[vi];
+                    const int j     = model->dof_jntid[v];
                     const int jtype = model->jnt_type[j];
                     if (jtype == mjJNT_HINGE || jtype == mjJNT_SLIDE) {
                         hingePairs.push_back(HingePair{vi, model->jnt_qposadr[j]});
@@ -1010,9 +998,9 @@ namespace gmr {
                             if (model->jnt_limited[j] <= 0) {
                                 continue;
                             }
-                            const double qmin = model->jnt_range[2 * j + 0];
-                            const double qmax = model->jnt_range[2 * j + 1];
-                            const double q0   = qWin[t][hp.qadr];
+                            const double qmin   = model->jnt_range[2 * j + 0];
+                            const double qmax   = model->jnt_range[2 * j + 1];
+                            const double q0     = qWin[t][hp.qadr];
                             lb[off + hp.localV] = std::max(lb[off + hp.localV], qmin - q0);
                             ub[off + hp.localV] = std::min(ub[off + hp.localV], qmax - q0);
                         }
@@ -1037,9 +1025,9 @@ namespace gmr {
                                 if (qpOpts->qPrev == nullptr) {
                                     continue;
                                 }
-                                const double base = qWin[0][hp.qadr] - (*qpOpts->qPrev)[hp.qadr];
-                                Eigen::VectorXd rowP = Eigen::VectorXd::Zero(nvar);
-                                Eigen::VectorXd rowM = Eigen::VectorXd::Zero(nvar);
+                                const double base     = qWin[0][hp.qadr] - (*qpOpts->qPrev)[hp.qadr];
+                                Eigen::VectorXd rowP  = Eigen::VectorXd::Zero(nvar);
+                                Eigen::VectorXd rowM  = Eigen::VectorXd::Zero(nvar);
                                 rowP[off + hp.localV] = 1.0;
                                 rowM[off + hp.localV] = -1.0;
                                 gRows.push_back(rowP);
@@ -1047,10 +1035,10 @@ namespace gmr {
                                 gRows.push_back(rowM);
                                 hVals.push_back(dqLim + base);
                             } else {
-                                const int offM = (t - 1) * m;
-                                const double base = qWin[t][hp.qadr] - qWin[t - 1][hp.qadr];
-                                Eigen::VectorXd rowP = Eigen::VectorXd::Zero(nvar);
-                                Eigen::VectorXd rowM = Eigen::VectorXd::Zero(nvar);
+                                const int offM         = (t - 1) * m;
+                                const double base      = qWin[t][hp.qadr] - qWin[t - 1][hp.qadr];
+                                Eigen::VectorXd rowP   = Eigen::VectorXd::Zero(nvar);
+                                Eigen::VectorXd rowM   = Eigen::VectorXd::Zero(nvar);
                                 rowP[off + hp.localV]  = 1.0;
                                 rowP[offM + hp.localV] = -1.0;
                                 rowM[off + hp.localV]  = -1.0;
@@ -1064,17 +1052,17 @@ namespace gmr {
                     }
                 }
 
-                const int nBox = nvar;
-                const int nVel = static_cast<int>(gRows.size());
+                const int nBox  = nvar;
+                const int nVel  = static_cast<int>(gRows.size());
                 const int nIneq = nBox + nVel;
                 gmr::solver::QPData qp;
                 qp.reset(nvar, nIneq);
                 qp.H = Hreg;
                 qp.g = ws.g;
                 for (int i = 0; i < nvar; ++i) {
-                    qp.CI(i, i)  = 1.0;
-                    qp.ciLb[i]   = lb[i];
-                    qp.ciUb[i]   = ub[i];
+                    qp.CI(i, i) = 1.0;
+                    qp.ciLb[i]  = lb[i];
+                    qp.ciUb[i]  = ub[i];
                 }
                 for (int r = 0; r < nVel; ++r) {
                     qp.CI.row(nBox + r) = gRows[static_cast<std::size_t>(r)].transpose();
@@ -1086,8 +1074,7 @@ namespace gmr {
                 try {
                     gmr::solver::QPSolver solver(qpOpts->qpBackend);
                     const gmr::solver::QPOutput& out = solver.solve(qp);
-                    if (out.status == gmr::solver::QPStatus::kOptimal ||
-                        out.status == gmr::solver::QPStatus::kMaxIterReached) {
+                    if (out.status == gmr::solver::QPStatus::kOptimal || out.status == gmr::solver::QPStatus::kMaxIterReached) {
                         ws.dqFlat = out.x;
                         qpOk      = true;
                     }
@@ -1117,8 +1104,7 @@ namespace gmr {
 
             ws.dqFlat = ws.dqFlat.cwiseMax(-config_.gnMaxStep).cwiseMin(config_.gnMaxStep);
 
-            const std::vector<double>& alphas =
-                config_.gnLineSearchAlphas.empty() ? std::vector<double>{1.0} : config_.gnLineSearchAlphas;
+            const std::vector<double>& alphas = config_.gnLineSearchAlphas.empty() ? std::vector<double>{1.0} : config_.gnLineSearchAlphas;
 
             if (alphas.size() == 1) {
                 applyGnStepToWindow(qWin, ws.dqFlat, alphas.front());
@@ -1128,8 +1114,7 @@ namespace gmr {
                 for (double alpha : alphas) {
                     std::vector<Eigen::VectorXd> trial = qWin;
                     applyGnStepToWindow(trial, ws.dqFlat, alpha);
-                    const double trialCost =
-                        windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight);
+                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight);
                     if (trialCost < cost0) {
                         qWin     = trial;
                         improved = true;
@@ -1141,12 +1126,11 @@ namespace gmr {
                 }
             } else {
                 std::vector<Eigen::VectorXd> bestQ = qWin;
-                double bestCost = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
+                double bestCost                    = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
                 for (double alpha : alphas) {
                     std::vector<Eigen::VectorXd> trial = qWin;
                     applyGnStepToWindow(trial, ws.dqFlat, alpha);
-                    const double trialCost =
-                        windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight);
+                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight);
                     if (trialCost < bestCost) {
                         bestCost = trialCost;
                         bestQ    = trial;
@@ -1158,21 +1142,20 @@ namespace gmr {
 
         if (logCost) {
             const double costAfter = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
-            std::cerr << "[batch-to-cpp] GN window offset=" << frameOffset << " frames=" << nFrames
-                      << " cost " << costBefore << " -> " << costAfter << " track=" << trackEntries_.size()
-                      << " targets0=" << (targets.empty() ? 0 : targets.front().size())
-                      << " smoothV=" << smoothV_.size() << " smoothQ=" << smoothQ_.size()
-                      << " footBodies=" << footBodyIds_.size()
+            std::cerr << "[batch-to-cpp] GN window offset=" << frameOffset << " frames=" << nFrames << " cost " << costBefore << " -> "
+                      << costAfter << " track=" << trackEntries_.size() << " targets0=" << (targets.empty() ? 0 : targets.front().size())
+                      << " smoothV=" << smoothV_.size() << " smoothQ=" << smoothQ_.size() << " footBodies=" << footBodyIds_.size()
                       << " refContact=" << globalRefContact_.size() << "\n";
         }
 
         return qWin;
     }
 
-    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeQpWindow(
-        const std::vector<Eigen::VectorXd>& qInit, const std::vector<FrameTargets>& targets,
-        const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight,
-        const QpWindowOptions& qpOpts) {
+    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeQpWindow(const std::vector<Eigen::VectorXd>& qInit,
+                                                                             const std::vector<FrameTargets>& targets,
+                                                                             const Eigen::VectorXd& anchor,
+                                                                             const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
+                                                                             double anchorWeight, const QpWindowOptions& qpOpts) {
         return optimizeGnWindow(qInit, targets, anchor, qRef, frameOffset, anchorWeight, &qpOpts);
     }
 
@@ -1190,8 +1173,8 @@ namespace gmr {
         buildGlobalRefFootPos(qRef);
     }
 
-    Eigen::VectorXd BatchTrajectoryRetargeter::finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter,
-                                                            const HumanFrame& prepared, bool offsetToGround) {
+    Eigen::VectorXd BatchTrajectoryRetargeter::finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared,
+                                                            bool offsetToGround) {
         (void)prepared;
         (void)offsetToGround;
         retargeter.setQpos(qpos);
@@ -1234,7 +1217,7 @@ namespace gmr {
         }
         lastProfile_.prepareMs = elapsedMs(t0);
 
-        t0 = Clock::now();
+        t0                                 = Clock::now();
         std::vector<Eigen::VectorXd> qInit = bootstrapQ(humanFrames, retargeter, offsetToGround, ikBootstrap);
         lastProfile_.bootstrapMs           = elapsedMs(t0);
 
@@ -1245,19 +1228,18 @@ namespace gmr {
         }
         buildGlobalRefFootPos(qInit);
 
-        t0 = Clock::now();
+        t0                                = Clock::now();
         std::vector<Eigen::VectorXd> qOpt = optimizeSlidingWindows(qInit, targets);
-        lastProfile_.optimizeMs            = elapsedMs(t0);
+        lastProfile_.optimizeMs           = elapsedMs(t0);
 
         t0 = Clock::now();
         std::vector<Eigen::VectorXd> qOut;
         qOut.resize(qOpt.size());
 
 #if defined(_OPENMP)
-        const bool canParallelFinalize =
-            config_.parallelFinalize && ikBootstrap != nullptr && static_cast<int>(qOpt.size()) > 1;
+        const bool canParallelFinalize = config_.parallelFinalize && ikBootstrap != nullptr && static_cast<int>(qOpt.size()) > 1;
         if (canParallelFinalize) {
-            const int n = static_cast<int>(qOpt.size());
+            const int n        = static_cast<int>(qOpt.size());
             const int nThreads = config_.parallelThreads > 0 ? config_.parallelThreads : omp_get_max_threads();
             std::vector<std::unique_ptr<Retargeter>> workers(static_cast<std::size_t>(nThreads));
             for (int t = 0; t < nThreads; ++t) {

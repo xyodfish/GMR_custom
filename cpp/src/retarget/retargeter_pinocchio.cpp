@@ -2,16 +2,21 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 
 #include <pinocchio/algorithm/frames.hpp>
+#include <pinocchio/algorithm/geometry.hpp>
 #include <pinocchio/algorithm/jacobian.hpp>
 #include <pinocchio/algorithm/joint-configuration.hpp>
 #include <pinocchio/algorithm/kinematics.hpp>
+#include <pinocchio/collision/distance.hpp>
+#include <pinocchio/collision/fcl-pinocchio-conversions.hpp>
 #include <pinocchio/parsers/mjcf.hpp>
 #include <pinocchio/parsers/urdf.hpp>
 #include <pinocchio/spatial/explog.hpp>
@@ -148,6 +153,9 @@ namespace gmr {
     struct PinocchioRetargetBackend::Impl {
         pinocchio::Model model;
         std::unique_ptr<pinocchio::Data> data;
+        pinocchio::GeometryModel geomModel;
+        std::unique_ptr<pinocchio::GeometryData> geomData;
+        bool hasCollisionGeometry = false;
 
         IkConfig ikConfig;
         RetargetOptions options;
@@ -162,6 +170,14 @@ namespace gmr {
         Eigen::VectorXd qvel;
 
         std::unique_ptr<ContactGroundPipeline> contactGround;
+        std::vector<pinocchio::FrameIndex> penetrationFootFrames;
+        std::vector<pinocchio::FrameIndex> penetrationTrunkFrames;
+        std::vector<pinocchio::FrameIndex> penetrationGroundFrames;
+        std::vector<pinocchio::FrameIndex> penetrationLyingFrames;
+        std::vector<pinocchio::GeomIndex> penetrationFootGeoms;
+        std::vector<pinocchio::GeomIndex> penetrationTrunkGeoms;
+        std::vector<pinocchio::GeomIndex> penetrationGroundGeoms;
+        std::vector<pinocchio::GeomIndex> penetrationLyingGeoms;
 
         Impl(const std::filesystem::path& robotModelPath, IkConfig ikConfigIn, RetargetOptions optionsIn)
             : ikConfig(std::move(ikConfigIn)), options(std::move(optionsIn)) {
@@ -169,6 +185,8 @@ namespace gmr {
             try {
                 if (extension == ".urdf") {
                     pinocchio::urdf::buildModel(robotModelPath.string(), pinocchio::JointModelFreeFlyer(), model);
+                    pinocchio::urdf::buildGeom(model, robotModelPath.string(), pinocchio::GeometryType::COLLISION, geomModel);
+                    hasCollisionGeometry = (geomModel.ngeoms > 0);
                 } else if (extension == ".xml" || extension == ".mjcf") {
                     buildSanitizedMjcfModel(robotModelPath, &model);
                 } else {
@@ -183,6 +201,9 @@ namespace gmr {
             }
 
             data             = std::make_unique<pinocchio::Data>(model);
+            if (hasCollisionGeometry) {
+                geomData = std::make_unique<pinocchio::GeometryData>(geomModel);
+            }
             hasRootFreeFlyer = (model.njoints > 1 && model.joints[1].nq() == 7 && model.joints[1].nv() == 6);
 
             for (pinocchio::JointIndex jointId = 1; jointId < model.njoints; ++jointId) {
@@ -229,9 +250,256 @@ namespace gmr {
 
             if (options.contactGround.enabled) {
                 contactGround = std::make_unique<ContactGroundPipeline>(options.contactGround, nullptr, options.motionFps);
+                resolvePenetrationFrames();
+                resolvePenetrationGeoms();
             }
 
             syncDataFromQpos();
+        }
+
+        void resolvePenetrationFrames() {
+            auto resolveNames = [this](const std::vector<std::string>& names, std::vector<pinocchio::FrameIndex>* out) {
+                out->clear();
+                out->reserve(names.size());
+                for (const auto& name : names) {
+                    try {
+                        out->push_back(resolveTaskFrameId(model, name).first);
+                    } catch (const std::exception&) {
+                        // Skip bodies missing from the Pinocchio/URDF model.
+                    }
+                }
+                std::sort(out->begin(), out->end());
+                out->erase(std::unique(out->begin(), out->end()), out->end());
+            };
+
+            const auto& cfg = options.contactGround;
+            resolveNames(cfg.robotFootBodies, &penetrationFootFrames);
+            resolveNames(cfg.robotTrunkBodies, &penetrationTrunkFrames);
+
+            penetrationGroundFrames = penetrationFootFrames;
+            penetrationGroundFrames.insert(penetrationGroundFrames.end(), penetrationTrunkFrames.begin(),
+                                           penetrationTrunkFrames.end());
+            std::sort(penetrationGroundFrames.begin(), penetrationGroundFrames.end());
+            penetrationGroundFrames.erase(std::unique(penetrationGroundFrames.begin(), penetrationGroundFrames.end()),
+                                          penetrationGroundFrames.end());
+
+            std::vector<pinocchio::FrameIndex> legFrames;
+            std::vector<pinocchio::FrameIndex> armFrames;
+            resolveNames(cfg.robotLegBodies, &legFrames);
+            resolveNames(cfg.robotArmBodies, &armFrames);
+            penetrationLyingFrames = penetrationGroundFrames;
+            penetrationLyingFrames.insert(penetrationLyingFrames.end(), legFrames.begin(), legFrames.end());
+            penetrationLyingFrames.insert(penetrationLyingFrames.end(), armFrames.begin(), armFrames.end());
+            std::sort(penetrationLyingFrames.begin(), penetrationLyingFrames.end());
+            penetrationLyingFrames.erase(std::unique(penetrationLyingFrames.begin(), penetrationLyingFrames.end()),
+                                         penetrationLyingFrames.end());
+        }
+
+        const std::vector<pinocchio::FrameIndex>& activePenetrationFrames() const {
+            if (!contactGround) {
+                static const std::vector<pinocchio::FrameIndex> kEmpty;
+                return kEmpty;
+            }
+            if (contactGround->isLowPose()) {
+                return penetrationLyingFrames;
+            }
+            if (contactGround->config().footGroundLimitEnabled &&
+                contactGround->config().penetrationExcludeFeetWhenFootLimit) {
+                return penetrationTrunkFrames;
+            }
+            return penetrationGroundFrames;
+        }
+
+        void resolvePenetrationGeoms() {
+            auto resolveGeomByBodyNames = [this](const std::vector<std::string>& bodyNames,
+                                                 std::vector<pinocchio::GeomIndex>* out) {
+                out->clear();
+                if (!hasCollisionGeometry) {
+                    return;
+                }
+                std::vector<pinocchio::JointIndex> rootJoints;
+                rootJoints.reserve(bodyNames.size());
+                for (const auto& name : bodyNames) {
+                    try {
+                        const pinocchio::FrameIndex frameId = resolveTaskFrameId(model, name).first;
+                        rootJoints.push_back(model.frames[frameId].parentJoint);
+                    } catch (const std::exception&) {
+                    }
+                }
+                std::sort(rootJoints.begin(), rootJoints.end());
+                rootJoints.erase(std::unique(rootJoints.begin(), rootJoints.end()), rootJoints.end());
+
+                for (pinocchio::GeomIndex gid = 0; gid < geomModel.ngeoms; ++gid) {
+                    const auto& go = geomModel.geometryObjects[gid];
+                    for (pinocchio::JointIndex rootJoint : rootJoints) {
+                        if (isJointInSubtree(go.parentJoint, rootJoint)) {
+                            out->push_back(gid);
+                            break;
+                        }
+                    }
+                }
+                std::sort(out->begin(), out->end());
+                out->erase(std::unique(out->begin(), out->end()), out->end());
+            };
+
+            const auto& cfg = options.contactGround;
+            resolveGeomByBodyNames(cfg.robotFootBodies, &penetrationFootGeoms);
+            resolveGeomByBodyNames(cfg.robotTrunkBodies, &penetrationTrunkGeoms);
+            for (const auto& geomName : cfg.footCollisionGeoms) {
+                for (pinocchio::GeomIndex gid = 0; gid < geomModel.ngeoms; ++gid) {
+                    if (geomModel.geometryObjects[gid].name == geomName) {
+                        penetrationFootGeoms.push_back(gid);
+                    }
+                }
+            }
+            std::sort(penetrationFootGeoms.begin(), penetrationFootGeoms.end());
+            penetrationFootGeoms.erase(std::unique(penetrationFootGeoms.begin(), penetrationFootGeoms.end()),
+                                       penetrationFootGeoms.end());
+
+            penetrationGroundGeoms = penetrationFootGeoms;
+            penetrationGroundGeoms.insert(penetrationGroundGeoms.end(), penetrationTrunkGeoms.begin(), penetrationTrunkGeoms.end());
+            std::sort(penetrationGroundGeoms.begin(), penetrationGroundGeoms.end());
+            penetrationGroundGeoms.erase(std::unique(penetrationGroundGeoms.begin(), penetrationGroundGeoms.end()),
+                                         penetrationGroundGeoms.end());
+
+            std::vector<pinocchio::GeomIndex> legGeoms;
+            std::vector<pinocchio::GeomIndex> armGeoms;
+            resolveGeomByBodyNames(cfg.robotLegBodies, &legGeoms);
+            resolveGeomByBodyNames(cfg.robotArmBodies, &armGeoms);
+            penetrationLyingGeoms = penetrationGroundGeoms;
+            penetrationLyingGeoms.insert(penetrationLyingGeoms.end(), legGeoms.begin(), legGeoms.end());
+            penetrationLyingGeoms.insert(penetrationLyingGeoms.end(), armGeoms.begin(), armGeoms.end());
+            std::sort(penetrationLyingGeoms.begin(), penetrationLyingGeoms.end());
+            penetrationLyingGeoms.erase(std::unique(penetrationLyingGeoms.begin(), penetrationLyingGeoms.end()),
+                                        penetrationLyingGeoms.end());
+        }
+
+        const std::vector<pinocchio::GeomIndex>& activePenetrationGeoms() const {
+            if (!contactGround) {
+                static const std::vector<pinocchio::GeomIndex> kEmpty;
+                return kEmpty;
+            }
+            if (contactGround->isLowPose()) {
+                return penetrationLyingGeoms;
+            }
+            if (contactGround->config().footGroundLimitEnabled &&
+                contactGround->config().penetrationExcludeFeetWhenFootLimit) {
+                return penetrationTrunkGeoms;
+            }
+            return penetrationGroundGeoms;
+        }
+
+        bool useHppfclPenetration() const {
+            if (!contactGround) {
+                return false;
+            }
+            std::string mode = contactGround->config().pinocchioPenetrationMode;
+            std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return mode != "frame_z";
+        }
+
+        bool isJointInSubtree(pinocchio::JointIndex jointId, pinocchio::JointIndex rootJoint) const {
+            pinocchio::JointIndex cursor = jointId;
+            while (cursor > 0 && cursor < model.njoints) {
+                if (cursor == rootJoint) {
+                    return true;
+                }
+                cursor = model.parents[cursor];
+            }
+            return false;
+        }
+
+        double estimatePenetrationDepthHppfcl(const std::vector<pinocchio::GeomIndex>& geoms, double margin, double groundZ) {
+            if (!hasCollisionGeometry || !geomData || geoms.empty()) {
+                return 0.0;
+            }
+            hpp::fcl::Halfspace floorPlane(Eigen::Vector3d::UnitZ(), groundZ);
+            const hpp::fcl::Transform3f floorTf = hpp::fcl::Transform3f::Identity();
+            hpp::fcl::DistanceRequest req(true);
+            req.gjk_max_iterations     = 128;
+            double minDist             = std::numeric_limits<double>::infinity();
+            for (pinocchio::GeomIndex gid : geoms) {
+                if (gid >= geomModel.ngeoms) {
+                    continue;
+                }
+                const auto& go = geomModel.geometryObjects[gid];
+                if (!go.geometry) {
+                    continue;
+                }
+                hpp::fcl::DistanceResult out;
+                const hpp::fcl::Transform3f worldTf = pinocchio::toFclTransform3f(geomData->oMg[gid]);
+                const double dist = hpp::fcl::distance(go.geometry.get(), worldTf, &floorPlane, floorTf, req, out);
+                minDist           = std::min(minDist, dist);
+            }
+            if (!std::isfinite(minDist)) {
+                return 0.0;
+            }
+            return std::max(0.0, margin - minDist);
+        }
+
+        /// Pinocchio-only clearance: lift free-flyer z so monitored body frames clear groundZ+margin.
+        void finalizeRobotState() {
+            if (!contactGround || !contactGround->enabled() || !contactGround->config().fixRobotPenetration) {
+                if (contactGround) {
+                    contactGround->setLastRootLift(0.0);
+                }
+                return;
+            }
+            if (!hasRootFreeFlyer || qposPin.size() < 3) {
+                contactGround->setLastRootLift(0.0);
+                return;
+            }
+
+            const auto& frames = activePenetrationFrames();
+            const auto& geoms  = activePenetrationGeoms();
+            if (frames.empty() && geoms.empty()) {
+                contactGround->setLastRootLift(0.0);
+                return;
+            }
+
+            const double margin      = contactGround->activePenetrationMargin();
+            const double groundZ     = contactGround->config().groundZ;
+            const double footClear   = std::max(0.0, contactGround->config().pinocchioFootClearance);
+            const int iterations     = std::max(1, contactGround->config().penetrationMaxIterations);
+            double totalLift         = 0.0;
+
+            for (int iter = 0; iter < iterations; ++iter) {
+                syncDataFromQpos();
+                double depth = 0.0;
+                if (useHppfclPenetration() && !geoms.empty() && hasCollisionGeometry && geomData) {
+                    pinocchio::updateGeometryPlacements(model, *data, geomModel, *geomData);
+                    depth = estimatePenetrationDepthHppfcl(geoms, margin, groundZ);
+                } else {
+                    double minZ = std::numeric_limits<double>::infinity();
+                    for (pinocchio::FrameIndex frameId : frames) {
+                        if (frameId >= model.nframes) {
+                            continue;
+                        }
+                        double z = data->oMf[frameId].translation().z();
+                        // Foot body origins sit above the sole; clear by configured thickness.
+                        if (footClear > 0.0 &&
+                            std::binary_search(penetrationFootFrames.begin(), penetrationFootFrames.end(), frameId)) {
+                            z -= footClear;
+                        }
+                        minZ = std::min(minZ, z);
+                    }
+                    if (!std::isfinite(minZ)) {
+                        break;
+                    }
+                    depth = std::max(0.0, groundZ + margin - minZ);
+                }
+                if (depth <= 1e-9) {
+                    break;
+                }
+                qposPin[2] += depth;
+                totalLift += depth;
+            }
+            if (totalLift > 0.0) {
+                syncDataFromQpos();
+            } else {
+                qpos = pinocchioToMujocoQpos(qposPin);
+            }
+            contactGround->setLastRootLift(totalLift);
         }
 
         Eigen::VectorXd pinocchioToMujocoQpos(const Eigen::VectorXd& qPinIn) const {
@@ -463,6 +731,7 @@ namespace gmr {
         if (impl_->ikConfig.useTable2) {
             impl_->solveTaskSet(impl_->tasks2);
         }
+        impl_->finalizeRobotState();
         return impl_->qpos;
     }
 
@@ -488,7 +757,7 @@ namespace gmr {
         impl_->syncDataFromQpos();
     }
 
-    void PinocchioRetargetBackend::finalizeContact() {}
+    void PinocchioRetargetBackend::finalizeContact() { impl_->finalizeRobotState(); }
 
     const Eigen::VectorXd& PinocchioRetargetBackend::currentQpos() const { return impl_->qpos; }
 

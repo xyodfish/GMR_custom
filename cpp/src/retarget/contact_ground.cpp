@@ -128,10 +128,25 @@ namespace gmr {
             return std::min(1.0, std::max(1e-6, v));
         }
 
+        std::vector<std::string> mergeUniqueNames(std::vector<std::string> a, const std::vector<std::string>& b) {
+            a.insert(a.end(), b.begin(), b.end());
+            std::sort(a.begin(), a.end());
+            a.erase(std::unique(a.begin(), a.end()), a.end());
+            return a;
+        }
+
     }  // namespace
+
+    void ContactGroundPipeline::cachePenetrationBodyNames() {
+        trunkBodyNames_  = config_.robotTrunkBodies;
+        groundBodyNames_ = mergeUniqueNames(config_.robotFootBodies, config_.robotTrunkBodies);
+        lyingBodyNames_  = mergeUniqueNames(mergeUniqueNames(groundBodyNames_, config_.robotLegBodies), config_.robotArmBodies);
+    }
 
     ContactGroundPipeline::ContactGroundPipeline(ContactGroundConfig config, const mjModel* model, double fps)
         : config_(std::move(config)), model_(model), fps_(fps > 0.0 ? fps : 30.0) {
+        cachePenetrationBodyNames();
+        footPosBuf_.clear();
         if (!model_) {
             return;
         }
@@ -151,7 +166,6 @@ namespace gmr {
         groundGeomIds_                         = mergeUnique(footGeomIds_, trunkGeomIds_);
         lyingGroundGeomIds_                    = mergeUnique(mergeUnique(groundGeomIds_, legGeomIds_), armGeomIds_);
         floorGeomId_                           = mj_name2id(model_, mjOBJ_GEOM, config_.floorGeomName.c_str());
-        footPosBuf_.clear();
     }
 
     void ContactGroundPipeline::setFps(double fps) {
@@ -264,6 +278,20 @@ namespace gmr {
             return lastHumanHipZ_ <= config_.lowPoseMaxHipHeight;
         }
         return false;
+    }
+
+    double ContactGroundPipeline::activePenetrationMargin() const {
+        return isLowPose() ? config_.lyingPenetrationMargin : config_.penetrationMargin;
+    }
+
+    const std::vector<std::string>& ContactGroundPipeline::activePenetrationBodyNames() const {
+        if (isLowPose()) {
+            return lyingBodyNames_;
+        }
+        if (config_.footGroundLimitEnabled && config_.penetrationExcludeFeetWhenFootLimit) {
+            return trunkBodyNames_;
+        }
+        return groundBodyNames_;
     }
 
     std::pair<const std::vector<int>&, double> ContactGroundPipeline::penetrationTargets() const {

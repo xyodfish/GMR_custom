@@ -36,6 +36,10 @@ namespace gmr {
         double lowPoseMaxHipHeight = 0.65;
         double lyingPenetrationMargin = 0.02;
         int penetrationMaxIterations = 5;
+        /// Pinocchio penetration policy: "hppfcl" (preferred) or "frame_z" fallback.
+        std::string pinocchioPenetrationMode = "hppfcl";
+        /// Pinocchio frame-z path: subtract from foot body frame z (sole thickness proxy).
+        double pinocchioFootClearance = 0.0;
         double airborneHeightThreshold = 0.15;
         double airborneOffsetDecay = 1.0;
         std::string floorGeomName = "floor";
@@ -56,7 +60,15 @@ namespace gmr {
         HumanFrame processHumanFrame(const HumanFrame& humanData);
         double fixRobotPenetration(mjModel* model, mjData* data);
 
+        const ContactGroundConfig& config() const { return config_; }
+        bool isLowPose() const;
         double lastRootLift() const { return lastRootLift_; }
+        void setLastRootLift(double lift) { lastRootLift_ = lift; }
+
+        /// Margin used by the active penetration policy (standing vs low pose).
+        double activePenetrationMargin() const;
+        /// Body-name lists for Pinocchio frame-z clearance (no MuJoCo geoms).
+        const std::vector<std::string>& activePenetrationBodyNames() const;
 
        private:
         ContactGroundConfig config_;
@@ -71,6 +83,11 @@ namespace gmr {
         std::vector<int> lyingGroundGeomIds_;
         int floorGeomId_ = -1;
 
+        // Cached name lists mirroring geom policy (for Pinocchio finalize).
+        std::vector<std::string> groundBodyNames_;
+        std::vector<std::string> trunkBodyNames_;
+        std::vector<std::string> lyingBodyNames_;
+
         std::deque<std::unordered_map<std::string, Eigen::Vector3d>> footPosBuf_;
         std::unordered_map<std::string, bool> lastContacts_;
         std::unordered_map<std::string, Eigen::Vector3d> lockedFeet_;
@@ -79,8 +96,8 @@ namespace gmr {
         double lastMinFootZ_ = std::numeric_limits<double>::infinity();
         double lastRootLift_ = 0.0;
 
-        bool isLowPose() const;
         std::pair<const std::vector<int>&, double> penetrationTargets() const;
+        void cachePenetrationBodyNames();
     };
 
 }  // namespace gmr

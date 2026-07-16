@@ -161,6 +161,7 @@ G1 使用共享 preset 启用：
 | `low_pose_max_hip_height` | `0.65` | 脚触地时允许进入低姿态的最大髋高 |
 | `lying_penetration_margin` | `0.02` | 低姿态模式安全距离（m） |
 | `penetration_max_iterations` | `5` | 每帧 root 抬升最大迭代次数 |
+| `pinocchio_foot_clearance` | `0.0`（G1: `0.05`） | `pin_ik` 脚部 body frame 相对脚底的近似厚度（m） |
 | `floor_geom_name` | `"floor"` | MuJoCo 地面 geom 名称 |
 | `robot_foot_bodies` | 按机器人 | 脚部 link 根节点；会包含其子树 geom |
 | `robot_trunk_bodies` | 按机器人 | 骨盆 / 躯干 link，用于背部穿透 |
@@ -253,21 +254,22 @@ python scripts/analysis/stitch_videos_side_by_side.py \
 
 ## 穿透算法细节
 
-`contact_ground.py` 中的 `fix_robot_ground_penetration()`：
+`contact_ground.py` / C++ MuJoCo 路径中的 `fix_robot_ground_penetration()`：
 
 1. 选择 geom 集合：
    - **正常模式**：`robot_foot_bodies` + `robot_trunk_bodies` 的 geom
-   - **躺姿模式**（人体髋 Z ≤ `lying_hip_height_threshold`）：额外加入 `robot_leg_bodies` 的 geom，并使用 `lying_penetration_margin`
-2. 对每个被监控 geom 计算 `mj_geomDistance(geom, floor_geom)`。
+   - **躺姿 / 低姿态模式**：额外加入 `robot_leg_bodies` + `robot_arm_bodies`，并使用 `lying_penetration_margin`
+2. 对每个被监控 geom 计算 `mj_geomDistance(geom, floor_geom)`（无 floor 时用 geom 最低 z）。
 3. 若距离 < margin，则抬升量 = `margin - distance`。
 4. 执行 `data.qpos[2] += lift`（最多重复 `penetration_max_iterations` 次）。
+
+**C++ `pin_ik`（无 MuJoCo）**：用 Pinocchio FK 取配置 body 对应 frame 的世界系 `z`，按同样 body 集合 / margin / 迭代策略抬升 free-flyer `qpos[2]`。脚部 frame 再减去 `pinocchio_foot_clearance`（sole 厚度近似，G1 默认 `0.05`），以弥补 ankle body 原点高于脚底 / 碰撞 geom。
 
 ## 已知限制
 
 - **形态差异**：人可以平躺在地，人形机器人往往需要较大 root 抬升。
 - **仅竖直修正**：不做水平平移，也不根据姿态调整 IK 权重。
-- **Mesh 与碰撞体**：距离基于 MuJoCo 碰撞 mesh / 凸包，与视觉 mesh 可能略有偏差。
-- **手臂**：未纳入监控，躺姿时手臂仍可能穿地。
+- **Mesh 与碰撞体**：MuJoCo 路径基于碰撞 mesh / 凸包；`pin_ik` 仅用 body frame 原点。
 - **按机器人调参**：preset 仅为起点，需在你的动作数据上验证。
 
 ## 变更记录（GMR_custom）
@@ -278,3 +280,4 @@ python scripts/analysis/stitch_videos_side_by_side.py \
 4. **机器人 preset**（`contact_ground_presets.json`）+ IK 覆盖合并，支持多机器人。
 5. **C++ 端口**：`ContactGroundPipeline` 接入四个 retarget 后端；MuJoCo 后端支持完整穿透修正。
 6. **全局高度漂移修复**：接触高度相对已估计地面 offset 计算，脚速仍使用原始轨迹；腾空时默认冻结 offset，避免短暂失联后持续浮空。
+7. **`pin_ik` frame-z 穿地抬根**：无 MuJoCo 时用 Pinocchio FK + 配置 body 列表实现 `finalizeContact`。
