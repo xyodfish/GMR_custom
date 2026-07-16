@@ -11,12 +11,9 @@ if not hasattr(np, "exceptions"):
 
 from .params import IK_CONFIG_ROOT, ASSET_ROOT, ROBOT_XML_DICT, IK_CONFIG_DICT, ROBOT_BASE_DICT, VIEWER_CAM_DISTANCE_DICT, PLANAR_BASE_ROBOTS
 from .motion_retarget import GeneralMotionRetargeting
-from .sliding_window_retarget import SlidingWindowConfig, SlidingWindowRetargeter
-from .trajectory_optimization_retarget import (
-    TrajectoryOptimizationConfig,
-    TrajectoryOptimizationRetargeter,
-)
 from .batch_trajectory_retarget import BatchTrajectoryConfig, BatchTrajectoryRetargeter
+from .online_batch_retarget import OnlineBatchConfig, OnlineBatchRetargeter
+from .online_qp_retarget import OnlineQpConfig, OnlineQpRetargeter
 from .batch_trajectory_retarget import (  # deprecated aliases
     ClipTrajectoryConfig,
     ClipTrajectoryRetargeter,

@@ -20,8 +20,8 @@
 
 #include "gmr/retarget/batch_trajectory_config.h"
 #include "gmr/retarget/batch_trajectory_retarget.h"
-#include "gmr/retarget/causal_trajectory_config.h"
-#include "gmr/retarget/causal_trajectory_retarget.h"
+#include "gmr/retarget/online_qp_config.h"
+#include "gmr/retarget/online_qp_retarget.h"
 #include "gmr/retarget/human_frame_io.h"
 #include "gmr/retarget/ik_config.h"
 #include "gmr/retarget/contact_ground_config.h"
@@ -34,7 +34,7 @@ struct ViewerConfig {
     std::string backend  = "pin_ik";
     std::string srcHuman = "smplx";
     std::string humanFrameJson;
-    std::string method = "ik";  // ik | batch_to | causal_to
+    std::string method = "ik";  // ik | batch_to | online_qp
     double actualHumanHeight = 0.0;
 
     double damping        = 0.5;
@@ -54,6 +54,9 @@ struct ViewerConfig {
     bool batchToFast        = false;
     int maxFrames           = 0;
     std::string outJson;
+
+    std::string onlineQpPreset = "anti_slip";
+    std::string onlineQpMode   = "lookahead";  // lookahead | causal
 
     int transparentRobot  = 0;
     bool showHumanOverlay = true;
@@ -326,6 +329,12 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     if (hasArg(argc, argv, "--method")) {
         config->method = getArg(argc, argv, "--method");
     }
+    if (hasArg(argc, argv, "--online_qp_preset")) {
+        config->onlineQpPreset = getArg(argc, argv, "--online_qp_preset");
+    }
+    if (hasArg(argc, argv, "--online_qp_mode")) {
+        config->onlineQpMode = getArg(argc, argv, "--online_qp_mode");
+    }
     if (hasArg(argc, argv, "--actual_human_height")) {
         config->actualHumanHeight = std::stod(getArg(argc, argv, "--actual_human_height"));
     }
@@ -466,8 +475,8 @@ void validateConfig(const ViewerConfig& config) {
             "Missing required fields: gmr_root, robot, human_frame_json. "
             "Pass --gmr_root . --robot unitree_g1 --human_frame_json <path>, or use --config.");
     }
-    if (config.method != "ik" && config.method != "batch_to" && config.method != "causal_to") {
-        throw std::runtime_error("Unknown --method (use ik, batch_to, or causal_to).");
+    if (config.method != "ik" && config.method != "batch_to" && config.method != "online_qp") {
+        throw std::runtime_error("Unknown --method (use ik, batch_to, or online_qp).");
     }
 }
 
@@ -638,7 +647,9 @@ void printUsage() {
               << " [--backend <pin_ik|mujoco_se3>]"
               << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
               << " [--human_frame_json <single_or_multi_frame_json>]"
-              << " [--method <ik|batch_to|causal_to>]"
+              << " [--method <ik|batch_to|online_qp>]"
+              << " [--online_qp_preset default|smooth|anti_slip]"
+              << " [--online_qp_mode lookahead|causal]"
               << " [--actual_human_height <float>]"
               << " [--damping <float>]"
               << " [--max_iter <int>]"
@@ -660,7 +671,7 @@ void printUsage() {
               << "Defaults: realtime=true (no precompute), loop=false, "
                  "show_human_overlay=true, method=ik.\n"
               << "batch_to: offline batch GN first, then playback (implies precompute; use mujoco_se3).\n"
-              << "causal_to: online causal FK GN per frame (implies realtime; use mujoco_se3).\n"
+              << "online_qp: stream C++ online QP-MPC per frame (implies realtime; use mujoco_se3).\n"
               << "CLI options override config file values.\n";
 }
 
@@ -712,15 +723,15 @@ int main(int argc, char** argv) {
             playSequence.frames.resize(static_cast<std::size_t>(config.maxFrames));
         }
 
-        const bool useBatchTo = (config.method == "batch_to");
-        const bool useCausalTo = (config.method == "causal_to");
-        if ((useBatchTo || useCausalTo) && backend != gmr::RetargetBackend::kMujoco) {
-            throw std::runtime_error("batch_to / causal_to viewer requires --backend mujoco_se3.");
+        const bool useBatchTo   = (config.method == "batch_to");
+        const bool useOnlineQp  = (config.method == "online_qp");
+        if ((useBatchTo || useOnlineQp) && backend != gmr::RetargetBackend::kMujoco) {
+            throw std::runtime_error("batch_to / online_qp viewer requires --backend mujoco_se3.");
         }
         if (useBatchTo) {
             config.realtime = false;
         }
-        if (useCausalTo) {
+        if (useOnlineQp) {
             config.realtime = true;
         }
 
@@ -729,14 +740,16 @@ int main(int argc, char** argv) {
             retargeter->setMotionFps(playSequence.fps);
         }
 
-        std::unique_ptr<gmr::CausalTrajectoryRetargeter> causalTo;
-        if (useCausalTo) {
-            gmr::CausalTrajectoryConfig causalCfg;
-            // Causal online path: light IK only (gnSteps=0). GN refine is experimental; Python default uses L-BFGS.
-            causalTo = std::make_unique<gmr::CausalTrajectoryRetargeter>(causalCfg);
+        std::unique_ptr<gmr::OnlineQpRetargeter> onlineQp;
+        if (useOnlineQp) {
+            gmr::OnlineQpConfig qpCfg = gmr::OnlineQpConfig::fromPresetName(config.onlineQpPreset);
+            qpCfg.useLookahead        = (config.onlineQpMode != "causal");
+            onlineQp                  = std::make_unique<gmr::OnlineQpRetargeter>(xmlPath, ikConfigCopy, qpCfg);
+            onlineQp->applyContactGroundConfig(opts.contactGround);
             if (playSequence.fps > 0.0) {
-                causalTo->setMotionFps(playSequence.fps);
+                onlineQp->setMotionFps(playSequence.fps);
             }
+            onlineQp->beginSequence(playSequence.frames, *retargeter, config.offsetToGround);
         }
 
         // Run expensive offline work before opening GLFW (avoids black/unresponsive window during batch GN).
@@ -879,25 +892,23 @@ int main(int argc, char** argv) {
         gmr::HumanFrame visualHumanFrame =
             retargeter->prepareHumanFrame(playSequence.frames.front(), config.offsetToGround);
 
-        if (config.realtime && !useCausalTo) {
+        if (config.realtime && !useOnlineQp) {
             retargeter->retargetFrame(playSequence.frames.front(), config.offsetToGround);
             syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
             if (playSequence.frames.size() > 1) {
                 frameIdx = 1;
             }
-        } else if (config.realtime && useCausalTo) {
-            retargeter->setQpos(causalTo->retargetFrame(playSequence.frames.front(), *retargeter, config.offsetToGround));
+        } else if (config.realtime && useOnlineQp) {
+            retargeter->setQpos(onlineQp->stepSequence(*retargeter));
             syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
-            if (playSequence.frames.size() > 1) {
-                frameIdx = 1;
-            }
+            frameIdx = 1;
         }
 
         const char* modeLabel = "precomputed IK";
         if (useBatchTo) {
             modeLabel = "batch_to";
-        } else if (useCausalTo) {
-            modeLabel = "causal_to";
+        } else if (useOnlineQp) {
+            modeLabel = "online_qp (streaming)";
         } else if (config.realtime) {
             modeLabel = "realtime IK";
         }
@@ -910,22 +921,33 @@ int main(int argc, char** argv) {
             auto now = std::chrono::steady_clock::now();
             if (config.realtime) {
                 while (now - lastStep >= frameDtDuration) {
+                    if (useOnlineQp) {
+                        if (onlineQp->sequenceDone()) {
+                            if (config.loop) {
+                                onlineQp->beginSequence(playSequence.frames, *retargeter, config.offsetToGround);
+                            } else {
+                                playbackFinished = true;
+                                break;
+                            }
+                        }
+                        visualHumanFrame =
+                            retargeter->prepareHumanFrame(playSequence.frames[static_cast<std::size_t>(
+                                                              std::min(onlineQp->frameIndex(),
+                                                                       static_cast<int>(playSequence.frames.size()) - 1))],
+                                                          config.offsetToGround);
+                        retargeter->setQpos(onlineQp->stepSequence(*retargeter));
+                        syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
+                        lastStep += frameDtDuration;
+                        continue;
+                    }
                     visualHumanFrame =
                         retargeter->prepareHumanFrame(playSequence.frames[frameIdx], config.offsetToGround);
-                    if (useCausalTo) {
-                        retargeter->setQpos(causalTo->retargetFrame(playSequence.frames[frameIdx], *retargeter,
-                                                                    config.offsetToGround));
-                    } else {
-                        retargeter->retargetFrame(playSequence.frames[frameIdx], config.offsetToGround);
-                    }
+                    retargeter->retargetFrame(playSequence.frames[frameIdx], config.offsetToGround);
                     syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
                     frameIdx++;
                     if (frameIdx >= playSequence.frames.size()) {
                         if (config.loop) {
                             frameIdx = 0;
-                            if (useCausalTo) {
-                                causalTo->reset();
-                            }
                         } else {
                             frameIdx         = playSequence.frames.size() - 1;
                             playbackFinished = true;

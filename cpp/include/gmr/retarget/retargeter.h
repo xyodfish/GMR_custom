@@ -9,7 +9,6 @@
 
 #include <Eigen/Geometry>
 
-#include "gmr/retarget/causal_trajectory_config.h"
 #include "gmr/retarget/human_frame_types.h"
 #include "gmr/retarget/ik_config.h"
 #include "gmr/retarget/contact_ground.h"
@@ -57,10 +56,6 @@ namespace gmr {
         virtual HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false)    = 0;
         /// Few IK iterations from current ``qpos`` (Python ``_light_ik_warmstart``).
         virtual Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) = 0;
-        /// Single-frame causal temporal refine (GN or L-BFGS; Python ``_optimize_single_frame``).
-        virtual Eigen::VectorXd optimizeCausalRefine(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
-                                                     const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
-                                                     const CausalRefineParams& params)                    = 0;
         virtual void setQpos(const Eigen::VectorXd& qpos)                                                     = 0;
         /// Apply contact-ground penetration fix on current qpos (no-op if disabled).
         virtual void finalizeContact()                                                                          = 0;
@@ -83,9 +78,6 @@ namespace gmr {
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
         HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false) override;
         Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) override;
-        Eigen::VectorXd optimizeCausalRefine(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
-                                             const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
-                                             const CausalRefineParams& params) override;
         void setQpos(const Eigen::VectorXd& qpos) override;
         void finalizeContact() override;
 
@@ -111,9 +103,6 @@ namespace gmr {
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
         HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false) override;
         Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) override;
-        Eigen::VectorXd optimizeCausalRefine(const HumanFrame& preparedHuman, const Eigen::VectorXd& qInit,
-                                             const Eigen::VectorXd& qPrev, const Eigen::VectorXd& qPrev2,
-                                             const CausalRefineParams& params) override;
         void setQpos(const Eigen::VectorXd& qpos) override;
         void finalizeContact() override;
 

@@ -4,14 +4,14 @@
 
 与仓库内其它 TO 路线的关系：
 
-| | 逐帧 IK | 因果 TO | Sliding Window | **Batch TO（本文）** |
-|--|---------|---------|----------------|---------------------|
-| 类 / 脚本 | `GeneralMotionRetargeting` | `TrajectoryOptimizationRetargeter` | `SlidingWindowRetargeter` | **`BatchTrajectoryRetargeter`** |
-| 时域 | 无 | 因果 H 帧 | 因果 H 帧 | **离线整段 motion，重叠滑窗** |
-| 每步优化变量 | 单帧 `q_t` | 窗口 `q_{t-H+1…t}` | fast: 单帧；full: 窗口 | **窗口 `q_{start…start+H-1}`** |
-| 求解器 | mink QP | GN / L-BFGS | GN / L-BFGS | **多帧 GN（默认）** |
-| 典型用途 | 实时 teleop | 在线 30fps 平滑 | 在线平滑 | **离线数据生成 / 质量优先** |
-| 文档 | — | [`trajectory_optimization_retargeting.md`](trajectory_optimization_retargeting.md) | [`sliding_window_retargeting.md`](sliding_window_retargeting.md) | **本文** |
+| | 逐帧 IK | Online Batch | Online QP | **Batch TO（本文）** |
+|--|---------|--------------|-----------|---------------------|
+| 类 / 脚本 | `GeneralMotionRetargeting` | `OnlineBatchRetargeter` | `OnlineQpRetargeter` | **`BatchTrajectoryRetargeter`** |
+| 时域 | 无 | 因果递推窗 | 因果/lookahead QP | **离线整段 motion，重叠滑窗** |
+| 每步优化变量 | 单帧 `q_t` | 窗口尾帧 | 窗口 `q` | **窗口 `q_{start…start+H-1}`** |
+| 求解器 | mink QP | 多帧 GN | 线性化 QP (DAQP) | **多帧 GN（默认）** |
+| 典型用途 | 实时 teleop | 在线 30fps | 在线减滑脚 | **离线数据生成 / 质量优先** |
+| 文档 | — | [`online_batch_retargeting.md`](online_batch_retargeting.md) | 同上 | **本文** |
 
 ---
 
@@ -254,8 +254,8 @@ enableFootPenalties = true   // 全部 foot 权重与 Python 对齐
 `scripts/gmr_gui.py`：
 
 1. 数据类型：**GVHMR (.pt)** / **SMPL-X** / **BVH (LAFAN1/Nokov)**
-2. 算法：**Batch TO (C++ · 一键回放)** 或 **Causal TO (C++ · 在线)**
-3. 点 **运行** → 内部 `scripts/tools/run_cpp_to_viewer.py` 加载动作 → C++ batch/causal → MuJoCo 回放
+2. 算法：**Batch TO (C++ · 一键回放)**
+3. 点 **运行** → 内部 `scripts/tools/run_cpp_to_viewer.py` 加载动作 → C++ batch → MuJoCo 回放
 
 长片段会先在终端日志里跑 batch GN，优化完成后再打开 MuJoCo 窗口（避免黑屏/无响应）。
 
@@ -359,7 +359,7 @@ GUI：`scripts/gmr_gui.py` → 选 **Batch TO (C++ · 一键回放)**（支持 G
 
 ```text
 需要实时 / 在线 30fps？
-  → 因果 TO (TrajectoryOptimizationRetargeter) 或 Sliding Window fast
+  → Online Batch-Lite 或 Online QP（cpp_online_qp / anti_slip）
 
 需要离线最高质量、可接受秒级延迟？
   → Batch TO quality（Python 或 C++）
@@ -378,7 +378,7 @@ GUI：`scripts/gmr_gui.py` → 选 **Batch TO (C++ · 一键回放)**（支持 G
 算法原名 **clip TO**（motion clip），易与 `np.clip` / 关节限位投影混淆，已统一改为 **batch TO**：
 
 - **Batch** = 离线对多帧 `q` 联合优化（paper-style batch retargeting）
-- 与 **因果 TO**（逐帧在线）、**逐帧 IK** 形成对比
+- 与 **Online Batch / Online QP**（在线）、**逐帧 IK** 形成对比
 
 旧名仍可用（deprecated）：
 

@@ -1,18 +1,11 @@
-"""Compare retargeting methods via joint trajectory curves.
+"""Compare retargeting methods via joint trajectory curves (saved motion pickles).
 
 Example (two saved motions):
     python scripts/analysis/compare_joint_trajectories.py \\
         --robot unitree_g1 \\
         --baseline output/walking_ik.pkl \\
-        --candidate output/walking_sw.pkl \\
-        --labels "per-frame IK" "sliding-window" \\
-        --output output/walking_joint_compare.png
-
-Example (run GVHMR offline, then plot):
-    python scripts/analysis/compare_joint_trajectories.py \\
-        --robot unitree_g1 \\
-        --gvhmr_pred_file ~/Videos/walking/hmr4d_results.pt \\
-        --contact_ground \\
+        --candidate output/walking_batch.pkl \\
+        --labels "per-frame IK" "batch TO" \\
         --output output/walking_joint_compare.png
 """
 
@@ -96,278 +89,6 @@ def per_joint_metrics(a: np.ndarray, b: np.ndarray, fps: float) -> dict[str, np.
     }
 
 
-def run_gvhmr_compare(
-    gvhmr_pred_file: pathlib.Path,
-    robot: str,
-    contact_ground: bool | None,
-    foot_ground_limit: bool | None,
-    fix_robot_penetration: bool | None,
-    window_size: int,
-    w_velocity: float,
-    w_acceleration: float,
-    candidate_method: str = "sw",
-    max_frames: int | None = None,
-    max_opt_iter: int = 25,
-    fast_opt_iter: int = 5,
-    to_mode: str = "fast",
-    fix_window_prefix: bool = False,
-    use_gmr_init: bool = True,
-) -> tuple[np.ndarray, np.ndarray, float, list[str]]:
-    from general_motion_retargeting import GeneralMotionRetargeting as GMR
-    from general_motion_retargeting.sliding_window_retarget import (
-        SlidingWindowConfig,
-        SlidingWindowRetargeter,
-    )
-    from general_motion_retargeting.trajectory_optimization_retarget import (
-        TrajectoryOptimizationConfig,
-        TrajectoryOptimizationRetargeter,
-    )
-    from general_motion_retargeting.utils.smpl import (
-        load_gvhmr_pred_file,
-        get_gvhmr_data_offline_fast,
-    )
-
-    body_model_dir = ROOT / "assets" / "body_models"
-    smplx_data, body_model, smplx_output, actual_human_height = load_gvhmr_pred_file(
-        gvhmr_pred_file, body_model_dir
-    )
-    human_frames, fps = get_gvhmr_data_offline_fast(
-        smplx_data, body_model, smplx_output, tgt_fps=30
-    )
-    if max_frames is not None:
-        human_frames = human_frames[:max_frames]
-
-    gmr_kwargs = dict(
-        actual_human_height=actual_human_height,
-        src_human="smplx",
-        tgt_robot=robot,
-        verbose=False,
-        contact_ground=contact_ground,
-        foot_ground_limit=foot_ground_limit,
-        fix_robot_penetration=fix_robot_penetration,
-        motion_fps=fps,
-    )
-    ik = GMR(**gmr_kwargs)
-    if candidate_method == "sw":
-        candidate = SlidingWindowRetargeter(
-            GMR(**gmr_kwargs),
-            SlidingWindowConfig(
-                window_size=window_size,
-                solver="gn",
-                w_velocity=w_velocity,
-                w_acceleration=w_acceleration,
-                dt=1.0 / fps,
-            ),
-        )
-    elif candidate_method == "to":
-        mode = "fast" if fix_window_prefix or to_mode == "fast" else "full"
-        candidate = TrajectoryOptimizationRetargeter(
-            GMR(**gmr_kwargs),
-            TrajectoryOptimizationConfig(
-                window_size=window_size,
-                mode=mode,
-                w_velocity=w_velocity,
-                w_acceleration=w_acceleration,
-                max_opt_iter=max_opt_iter,
-                fast_opt_iter=fast_opt_iter,
-                use_gmr_init=use_gmr_init,
-            ),
-        )
-    else:
-        raise ValueError(f"Unknown candidate_method: {candidate_method}")
-
-    ik_qpos, cand_qpos = [], []
-    for i, frame in enumerate(human_frames):
-        ik_qpos.append(ik.retarget(frame).copy())
-        cand_qpos.append(candidate.retarget(frame).copy())
-        if (i + 1) % 10 == 0:
-            print(f"  processed {i + 1}/{len(human_frames)} frames")
-
-    dof_names = get_dof_names(robot)
-    return np.asarray(ik_qpos), np.asarray(cand_qpos), float(fps), dof_names
-
-
-def run_bvh_compare(
-    bvh_file: pathlib.Path,
-    robot: str,
-    bvh_format: str,
-    contact_ground: bool | None,
-    foot_ground_limit: bool | None,
-    fix_robot_penetration: bool | None,
-    motion_fps: int,
-    window_size: int,
-    w_velocity: float,
-    w_acceleration: float,
-    candidate_method: str = "sw",
-    solver: str = "gn",
-    gn_steps: int = 3,
-    max_frames: int | None = None,
-    start_frame: int = 0,
-    max_opt_iter: int = 25,
-    fast_opt_iter: int = 5,
-    to_mode: str = "fast",
-    fix_window_prefix: bool = False,
-    use_gmr_init: bool = True,
-) -> tuple[np.ndarray, np.ndarray, float, list[str]]:
-    from general_motion_retargeting import GeneralMotionRetargeting as GMR
-    from general_motion_retargeting.sliding_window_retarget import (
-        SlidingWindowConfig,
-        SlidingWindowRetargeter,
-    )
-    from general_motion_retargeting.trajectory_optimization_retarget import (
-        TrajectoryOptimizationConfig,
-        TrajectoryOptimizationRetargeter,
-    )
-    from general_motion_retargeting.utils.lafan1 import load_bvh_file
-
-    human_frames, actual_human_height = load_bvh_file(str(bvh_file), format=bvh_format)
-    fps = float(motion_fps)
-    dt = 1.0 / fps
-    end = len(human_frames) if max_frames is None else min(len(human_frames), start_frame + max_frames)
-    human_frames = human_frames[start_frame:end]
-    src_human = f"bvh_{bvh_format}"
-
-    gmr_kwargs = dict(
-        actual_human_height=actual_human_height,
-        src_human=src_human,
-        tgt_robot=robot,
-        verbose=False,
-        contact_ground=contact_ground,
-        foot_ground_limit=foot_ground_limit,
-        fix_robot_penetration=fix_robot_penetration,
-        motion_fps=fps,
-    )
-    ik = GMR(**gmr_kwargs)
-    ik.set_motion_fps(fps)
-    if candidate_method == "sw":
-        candidate = SlidingWindowRetargeter(
-            GMR(**gmr_kwargs),
-            SlidingWindowConfig(
-                window_size=window_size,
-                solver=solver,
-                w_velocity=w_velocity,
-                w_acceleration=w_acceleration,
-                gn_steps=gn_steps,
-                dt=dt,
-            ),
-        )
-    elif candidate_method == "to":
-        mode = "fast" if fix_window_prefix or to_mode == "fast" else "full"
-        candidate = TrajectoryOptimizationRetargeter(
-            GMR(**gmr_kwargs),
-            TrajectoryOptimizationConfig(
-                window_size=window_size,
-                mode=mode,
-                w_velocity=w_velocity,
-                w_acceleration=w_acceleration,
-                max_opt_iter=max_opt_iter,
-                fast_opt_iter=fast_opt_iter,
-                use_gmr_init=use_gmr_init,
-            ),
-        )
-        candidate.set_motion_fps(fps)
-    else:
-        raise ValueError(f"Unknown candidate_method: {candidate_method}")
-
-    ik_qpos, cand_qpos = [], []
-    for i, frame in enumerate(human_frames):
-        ik_qpos.append(ik.retarget(frame).copy())
-        cand_qpos.append(candidate.retarget(frame).copy())
-        if (i + 1) % 50 == 0:
-            print(f"  processed {i + 1}/{len(human_frames)} frames")
-
-    dof_names = get_dof_names(robot)
-    return np.asarray(ik_qpos), np.asarray(cand_qpos), fps, dof_names
-
-
-def run_smplx_compare(
-    smplx_file: pathlib.Path,
-    robot: str,
-    contact_ground: bool | None,
-    foot_ground_limit: bool | None,
-    fix_robot_penetration: bool | None,
-    window_size: int,
-    w_velocity: float,
-    w_acceleration: float,
-    candidate_method: str = "sw",
-    max_frames: int | None = None,
-    max_opt_iter: int = 25,
-    fast_opt_iter: int = 5,
-    to_mode: str = "fast",
-    fix_window_prefix: bool = False,
-    use_gmr_init: bool = True,
-) -> tuple[np.ndarray, np.ndarray, float, list[str]]:
-    from general_motion_retargeting import GeneralMotionRetargeting as GMR
-    from general_motion_retargeting.sliding_window_retarget import (
-        SlidingWindowConfig,
-        SlidingWindowRetargeter,
-    )
-    from general_motion_retargeting.trajectory_optimization_retarget import (
-        TrajectoryOptimizationConfig,
-        TrajectoryOptimizationRetargeter,
-    )
-    from general_motion_retargeting.utils.smpl import load_smplx_file, get_smplx_data_offline_fast
-
-    body_model_dir = ROOT / "assets" / "body_models"
-    smplx_data, body_model, smplx_output, actual_human_height = load_smplx_file(
-        smplx_file, body_model_dir
-    )
-    human_frames, fps = get_smplx_data_offline_fast(
-        smplx_data, body_model, smplx_output, tgt_fps=30
-    )
-    if max_frames is not None:
-        human_frames = human_frames[:max_frames]
-
-    gmr_kwargs = dict(
-        actual_human_height=actual_human_height,
-        src_human="smplx",
-        tgt_robot=robot,
-        verbose=False,
-        contact_ground=contact_ground,
-        foot_ground_limit=foot_ground_limit,
-        fix_robot_penetration=fix_robot_penetration,
-        motion_fps=fps,
-    )
-    ik = GMR(**gmr_kwargs)
-    if candidate_method == "sw":
-        candidate = SlidingWindowRetargeter(
-            GMR(**gmr_kwargs),
-            SlidingWindowConfig(
-                window_size=window_size,
-                solver="gn",
-                w_velocity=w_velocity,
-                w_acceleration=w_acceleration,
-                dt=1.0 / fps,
-            ),
-        )
-    elif candidate_method == "to":
-        mode = "fast" if fix_window_prefix or to_mode == "fast" else "full"
-        candidate = TrajectoryOptimizationRetargeter(
-            GMR(**gmr_kwargs),
-            TrajectoryOptimizationConfig(
-                window_size=window_size,
-                mode=mode,
-                w_velocity=w_velocity,
-                w_acceleration=w_acceleration,
-                max_opt_iter=max_opt_iter,
-                fast_opt_iter=fast_opt_iter,
-                use_gmr_init=use_gmr_init,
-            ),
-        )
-    else:
-        raise ValueError(f"Unknown candidate_method: {candidate_method}")
-
-    ik_qpos, cand_qpos = [], []
-    for i, frame in enumerate(human_frames):
-        ik_qpos.append(ik.retarget(frame).copy())
-        cand_qpos.append(candidate.retarget(frame).copy())
-        if (i + 1) % 50 == 0:
-            print(f"  processed {i + 1}/{len(human_frames)} frames")
-
-    dof_names = get_dof_names(robot)
-    return np.asarray(ik_qpos), np.asarray(cand_qpos), float(fps), dof_names
-
-
 def select_joint_indices(
     dof_names: list[str],
     joints: list[str] | None,
@@ -437,7 +158,6 @@ def global_metrics(
     fps: float,
     labels: tuple[str, str],
 ) -> dict:
-    dt = 1.0 / fps
     vel_a = finite_diff(baseline, fps, 1)
     vel_b = finite_diff(candidate, fps, 1)
     acc_a = finite_diff(baseline, fps, 2)
@@ -494,27 +214,6 @@ def print_global_summary(summary: dict) -> None:
     )
 
 
-def save_motion_pkl(path: pathlib.Path, qpos: np.ndarray, fps: float, method: str) -> None:
-    import pickle
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(
-            {
-                "fps": fps,
-                "root_pos": qpos[:, :3],
-                "root_rot": qpos[:, 3:7][:, [1, 2, 3, 0]],
-                "dof_pos": qpos[:, 7:],
-                "local_body_pos": None,
-                "link_body_list": None,
-                "qpos": qpos,
-                "method": method,
-            },
-            f,
-        )
-    print(f"Saved motion: {path}")
-
-
 def print_metric_table(
     dof_names: list[str],
     metrics: dict[str, np.ndarray],
@@ -539,24 +238,12 @@ def print_metric_table(
         )
 
 
-def add_optional_bool_arg(parser, name, help_text):
-    parser.add_argument(f"--{name}", dest=name, action="store_true", help=help_text)
-    parser.add_argument(f"--no-{name}", dest=name, action="store_false")
-    parser.set_defaults(**{name: None})
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot joint trajectory comparison curves.")
     parser.add_argument("--robot", type=str, default="unitree_g1")
-    parser.add_argument("--baseline", type=str, default=None, help="Baseline motion .pkl")
-    parser.add_argument("--candidate", type=str, default=None, help="Candidate motion .pkl")
-    parser.add_argument("--gvhmr_pred_file", type=str, default=None)
-    parser.add_argument("--smplx_file", type=str, default=None)
-    parser.add_argument("--bvh_file", type=str, default=None)
-    parser.add_argument("--bvh_format", choices=["lafan1", "nokov"], default="lafan1")
-    parser.add_argument("--motion_fps", type=int, default=30)
-    parser.add_argument("--start_frame", type=int, default=0)
-    parser.add_argument("--labels", nargs=2, default=["per-frame IK", "sliding-window"])
+    parser.add_argument("--baseline", type=str, required=True, help="Baseline motion .pkl")
+    parser.add_argument("--candidate", type=str, required=True, help="Candidate motion .pkl")
+    parser.add_argument("--labels", nargs=2, default=["per-frame IK", "candidate"])
     parser.add_argument("--output", type=str, default="output/joint_trajectory_compare.png")
     parser.add_argument(
         "--plot",
@@ -575,109 +262,28 @@ def main() -> None:
         default=12,
         help="Plot top-K joints with largest vel/acc RMSE between methods (default 12).",
     )
-    parser.add_argument("--window_size", type=int, default=8)
-    parser.add_argument("--w_velocity", type=float, default=2.0)
-    parser.add_argument("--w_acceleration", type=float, default=10.0)
+    parser.add_argument("--metrics_json", type=str, default=None)
     parser.add_argument(
         "--candidate_method",
         choices=["sw", "to"],
-        default="sw",
-        help="Offline candidate retargeter when using --gvhmr_pred_file / --smplx_file / --bvh_file.",
+        default=None,
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument("--max_frames", type=int, default=None)
-    parser.add_argument("--max_opt_iter", type=int, default=25)
-    parser.add_argument("--fast_opt_iter", type=int, default=5)
-    parser.add_argument("--to_mode", choices=["fast", "full"], default="fast")
-    parser.add_argument("--fix_window_prefix", action="store_true", default=False)
-    parser.add_argument("--use_gmr_init", action="store_true", default=True)
-    parser.add_argument("--no-use_gmr_init", dest="use_gmr_init", action="store_false")
-    parser.add_argument("--save_motions", action="store_true", default=False)
-    parser.add_argument("--metrics_json", type=str, default=None)
-    add_optional_bool_arg(parser, "contact_ground", "Enable contact_ground during offline run.")
-    add_optional_bool_arg(parser, "foot_ground_limit", "Enable foot_ground_limit.")
-    add_optional_bool_arg(parser, "fix_robot_penetration", "Enable fix_robot_penetration.")
     args = parser.parse_args()
 
-    dof_names: list[str] | None = None
+    if args.candidate_method is not None:
+        raise SystemExit(
+            "--candidate_method sw|to is no longer supported "
+            "(Sliding Window / Causal TO removed). Compare saved .pkl files instead."
+        )
 
-    if args.baseline and args.candidate:
-        t_a, traj_a, fps_a = load_dof_trajectory(pathlib.Path(args.baseline))
-        t_b, traj_b, fps_b = load_dof_trajectory(pathlib.Path(args.candidate))
-        n = min(len(traj_a), len(traj_b))
-        traj_a, traj_b = traj_a[:n], traj_b[:n]
-        t = t_a[:n]
-        fps = fps_a
-        dof_names = get_dof_names(args.robot)
-    elif args.gvhmr_pred_file:
-        print(f"Running offline compare on GVHMR: {args.gvhmr_pred_file}")
-        traj_a, traj_b, fps, dof_names = run_gvhmr_compare(
-            pathlib.Path(args.gvhmr_pred_file),
-            args.robot,
-            args.contact_ground,
-            args.foot_ground_limit,
-            args.fix_robot_penetration,
-            args.window_size,
-            args.w_velocity,
-            args.w_acceleration,
-            args.candidate_method,
-            args.max_frames,
-            args.max_opt_iter,
-            args.fast_opt_iter,
-            args.to_mode,
-            args.fix_window_prefix,
-            args.use_gmr_init,
-        )
-        n = len(traj_a)
-        t = np.arange(n, dtype=float) / fps
-    elif args.smplx_file:
-        print(f"Running offline compare on SMPL-X: {args.smplx_file}")
-        traj_a, traj_b, fps, dof_names = run_smplx_compare(
-            pathlib.Path(args.smplx_file),
-            args.robot,
-            args.contact_ground,
-            args.foot_ground_limit,
-            args.fix_robot_penetration,
-            args.window_size,
-            args.w_velocity,
-            args.w_acceleration,
-            args.candidate_method,
-            args.max_frames,
-            args.max_opt_iter,
-            args.fast_opt_iter,
-            args.to_mode,
-            args.fix_window_prefix,
-            args.use_gmr_init,
-        )
-        n = len(traj_a)
-        t = np.arange(n, dtype=float) / fps
-    elif args.bvh_file:
-        print(f"Running offline compare on BVH: {args.bvh_file}")
-        traj_a, traj_b, fps, dof_names = run_bvh_compare(
-            pathlib.Path(args.bvh_file),
-            args.robot,
-            args.bvh_format,
-            args.contact_ground,
-            args.foot_ground_limit,
-            args.fix_robot_penetration,
-            args.motion_fps,
-            args.window_size,
-            args.w_velocity,
-            args.w_acceleration,
-            args.candidate_method,
-            max_frames=args.max_frames,
-            start_frame=args.start_frame,
-            max_opt_iter=args.max_opt_iter,
-            fast_opt_iter=args.fast_opt_iter,
-            to_mode=args.to_mode,
-            fix_window_prefix=args.fix_window_prefix,
-            use_gmr_init=args.use_gmr_init,
-        )
-        n = len(traj_a)
-        t = np.arange(n, dtype=float) / fps
-    else:
-        parser.error(
-            "Provide --baseline/--candidate, or --gvhmr_pred_file, or --smplx_file, or --bvh_file."
-        )
+    t_a, traj_a, fps_a = load_dof_trajectory(pathlib.Path(args.baseline))
+    t_b, traj_b, fps_b = load_dof_trajectory(pathlib.Path(args.candidate))
+    n = min(len(traj_a), len(traj_b))
+    traj_a, traj_b = traj_a[:n], traj_b[:n]
+    t = t_a[:n]
+    fps = fps_a
+    dof_names = get_dof_names(args.robot)
 
     width = min(traj_a.shape[1], traj_b.shape[1], len(dof_names))
     traj_a = traj_a[:, :width]
@@ -706,10 +312,6 @@ def main() -> None:
         with open(metrics_path, "w", encoding="utf-8") as f:
             json.dump({"global": summary, "per_joint_indices": joint_indices}, f, indent=2)
         print(f"Saved metrics: {metrics_path}")
-
-    if args.save_motions:
-        save_motion_pkl(parent / f"{stem}_ik.pkl", traj_a, fps, labels[0])
-        save_motion_pkl(parent / f"{stem}_to.pkl", traj_b, fps, labels[1])
 
     plot_map = {
         "position": 0,

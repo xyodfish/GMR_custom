@@ -2,9 +2,17 @@
 """Benchmark retarget methods on GVHMR .pt clips.
 
 Methods:
-  - ik            Python per-frame GMR (online baseline)
-  - py_batch_to   Python BatchTrajectoryRetargeter quality (offline)
-  - cpp_batch_to  C++ gmr_batch_to_cli quality (offline)
+  - ik                Python per-frame GMR (online baseline)
+  - online_batch      Online batch-lite multi-frame GN (online)
+  - py_batch_to       Python BatchTrajectoryRetargeter quality (offline)
+  - cpp_batch_to      C++ gmr_batch_to_cli quality (offline)
+
+Quality metrics (vs IK baseline where applicable):
+  - dq / ddq / jerk   joint-space smoothness (mean L2 norms)
+  - fk                weighted FK tracking cost (same as Batch TO)
+  - foot_slip         contact-frame XY foot slip
+  - rmse_vs_ik        qpos deviation from per-frame IK
+  - ms/frame          realtime feasibility @ 30 FPS
 
 Example:
   python scripts/analysis/benchmark_gvhmr_retarget_methods.py \\
@@ -35,6 +43,10 @@ from general_motion_retargeting.batch_trajectory_retarget import (
     BatchTrajectoryConfig,
     BatchTrajectoryRetargeter,
 )
+from general_motion_retargeting.online_batch_retarget import (
+    OnlineBatchConfig,
+    OnlineBatchRetargeter,
+)
 from general_motion_retargeting.human_frame_loaders import frame_to_json_dict, load_human_motion_frames
 from scripts.analysis.analyze_saved_motion_metrics import (
     DEFAULT_FOOT_BODIES,
@@ -46,7 +58,7 @@ from scripts.analysis.analyze_saved_motion_metrics import (
 
 CPP_BATCH = REPO_ROOT / "cpp" / "build" / "gmr_batch_to_cli"
 
-ONLINE_METHODS = ("ik",)
+ONLINE_METHODS = ("ik", "online_batch")
 OFFLINE_METHODS = ("py_batch_to", "cpp_batch_to")
 ALL_METHODS = ONLINE_METHODS + OFFLINE_METHODS
 
@@ -63,7 +75,40 @@ def env_with_ld() -> dict:
     return env
 
 
-def quality_metrics(q: np.ndarray, ik_q: np.ndarray, fps: float, robot: str) -> dict:
+def make_fk_evaluator(gmr_kwargs: dict, fps: float) -> BatchTrajectoryRetargeter:
+    """Reuse Batch TO helpers for weighted FK tracking cost vs human targets."""
+    gmr = GMR(**gmr_kwargs)
+    batch = BatchTrajectoryRetargeter(
+        gmr,
+        BatchTrajectoryConfig(verbose=False, show_progress=False),
+    )
+    batch.set_motion_fps(fps)
+    return batch
+
+
+def prepare_fk_targets(fk_eval: BatchTrajectoryRetargeter, frames: list) -> list[dict]:
+    prepared = [fk_eval.gmr._prepare_scaled_human_data(f) for f in frames]
+    return [fk_eval._targets_for_prepared(p) for p in prepared]
+
+
+def mean_fk_cost(
+    fk_eval: BatchTrajectoryRetargeter,
+    q: np.ndarray,
+    targets: list[dict],
+) -> float:
+    costs = [fk_eval._fk_tracking_cost(qi, t) for qi, t in zip(q, targets)]
+    return float(np.mean(costs)) if costs else 0.0
+
+
+def quality_metrics(
+    q: np.ndarray,
+    ik_q: np.ndarray,
+    fps: float,
+    robot: str,
+    fk_eval: BatchTrajectoryRetargeter | None = None,
+    targets: list[dict] | None = None,
+    ik_fk_mean: float | None = None,
+) -> dict:
     model = mj.MjModel.from_xml_path(str(ROBOT_XML_PATHS[robot]))
     qidx = scalar_q_indices(model)
     foot = DEFAULT_FOOT_BODIES[robot]
@@ -71,13 +116,30 @@ def quality_metrics(q: np.ndarray, ik_q: np.ndarray, fps: float, robot: str) -> 
     slip = foot_slip_metrics(model, q, foot, 0.02)
     ik_sm = smoothness_metrics(ik_q, fps, qidx)
     ik_slip = foot_slip_metrics(model, ik_q, foot, 0.02)
-    return {
+
+    out = {
         "rmse_vs_ik": float(np.sqrt(np.mean((ik_q - q) ** 2))),
+        "dq_mean": sm["dq"]["mean"],
+        "ddq_mean": sm["ddq"]["mean"],
         "jerk_mean": sm["jerk"]["mean"],
         "foot_slip_total": slip["total_slip"],
+        "dq_change_pct": pct(ik_sm["dq"]["mean"], sm["dq"]["mean"]),
+        "ddq_change_pct": pct(ik_sm["ddq"]["mean"], sm["ddq"]["mean"]),
         "jerk_change_pct": pct(ik_sm["jerk"]["mean"], sm["jerk"]["mean"]),
         "foot_slip_change_pct": pct(ik_slip["total_slip"], slip["total_slip"]),
     }
+
+    if fk_eval is not None and targets is not None:
+        fk_mean = mean_fk_cost(fk_eval, q, targets)
+        if ik_fk_mean is None:
+            ik_fk_mean = mean_fk_cost(fk_eval, ik_q, targets)
+        out["fk_mean"] = fk_mean
+        out["fk_change_pct"] = pct(float(ik_fk_mean), fk_mean)
+    else:
+        out["fk_mean"] = float("nan")
+        out["fk_change_pct"] = float("nan")
+
+    return out
 
 
 def run_ik(frames, gmr_kwargs, fps) -> tuple[np.ndarray, float]:
@@ -86,6 +148,16 @@ def run_ik(frames, gmr_kwargs, fps) -> tuple[np.ndarray, float]:
     q = np.stack([gmr.retarget(f).copy() for f in frames])
     ms = (time.perf_counter() - t0) * 1000.0
     return q, ms / len(frames)
+
+
+def run_online_batch(frames, gmr_kwargs, fps, preset: str = "balanced") -> tuple[np.ndarray, float]:
+    gmr = GMR(**gmr_kwargs)
+    online = OnlineBatchRetargeter(gmr, OnlineBatchConfig.from_preset(preset))
+    online.set_motion_fps(fps)
+    t0 = time.perf_counter()
+    q = online.retarget_sequence(frames)
+    ms = (time.perf_counter() - t0) * 1000.0
+    return np.asarray(q), ms / len(frames)
 
 
 def run_py_batch(frames, gmr_kwargs, fps) -> tuple[np.ndarray, float]:
@@ -173,21 +245,40 @@ def benchmark_pt(
     results: dict[str, dict] = {}
     ik_q = None
 
+    fk_eval = make_fk_evaluator(gmr_kwargs, fps)
+    targets = prepare_fk_targets(fk_eval, frames)
+
     if "ik" in methods or any(m != "ik" for m in methods):
         ik_q, ik_ms = run_ik(frames, gmr_kwargs, fps)
+        ik_fk_mean = mean_fk_cost(fk_eval, ik_q, targets)
         if "ik" in methods:
             results["ik"] = {
                 "kind": "online",
                 "ms_per_frame": ik_ms,
                 "realtime_30fps": ik_ms <= 1000.0 / 30.0,
-                **quality_metrics(ik_q, ik_q, fps, robot),
+                **quality_metrics(
+                    ik_q, ik_q, fps, robot, fk_eval, targets, ik_fk_mean=ik_fk_mean
+                ),
             }
             results["ik"]["rmse_vs_ik"] = 0.0
+            results["ik"]["dq_change_pct"] = 0.0
+            results["ik"]["ddq_change_pct"] = 0.0
             results["ik"]["jerk_change_pct"] = 0.0
             results["ik"]["foot_slip_change_pct"] = 0.0
+            results["ik"]["fk_change_pct"] = 0.0
+    else:
+        ik_fk_mean = None
 
     if ik_q is None:
         ik_q, _ = run_ik(frames, gmr_kwargs, fps)
+        ik_fk_mean = mean_fk_cost(fk_eval, ik_q, targets)
+    elif ik_fk_mean is None:
+        ik_fk_mean = mean_fk_cost(fk_eval, ik_q, targets)
+
+    def _qm(q: np.ndarray) -> dict:
+        return quality_metrics(
+            q, ik_q, fps, robot, fk_eval, targets, ik_fk_mean=ik_fk_mean
+        )
 
     if "py_batch_to" in methods:
         q, ms = run_py_batch(frames, gmr_kwargs, fps)
@@ -195,7 +286,16 @@ def benchmark_pt(
             "kind": "offline",
             "ms_per_frame": ms,
             "realtime_30fps": ms <= 1000.0 / 30.0,
-            **quality_metrics(q, ik_q, fps, robot),
+            **_qm(q),
+        }
+
+    if "online_batch" in methods:
+        q, ms = run_online_batch(frames, gmr_kwargs, fps)
+        results["online_batch"] = {
+            "kind": "online",
+            "ms_per_frame": ms,
+            "realtime_30fps": ms <= 1000.0 / 30.0,
+            **_qm(q),
         }
 
     if "cpp_batch_to" in methods:
@@ -204,7 +304,7 @@ def benchmark_pt(
             "kind": "offline",
             "ms_per_frame": ms,
             "realtime_30fps": ms <= 1000.0 / 30.0,
-            **quality_metrics(q, ik_q, fps, robot),
+            **_qm(q),
         }
 
     return {
@@ -231,8 +331,15 @@ def summarize_rows(rows: list[dict]) -> dict:
             "mean_ms_per_frame": float(np.mean([v["ms_per_frame"] for v in vals])),
             "max_ms_per_frame": float(np.max([v["ms_per_frame"] for v in vals])),
             "realtime_30fps_count": sum(1 for v in vals if v["realtime_30fps"]),
+            "mean_dq_change_pct": float(np.mean([v["dq_change_pct"] for v in vals])),
+            "mean_ddq_change_pct": float(np.mean([v["ddq_change_pct"] for v in vals])),
             "mean_jerk_change_pct": float(np.mean([v["jerk_change_pct"] for v in vals])),
             "mean_foot_slip_change_pct": float(np.mean([v["foot_slip_change_pct"] for v in vals])),
+            "mean_fk_change_pct": float(np.mean([v["fk_change_pct"] for v in vals])),
+            "mean_fk": float(np.mean([v["fk_mean"] for v in vals])),
+            "mean_dq": float(np.mean([v["dq_mean"] for v in vals])),
+            "mean_ddq": float(np.mean([v["ddq_mean"] for v in vals])),
+            "mean_jerk": float(np.mean([v["jerk_mean"] for v in vals])),
             "mean_rmse_vs_ik": float(np.mean([v["rmse_vs_ik"] for v in vals])),
             "n_clips": len(vals),
         }
@@ -281,7 +388,9 @@ def main() -> None:
             for name, m in row["methods"].items():
                 print(
                     f"  {name:18s} {m['ms_per_frame']:6.1f} ms/f  "
-                    f"jerk {m['jerk_change_pct']:+6.1f}%  slip {m['foot_slip_change_pct']:+6.1f}%  "
+                    f"dq {m['dq_change_pct']:+5.1f}%  ddq {m['ddq_change_pct']:+5.1f}%  "
+                    f"jerk {m['jerk_change_pct']:+5.1f}%  "
+                    f"fk {m['fk_change_pct']:+5.1f}%  slip {m['foot_slip_change_pct']:+5.1f}%  "
                     f"rmse {m['rmse_vs_ik']:.4f}"
                 )
         except Exception as exc:

@@ -4,24 +4,57 @@
   "contact_ground": true,
   "methods_tested": [
     "ik",
+    "online_batch",
+    "sliding_window",
+    "py_causal_to",
     "py_batch_to",
     "cpp_batch_to"
   ],
   "summary": {
     "ik": {
       "kind": "online",
-      "mean_ms_per_frame": 1.8586171274849523,
-      "max_ms_per_frame": 2.0293160100118257,
+      "mean_ms_per_frame": 1.8342479441707837,
+      "max_ms_per_frame": 1.999431009971886,
       "realtime_30fps_count": 6,
       "mean_jerk_change_pct": 0.0,
       "mean_foot_slip_change_pct": 0.0,
       "mean_rmse_vs_ik": 0.0,
       "n_clips": 6
     },
+    "online_batch": {
+      "kind": "online",
+      "mean_ms_per_frame": 7.68649411083364,
+      "max_ms_per_frame": 8.640816625047592,
+      "realtime_30fps_count": 6,
+      "mean_jerk_change_pct": -13.46307986422287,
+      "mean_foot_slip_change_pct": 60.28323868569487,
+      "mean_rmse_vs_ik": 0.15475379508001627,
+      "n_clips": 6
+    },
+    "sliding_window": {
+      "kind": "online",
+      "mean_ms_per_frame": 3.7692628008274673,
+      "max_ms_per_frame": 4.491503420067602,
+      "realtime_30fps_count": 6,
+      "mean_jerk_change_pct": -9.96052417315778,
+      "mean_foot_slip_change_pct": 666.294736763292,
+      "mean_rmse_vs_ik": 0.33001413849467426,
+      "n_clips": 6
+    },
+    "py_causal_to": {
+      "kind": "online",
+      "mean_ms_per_frame": 4.876442038330424,
+      "max_ms_per_frame": 5.7610318349907175,
+      "realtime_30fps_count": 6,
+      "mean_jerk_change_pct": -99.99976330794546,
+      "mean_foot_slip_change_pct": 158.41335570200394,
+      "mean_rmse_vs_ik": 0.41589198103130265,
+      "n_clips": 6
+    },
     "py_batch_to": {
       "kind": "offline",
-      "mean_ms_per_frame": 30.303977497496817,
-      "max_ms_per_frame": 35.62733204002143,
+      "mean_ms_per_frame": 29.938274673319636,
+      "max_ms_per_frame": 35.2646949049813,
       "realtime_30fps_count": 5,
       "mean_jerk_change_pct": -6.556168086922607,
       "mean_foot_slip_change_pct": -20.158597363943546,
@@ -30,8 +63,8 @@
     },
     "cpp_batch_to": {
       "kind": "offline",
-      "mean_ms_per_frame": 4.368880725833333,
-      "max_ms_per_frame": 6.299966960000001,
+      "mean_ms_per_frame": 4.181779149166666,
+      "max_ms_per_frame": 6.246361305000001,
       "realtime_30fps_count": 6,
       "mean_jerk_change_pct": -6.556167786832645,
       "mean_foot_slip_change_pct": -20.158597467813596,
@@ -48,7 +81,7 @@
       "methods": {
         "ik": {
           "kind": "online",
-          "ms_per_frame": 1.404587145007099,
+          "ms_per_frame": 1.4157493550010258,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0,
           "jerk_mean": 883.6320252860952,
@@ -58,7 +91,7 @@
         },
         "py_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 27.343781194940675,
+          "ms_per_frame": 27.291259384946898,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.003017580523138325,
           "jerk_mean": 884.3400014026784,
@@ -66,9 +99,39 @@
           "jerk_change_pct": 0.0801211473015514,
           "foot_slip_change_pct": -80.3985034629355
         },
+        "online_batch": {
+          "kind": "online",
+          "ms_per_frame": 7.2392615849821595,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.08598367985080244,
+          "jerk_mean": 884.4888692935893,
+          "foot_slip_total": 0.26786695348344997,
+          "jerk_change_pct": 0.09696841931648237,
+          "foot_slip_change_pct": -41.80395303023802
+        },
+        "sliding_window": {
+          "kind": "online",
+          "ms_per_frame": 4.491503420067602,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.633781049918528,
+          "jerk_mean": 819.2519446786615,
+          "foot_slip_total": 1.4413793527573158,
+          "jerk_change_pct": -7.285847362377933,
+          "foot_slip_change_pct": 213.15016437625823
+        },
+        "py_causal_to": {
+          "kind": "online",
+          "ms_per_frame": 4.34307360497769,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.13396808348470635,
+          "jerk_mean": 0.0007872207237504526,
+          "foot_slip_total": 0.09772842871814086,
+          "jerk_change_pct": -99.99991091079757,
+          "foot_slip_change_pct": -78.76778694049187
+        },
         "cpp_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 3.17679926,
+          "ms_per_frame": 3.096536885,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.00301758052313856,
           "jerk_mean": 884.3400014020108,
@@ -86,7 +149,7 @@
       "methods": {
         "ik": {
           "kind": "online",
-          "ms_per_frame": 2.000315349941957,
+          "ms_per_frame": 1.9499370850098785,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0,
           "jerk_mean": 670.6043780579341,
@@ -96,7 +159,7 @@
         },
         "py_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 31.185830350004835,
+          "ms_per_frame": 30.861969425022835,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.004571828203500841,
           "jerk_mean": 545.060805826123,
@@ -104,9 +167,39 @@
           "jerk_change_pct": -18.720959233130046,
           "foot_slip_change_pct": -5.808252666234156
         },
+        "online_batch": {
+          "kind": "online",
+          "ms_per_frame": 8.120830719999503,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.05309758779917504,
+          "jerk_mean": 627.8728020520101,
+          "foot_slip_total": 0.28602110057187247,
+          "jerk_change_pct": -6.372099169658626,
+          "foot_slip_change_pct": 119.30031835683589
+        },
+        "sliding_window": {
+          "kind": "online",
+          "ms_per_frame": 3.7429952799720922,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.11078869651981264,
+          "jerk_mean": 2174.8165524581027,
+          "foot_slip_total": 4.039461744593083,
+          "jerk_change_pct": 224.30694215811073,
+          "foot_slip_change_pct": 2997.167463548452
+        },
+        "py_causal_to": {
+          "kind": "online",
+          "ms_per_frame": 4.619737760003773,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.05107041020793826,
+          "jerk_mean": 0.00032229877060041925,
+          "foot_slip_total": 0.4534091611188674,
+          "jerk_change_pct": -99.99995193905959,
+          "foot_slip_change_pct": 247.64139142345437
+        },
         "cpp_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 5.06041359,
+          "ms_per_frame": 4.951103955,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.004571828185867993,
           "jerk_mean": 545.0608175987647,
@@ -124,7 +217,7 @@
       "methods": {
         "ik": {
           "kind": "online",
-          "ms_per_frame": 2.0293160100118257,
+          "ms_per_frame": 1.9818601899896748,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0,
           "jerk_mean": 2167.4667720576426,
@@ -134,7 +227,7 @@
         },
         "py_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 35.62733204002143,
+          "ms_per_frame": 35.2646949049813,
           "realtime_30fps": false,
           "rmse_vs_ik": 0.0002918125960506454,
           "jerk_mean": 2165.9205834166605,
@@ -142,9 +235,39 @@
           "jerk_change_pct": -0.07133620966720818,
           "foot_slip_change_pct": -1.0669896762758284
         },
+        "online_batch": {
+          "kind": "online",
+          "ms_per_frame": 8.640816625047592,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.1729865211941046,
+          "jerk_mean": 1831.9989623622798,
+          "foot_slip_total": 0.11758475433822232,
+          "jerk_change_pct": -15.477414187849023,
+          "foot_slip_change_pct": 51.33487562506389
+        },
+        "sliding_window": {
+          "kind": "online",
+          "ms_per_frame": 3.595973094998044,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.6715714896958073,
+          "jerk_mean": 1107.708022670287,
+          "foot_slip_total": 0.2963904331586977,
+          "jerk_change_pct": -48.89388677369638,
+          "foot_slip_change_pct": 281.4627975452591
+        },
+        "py_causal_to": {
+          "kind": "online",
+          "ms_per_frame": 5.7610318349907175,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 1.0867416961603644,
+          "jerk_mean": 0.020105923817526277,
+          "foot_slip_total": 0.12173053160154135,
+          "jerk_change_pct": -99.99907237683749,
+          "foot_slip_change_pct": 56.670607200510645
+        },
         "cpp_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 6.299966960000001,
+          "ms_per_frame": 6.246361305000001,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0002918125960506386,
           "jerk_mean": 2165.9205834166664,
@@ -162,7 +285,7 @@
       "methods": {
         "ik": {
           "kind": "online",
-          "ms_per_frame": 2.012946024988196,
+          "ms_per_frame": 1.999431009971886,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0,
           "jerk_mean": 9373.1899637432,
@@ -172,7 +295,7 @@
         },
         "py_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 28.806548770007794,
+          "ms_per_frame": 29.028459074979764,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.009315200378260753,
           "jerk_mean": 8936.729225028941,
@@ -180,9 +303,39 @@
           "jerk_change_pct": -4.656480242079264,
           "foot_slip_change_pct": -8.74312297759363
         },
+        "online_batch": {
+          "kind": "online",
+          "ms_per_frame": 7.413315289959428,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.476829913709768,
+          "jerk_mean": 6396.57163137179,
+          "foot_slip_total": 0.5847880318011698,
+          "jerk_change_pct": -31.756726833504736,
+          "foot_slip_change_pct": 176.50147568708218
+        },
+        "sliding_window": {
+          "kind": "online",
+          "ms_per_frame": 3.6420326499501243,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.22274438483172207,
+          "jerk_mean": 1618.554019007663,
+          "foot_slip_total": 1.107554336988657,
+          "jerk_change_pct": -82.73208987262123,
+          "foot_slip_change_pct": 423.6776266397916
+        },
+        "py_causal_to": {
+          "kind": "online",
+          "ms_per_frame": 4.775656505007646,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.555380989426938,
+          "jerk_mean": 0.009909020736433169,
+          "foot_slip_total": 1.4466911891018241,
+          "jerk_change_pct": -99.99989428336805,
+          "foot_slip_change_pct": 584.0294720432305
+        },
         "cpp_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 3.8045496100000005,
+          "ms_per_frame": 3.71923627,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.009315200381507021,
           "jerk_mean": 8936.729220496145,
@@ -200,7 +353,7 @@
       "methods": {
         "ik": {
           "kind": "online",
-          "ms_per_frame": 1.716952595015755,
+          "ms_per_frame": 1.6984369300189428,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0,
           "jerk_mean": 4251.644407767209,
@@ -210,7 +363,7 @@
         },
         "py_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 30.210561330022756,
+          "ms_per_frame": 28.263555964949774,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.009615216410533029,
           "jerk_mean": 4115.113661691203,
@@ -218,9 +371,39 @@
           "jerk_change_pct": -3.2112456494852153,
           "foot_slip_change_pct": -6.183383245372497
         },
+        "online_batch": {
+          "kind": "online",
+          "ms_per_frame": 7.305386294974596,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.07416045213765157,
+          "jerk_mean": 3772.105619743737,
+          "foot_slip_total": 1.292320760155722,
+          "jerk_change_pct": -11.278901573880821,
+          "foot_slip_change_pct": 47.42406664809055
+        },
+        "sliding_window": {
+          "kind": "online",
+          "ms_per_frame": 3.5075239300203975,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.13644716749953492,
+          "jerk_mean": 1253.9846342835845,
+          "foot_slip_total": 1.60954765184537,
+          "jerk_change_pct": -70.5058910384717,
+          "foot_slip_change_pct": 83.61235663376402
+        },
+        "py_causal_to": {
+          "kind": "online",
+          "ms_per_frame": 4.950311485008569,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.3395707049327403,
+          "jerk_mean": 0.006471008898867588,
+          "foot_slip_total": 2.4136383787309654,
+          "jerk_change_pct": -99.99984779985628,
+          "foot_slip_change_pct": 175.340609066395
+        },
         "cpp_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 4.09591433,
+          "ms_per_frame": 3.395702565,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0096152164088935,
           "jerk_mean": 4115.113668305778,
@@ -238,7 +421,7 @@
       "methods": {
         "ik": {
           "kind": "online",
-          "ms_per_frame": 1.9875856399448821,
+          "ms_per_frame": 1.9600730950332945,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.0,
           "jerk_mean": 7726.85653508088,
@@ -248,7 +431,7 @@
         },
         "py_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 28.649811299983412,
+          "ms_per_frame": 28.919709285037243,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.011758709732480286,
           "jerk_mean": 6741.1330760511155,
@@ -256,9 +439,39 @@
           "jerk_change_pct": -12.757108334475463,
           "foot_slip_change_pct": -18.751332155249678
         },
+        "online_batch": {
+          "kind": "online",
+          "ms_per_frame": 7.399354150038562,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.06546461578859601,
+          "jerk_mean": 6491.308543321927,
+          "foot_slip_total": 1.0389036380818524,
+          "jerk_change_pct": -15.990305839760499,
+          "foot_slip_change_pct": 8.942648827334722
+        },
+        "sliding_window": {
+          "kind": "online",
+          "ms_per_frame": 3.6355484299565433,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.20475204250264076,
+          "jerk_mean": 1958.5748390241922,
+          "foot_slip_total": 0.9412082841001611,
+          "jerk_change_pct": -74.65237214989017,
+          "foot_slip_change_pct": -1.3019881637728223
+        },
+        "py_causal_to": {
+          "kind": "online",
+          "ms_per_frame": 4.8088410399941495,
+          "realtime_30fps": true,
+          "rmse_vs_ik": 0.32862000197512825,
+          "jerk_mean": 0.007530767941954896,
+          "foot_slip_total": 0.6252518358717178,
+          "jerk_change_pct": -99.99990253775378,
+          "foot_slip_change_pct": -34.4341585810751
+        },
         "cpp_batch_to": {
           "kind": "offline",
-          "ms_per_frame": 3.775640605,
+          "ms_per_frame": 3.6817339149999997,
           "realtime_30fps": true,
           "rmse_vs_ik": 0.011758709737646575,
           "jerk_mean": 6741.133071250436,

@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -134,6 +136,7 @@ int main(int argc, char** argv) {
 
         std::vector<std::vector<double>> qposFrames;
         qposFrames.reserve(frameCount);
+        const auto t0 = std::chrono::steady_clock::now();
         for (std::size_t i = 0; i < frameCount; ++i) {
             const Eigen::VectorXd qpos = retargeter->retargetFrame(sequence.frames[i], offsetToGround);
             qposFrames.emplace_back(qpos.data(), qpos.data() + qpos.size());
@@ -141,7 +144,13 @@ int main(int argc, char** argv) {
                 std::cout << "\rprogress: " << (i + 1) << "/" << frameCount << std::flush;
             }
         }
+        const double totalMs =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        const double msPerFrame = totalMs / static_cast<double>(std::max<std::size_t>(frameCount, 1));
         std::cout << std::endl;
+        std::cout << "[gmr_retarget_batch_cli] frames=" << frameCount << " total=" << totalMs
+                  << "ms (" << msPerFrame << " ms/f, " << (1000.0 / std::max(msPerFrame, 1e-9)) << " FPS)"
+                  << " realtime@30=" << (msPerFrame <= 1000.0 / 30.0) << std::endl;
 
         nlohmann::json scalarCoords = nlohmann::json::array();
         for (const auto& coord : retargeter->scalarJointCoordinates()) {
@@ -162,6 +171,12 @@ int main(int argc, char** argv) {
         out["has_root_free_flyer"]      = retargeter->hasRootFreeFlyer();
         out["scalar_joint_coordinates"] = scalarCoords;
         out["qpos_frames"]              = qposFrames;
+        out["profile"]                  = {
+            {"total_ms", totalMs},
+            {"ms_per_frame", msPerFrame},
+            {"effective_fps", 1000.0 / std::max(msPerFrame, 1e-9)},
+            {"realtime_30fps", msPerFrame <= 1000.0 / 30.0},
+        };
 
         std::ofstream ofs(outJsonPath);
         ofs << out.dump(2) << std::endl;

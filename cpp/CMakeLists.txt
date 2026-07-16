@@ -68,7 +68,8 @@ add_library(gmr_retarget_core STATIC
   src/retarget/retargeter_pinocchio.cpp
   src/retarget/retargeter_mujoco.cpp
   src/retarget/batch_trajectory_retarget.cpp
-  src/retarget/causal_trajectory_retarget.cpp
+  src/retarget/online_qp_config.cpp
+  src/retarget/online_qp_retarget.cpp
 )
 
 target_include_directories(gmr_retarget_core PUBLIC
@@ -115,11 +116,11 @@ target_link_libraries(gmr_batch_to_cli PRIVATE
   gmr_retarget_core
 )
 
-add_executable(gmr_causal_to_cli
-  src/main_causal_to_cli.cpp
+add_executable(gmr_online_qp_cli
+  src/main_online_qp_cli.cpp
 )
 
-target_link_libraries(gmr_causal_to_cli PRIVATE
+target_link_libraries(gmr_online_qp_cli PRIVATE
   gmr_retarget_core
 )
 

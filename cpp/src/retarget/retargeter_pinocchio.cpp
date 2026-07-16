@@ -204,6 +204,9 @@ namespace gmr {
                     auto [frameId, frameType] = resolveTaskFrameId(model, entry.robotBodyName);
                     (void)frameType;
                     task.frameId = frameId;
+                    // For G1 URDF, pelvis BODY frame coincides with free-flyer joint (delta=0);
+                    // A/B shows this branch does not change trajectories. Kept for root-joint
+                    // Jacobian path; other robots may differ if BODY≠JOINT.
                     if (hasRootFreeFlyer && entry.robotBodyName == ikConfig.robotRootName) {
                         task.useJointPose = true;
                         task.jointId      = 1;
@@ -473,12 +476,6 @@ namespace gmr {
 
     Eigen::VectorXd PinocchioRetargetBackend::retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
         return impl_->retargetLightIkImpl(humanFrame, offsetToGround, maxIterations);
-    }
-
-    Eigen::VectorXd PinocchioRetargetBackend::optimizeCausalRefine(const HumanFrame& /*preparedHuman*/, const Eigen::VectorXd& /*qInit*/,
-                                                                  const Eigen::VectorXd& /*qPrev*/, const Eigen::VectorXd& /*qPrev2*/,
-                                                                  const CausalRefineParams& /*params*/) {
-        throw std::runtime_error("optimizeCausalRefine requires MuJoCo backend (mujoco_se3).");
     }
 
     void PinocchioRetargetBackend::setQpos(const Eigen::VectorXd& qpos) {

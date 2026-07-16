@@ -21,6 +21,7 @@
 
 #include "batch_trajectory_banded_solver.h"
 #include "retargeter_internal_utils.h"
+#include "gmr/solver/qp_solver.h"
 
 namespace gmr {
     namespace {
@@ -715,7 +716,8 @@ namespace gmr {
 
     std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeGnWindow(
         const std::vector<Eigen::VectorXd>& qInit, const std::vector<FrameTargets>& targets,
-        const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight) {
+        const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight,
+        const QpWindowOptions* qpOpts) {
         std::vector<Eigen::VectorXd> qWin = qInit;
         const int nFrames                 = static_cast<int>(qWin.size());
         const int m                       = static_cast<int>(optVidx_.size());
@@ -961,8 +963,144 @@ namespace gmr {
                 }
             }
 
+            if (qpOpts != nullptr && qpOpts->wGmr > 0.0) {
+                for (int t = 0; t < nFrames; ++t) {
+                    const int off = t * m;
+                    for (int vi = 0; vi < m; ++vi) {
+                        const int v    = optVidx_[vi];
+                        const int j    = model->dof_jntid[v];
+                        const int qadr = model->jnt_qposadr[j];
+                        if (model->jnt_type[j] == mjJNT_FREE && qadr >= 3) {
+                            continue;
+                        }
+                        const double err = qWin[t][qadr] - qRef[t][qadr];
+                        ws.Hdense(off + vi, off + vi) += qpOpts->wGmr;
+                        ws.g[off + vi] += qpOpts->wGmr * err;
+                    }
+                }
+            }
+
             Eigen::MatrixXd Hreg = ws.Hdense + config_.gnDamping * Eigen::MatrixXd::Identity(nvar, nvar);
-            if (config_.useBandedSolver) {
+            if (qpOpts != nullptr) {
+                Hreg = 0.5 * (Hreg + Hreg.transpose()).eval();
+
+                Eigen::VectorXd lb = Eigen::VectorXd::Constant(nvar, -config_.gnMaxStep);
+                Eigen::VectorXd ub = Eigen::VectorXd::Constant(nvar, config_.gnMaxStep);
+
+                struct HingePair {
+                    int localV = 0;
+                    int qadr   = 0;
+                };
+                std::vector<HingePair> hingePairs;
+                hingePairs.reserve(static_cast<std::size_t>(m));
+                for (int vi = 0; vi < m; ++vi) {
+                    const int v = optVidx_[vi];
+                    const int j = model->dof_jntid[v];
+                    const int jtype = model->jnt_type[j];
+                    if (jtype == mjJNT_HINGE || jtype == mjJNT_SLIDE) {
+                        hingePairs.push_back(HingePair{vi, model->jnt_qposadr[j]});
+                    }
+                }
+
+                if (qpOpts->useJointLimits) {
+                    for (int t = 0; t < nFrames; ++t) {
+                        const int off = t * m;
+                        for (const auto& hp : hingePairs) {
+                            const int j = model->dof_jntid[optVidx_[hp.localV]];
+                            if (model->jnt_limited[j] <= 0) {
+                                continue;
+                            }
+                            const double qmin = model->jnt_range[2 * j + 0];
+                            const double qmax = model->jnt_range[2 * j + 1];
+                            const double q0   = qWin[t][hp.qadr];
+                            lb[off + hp.localV] = std::max(lb[off + hp.localV], qmin - q0);
+                            ub[off + hp.localV] = std::min(ub[off + hp.localV], qmax - q0);
+                        }
+                    }
+                }
+
+                const int pinFrames = std::max(0, std::min(qpOpts->pinFrames, nFrames - 1));
+                if (pinFrames > 0) {
+                    lb.head(pinFrames * m).setZero();
+                    ub.head(pinFrames * m).setZero();
+                }
+
+                std::vector<Eigen::VectorXd> gRows;
+                std::vector<double> hVals;
+                const double dt    = std::max(qpOpts->motionDt, 1e-6);
+                const double dqLim = qpOpts->dqMax * dt;
+                if (qpOpts->useVelocityLimits && !hingePairs.empty()) {
+                    for (int t = 0; t < nFrames; ++t) {
+                        const int off = t * m;
+                        for (const auto& hp : hingePairs) {
+                            if (t == 0) {
+                                if (qpOpts->qPrev == nullptr) {
+                                    continue;
+                                }
+                                const double base = qWin[0][hp.qadr] - (*qpOpts->qPrev)[hp.qadr];
+                                Eigen::VectorXd rowP = Eigen::VectorXd::Zero(nvar);
+                                Eigen::VectorXd rowM = Eigen::VectorXd::Zero(nvar);
+                                rowP[off + hp.localV] = 1.0;
+                                rowM[off + hp.localV] = -1.0;
+                                gRows.push_back(rowP);
+                                hVals.push_back(dqLim - base);
+                                gRows.push_back(rowM);
+                                hVals.push_back(dqLim + base);
+                            } else {
+                                const int offM = (t - 1) * m;
+                                const double base = qWin[t][hp.qadr] - qWin[t - 1][hp.qadr];
+                                Eigen::VectorXd rowP = Eigen::VectorXd::Zero(nvar);
+                                Eigen::VectorXd rowM = Eigen::VectorXd::Zero(nvar);
+                                rowP[off + hp.localV]  = 1.0;
+                                rowP[offM + hp.localV] = -1.0;
+                                rowM[off + hp.localV]  = -1.0;
+                                rowM[offM + hp.localV] = 1.0;
+                                gRows.push_back(rowP);
+                                hVals.push_back(dqLim - base);
+                                gRows.push_back(rowM);
+                                hVals.push_back(dqLim + base);
+                            }
+                        }
+                    }
+                }
+
+                const int nBox = nvar;
+                const int nVel = static_cast<int>(gRows.size());
+                const int nIneq = nBox + nVel;
+                gmr::solver::QPData qp;
+                qp.reset(nvar, nIneq);
+                qp.H = Hreg;
+                qp.g = ws.g;
+                for (int i = 0; i < nvar; ++i) {
+                    qp.CI(i, i)  = 1.0;
+                    qp.ciLb[i]   = lb[i];
+                    qp.ciUb[i]   = ub[i];
+                }
+                for (int r = 0; r < nVel; ++r) {
+                    qp.CI.row(nBox + r) = gRows[static_cast<std::size_t>(r)].transpose();
+                    qp.ciLb[nBox + r]   = -1e20;
+                    qp.ciUb[nBox + r]   = hVals[static_cast<std::size_t>(r)];
+                }
+
+                bool qpOk = false;
+                try {
+                    gmr::solver::QPSolver solver(qpOpts->qpBackend);
+                    const gmr::solver::QPOutput& out = solver.solve(qp);
+                    if (out.status == gmr::solver::QPStatus::kOptimal ||
+                        out.status == gmr::solver::QPStatus::kMaxIterReached) {
+                        ws.dqFlat = out.x;
+                        qpOk      = true;
+                    }
+                } catch (...) {
+                    qpOk = false;
+                }
+                if (!qpOk) {
+                    ws.dqFlat = Hreg.ldlt().solve(ws.g);
+                }
+                if (pinFrames > 0) {
+                    ws.dqFlat.head(pinFrames * m).setZero();
+                }
+            } else if (config_.useBandedSolver) {
                 ws.Hband.setZero();
                 const int bw = ws.Hband.bandwidth();
                 for (int i = 0; i < nvar; ++i) {
@@ -1029,6 +1167,27 @@ namespace gmr {
         }
 
         return qWin;
+    }
+
+    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::optimizeQpWindow(
+        const std::vector<Eigen::VectorXd>& qInit, const std::vector<FrameTargets>& targets,
+        const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight,
+        const QpWindowOptions& qpOpts) {
+        return optimizeGnWindow(qInit, targets, anchor, qRef, frameOffset, anchorWeight, &qpOpts);
+    }
+
+    void BatchTrajectoryRetargeter::clearFootContactSchedule() {
+        globalRefContact_.clear();
+        globalRefFootPos_.clear();
+    }
+
+    void BatchTrajectoryRetargeter::setFootContactFromQRef(const std::vector<Eigen::VectorXd>& qRef) {
+        if (qRef.empty()) {
+            clearFootContactSchedule();
+            return;
+        }
+        globalRefContact_ = batchContactMask(qRef);
+        buildGlobalRefFootPos(qRef);
     }
 
     Eigen::VectorXd BatchTrajectoryRetargeter::finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter,

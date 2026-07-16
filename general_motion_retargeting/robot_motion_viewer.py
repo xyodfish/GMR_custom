@@ -83,8 +83,21 @@ class RobotMotionViewer:
             key_callback=keyboard_callback
             )      
 
-        self.viewer.opt.flags[mj.mjtVisFlag.mjVIS_TRANSPARENT] = transparent_robot
-        
+        self.viewer.opt.flags[mj.mjtVisFlag.mjVIS_TRANSPARENT] = bool(transparent_robot)
+        # g1_mocap duplicates robot meshes in group 0 (collision) and group 1 (visual).
+        # Hide non-floor group-0 geoms; keep floor + visual group.
+        floor_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, "floor")
+        for gid in range(self.model.ngeom):
+            if int(self.model.geom_group[gid]) != 0:
+                continue
+            if floor_id >= 0 and gid == floor_id:
+                continue
+            self.model.geom_group[gid] = 3
+        if hasattr(self.viewer.opt, "geomgroup"):
+            self.viewer.opt.geomgroup[0] = 1  # floor
+            self.viewer.opt.geomgroup[1] = 1  # visual meshes
+            self.viewer.opt.geomgroup[3] = 0  # hidden collision duplicates
+
         if self.record_video:
             assert video_path is not None, "Please provide video path for recording"
             self.video_path = video_path

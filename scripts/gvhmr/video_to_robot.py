@@ -52,11 +52,9 @@ def run_gvhmr_demo(
 
 
 def build_gvhmr_retarget_cmd(args: argparse.Namespace, pred_path: Path) -> list[str]:
-    retarget_algo = getattr(args, "retarget_algo", "ik")
-    script_name = "to_robot_trajectory_opt.py" if retarget_algo == "to" else "to_robot.py"
     cmd = [
         sys.executable,
-        str(HERE / script_name),
+        str(HERE / "to_robot.py"),
         "--gvhmr_pred_file",
         str(pred_path),
         "--robot",
@@ -81,13 +79,6 @@ def build_gvhmr_retarget_cmd(args: argparse.Namespace, pred_path: Path) -> list[
             cmd.append(f"--{name}")
         elif value is False:
             cmd.append(f"--no-{name}")
-    if retarget_algo == "to":
-        cmd += ["--to_mode", getattr(args, "to_mode", "fast")]
-        cmd += ["--window_size", str(int(getattr(args, "window_size", 8)))]
-        cmd += ["--w_velocity", str(float(getattr(args, "w_velocity", 2.0)))]
-        cmd += ["--w_acceleration", str(float(getattr(args, "w_acceleration", 10.0)))]
-        if not getattr(args, "use_gmr_init", True):
-            cmd.append("--no-use_gmr_init")
     return cmd
 
 
@@ -176,18 +167,6 @@ def parse_args() -> argparse.Namespace:
         help="Disable realtime playback limiting and render as fast as possible.",
     )
     parser.set_defaults(rate_limit=True)
-    parser.add_argument(
-        "--retarget_algo",
-        choices=["ik", "to"],
-        default="ik",
-        help="Retargeting algorithm after GVHMR: per-frame IK or trajectory optimization.",
-    )
-    parser.add_argument("--to_mode", choices=["fast", "full"], default="fast")
-    parser.add_argument("--window_size", type=int, default=8)
-    parser.add_argument("--w_velocity", type=float, default=2.0)
-    parser.add_argument("--w_acceleration", type=float, default=10.0)
-    parser.add_argument("--use_gmr_init", action="store_true", default=True)
-    parser.add_argument("--no-use_gmr_init", dest="use_gmr_init", action="store_false")
     add_optional_bool_arg(parser, "contact_ground", "Enable streaming contact/ground fix.")
     add_optional_bool_arg(parser, "foot_ground_limit", "Enable QP foot-ground inequality limit.")
     add_optional_bool_arg(

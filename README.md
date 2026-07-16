@@ -631,7 +631,7 @@ There is no single automatic score for all robots yet. A practical workflow:
 
 1. **Visual**: use real-time `bvh_to_robot.py` or playback with `vis_robot_motion.py --human_frame_json` and check foot anchors, leg crossing, and ground contact.
 2. **Pickle stats**: inspect `root_pos[:,2]`, knee joint means, and joint-limit saturation from saved `.pkl` files.
-3. **Contact metrics**: use `scripts/analysis/batch_lafan1_retarget_compare.py` or `scripts/analysis/bvh_compare_contact_ground.py` for foot slip and penetration comparisons.
+3. **Contact metrics**: use `scripts/analysis/bvh_compare_contact_ground.py` for foot slip and penetration comparisons.
 
 For H2 LAFAN1, IK config lives at `general_motion_retargeting/ik_configs/bvh_lafan1_to_h2.json`. Robot assets live at `assets/unitree_h2/`.
 

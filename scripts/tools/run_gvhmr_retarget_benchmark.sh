@@ -100,12 +100,13 @@ for name in "${CLIP_NAMES[@]}"; do
   PT_ARGS+=(--pt_file "data/gvhmr_test_videos/${stem}/hmr4d_results.pt")
 done
 
-echo "[4/4] Benchmark IK baseline + offline batch TO (Py + C++)"
+echo "[4/4] Benchmark online + offline retarget methods"
 python3 scripts/analysis/benchmark_gvhmr_retarget_methods.py \
   "${PT_ARGS[@]}" \
   --robot "$ROBOT" \
   --max_frames "$MAX_FRAMES" \
   --contact_ground \
+  --methods "ik,online_batch,py_batch_to,cpp_batch_to" \
   --output_json output/gvhmr_retarget_benchmark.json
 
 echo "Done. Report: output/gvhmr_retarget_benchmark.json"

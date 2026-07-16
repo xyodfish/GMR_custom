@@ -1,0 +1,54 @@
+{
+  "setup": {
+    "robot": "unitree_g1",
+    "max_frames": 120,
+    "contact_ground": true,
+    "clips": [
+      "walking",
+      "gait_track_12",
+      "tennis"
+    ]
+  },
+  "summary": {
+    "mean_py_ik_ms": 1.7029847750867095,
+    "mean_cpp_mujoco_ms": 0.5718155833333334,
+    "mean_cpp_pin_ms": 0.22132458611111114,
+    "mean_cpp_mujoco_fps": 1971.5004669987322,
+    "mean_rmse_vs_py": 0.0031528191986505798
+  },
+  "per_clip": [
+    {
+      "clip": "walking",
+      "n_frames": 120,
+      "fps": 30.0,
+      "py_ik_ms": 2.0106096334833032,
+      "cpp_mujoco_ms": 0.8682093083333334,
+      "cpp_pin_ms": 0.31202653333333336,
+      "cpp_mujoco_fps": 1151.795990208467,
+      "rmse_vs_py": 0.0027516444196309473,
+      "realtime_30_cpp_mj": true
+    },
+    {
+      "clip": "gait_track_12",
+      "n_frames": 120,
+      "fps": 30.0,
+      "py_ik_ms": 1.4083006501702282,
+      "cpp_mujoco_ms": 0.38408559999999997,
+      "cpp_pin_ms": 0.15603610833333334,
+      "cpp_mujoco_fps": 2603.586283890883,
+      "rmse_vs_py": 0.004870245447265303,
+      "realtime_30_cpp_mj": true
+    },
+    {
+      "clip": "tennis",
+      "n_frames": 120,
+      "fps": 30.0,
+      "py_ik_ms": 1.6900440416065976,
+      "cpp_mujoco_ms": 0.4631518416666667,
+      "cpp_pin_ms": 0.19591111666666666,
+      "cpp_mujoco_fps": 2159.119126896847,
+      "rmse_vs_py": 0.001836567729055489,
+      "realtime_30_cpp_mj": true
+    }
+  ]
+}

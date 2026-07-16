@@ -17,19 +17,18 @@ scripts/
 python scripts/gmr_gui.py
 ```
 
-`gmr_gui` 可在界面选择 **Per-frame IK** 或 **Trajectory Optimization (TO)**（BVH / SMPL-X / GVHMR / 视频）。应用标题常量：`general_motion_retargeting/gui/core.py` → `GUI_APP_TITLE`。
+`gmr_gui` 可在界面选择 **Per-frame IK**、**Online Batch**、**Batch TO (Python/C++)** 等（BVH / SMPL-X / GVHMR / 视频）。应用标题常量：`general_motion_retargeting/gui/core.py` → `GUI_APP_TITLE`。
 
 ```bash
 python scripts/retarget/bvh_to_robot.py --bvh_file ... --robot unitree_g1
-python scripts/retarget/bvh_to_robot_trajectory_opt.py --bvh_file ... --robot unitree_g1
 python scripts/retarget/smplx_to_robot.py --smplx_file ... --robot unitree_g1
-python scripts/retarget/smplx_to_robot_sliding_window.py --smplx_file ... --robot unitree_g1
+python scripts/retarget/to_robot_batch.py --input_file ... --robot unitree_g1
 python scripts/gvhmr/to_robot.py --gvhmr_pred_file ... --robot unitree_g1
-python scripts/gvhmr/to_robot_sliding_window.py --gvhmr_pred_file ... --robot unitree_g1
+python scripts/gvhmr/to_robot_online_batch.py --gvhmr_pred_file ... --robot unitree_g1
+python scripts/gvhmr/to_robot_online_qp.py --input_file ... --robot unitree_g1
 python scripts/viz/vis_robot_motion.py --robot ... --robot_motion_path ...
-python scripts/analysis/batch_lafan1_retarget_compare.py --bvh_dir ... --robot unitree_g1
-python scripts/analysis/compare_joint_trajectories.py --smplx_file ... --robot unitree_g1
-python scripts/analysis/benchmark_retarget_timing.py --gvhmr_pred_file ... --robot unitree_g1
+python scripts/analysis/compare_joint_trajectories.py --baseline ... --candidate ... --robot unitree_g1
+python scripts/analysis/benchmark_gvhmr_retarget_methods.py --pt_glob 'data/gvhmr_test_videos/*/hmr4d_results.pt'
 ```
 
 接地参数：`--contact_ground --foot_ground_limit`。详见 [`docs/contact_ground.md`](../docs/contact_ground.md)。

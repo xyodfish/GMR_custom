@@ -1,0 +1,87 @@
+{
+  "setup": {
+    "robot": "unitree_g1",
+    "max_frames": 120,
+    "contact_ground": true,
+    "fk_metric": "BatchTrajectoryRetargeter._fk_tracking_cost (same weights as Batch TO)",
+    "clips": [
+      "walking",
+      "gait_track_12",
+      "tennis"
+    ]
+  },
+  "summary": {
+    "mean_py_fk": 5.890316583989701,
+    "mean_pin_fk": 5.898598089723895,
+    "mean_pin_fk_change_pct": 0.1694541501274198,
+    "mean_mj_fk": 5.8903165840219645,
+    "mean_mj_fk_change_pct": 5.742452681759289e-10,
+    "mean_rmse_pin": 0.027542950809641403,
+    "mean_rmse_mj": 4.767108006872419e-10,
+    "mean_mad_pin": 0.011254660451997156,
+    "mean_mad_mj": 2.5636705408862416e-11
+  },
+  "per_clip": [
+    {
+      "clip": "walking",
+      "n_frames": 120,
+      "fps": 30.0,
+      "py_fk_mean": 6.427073436342656,
+      "py_fk_max": 10.266441192798087,
+      "pin_fk_mean": 6.359882387618556,
+      "pin_fk_max": 10.105246457935436,
+      "pin_fk_change_pct": -1.0454377002161,
+      "mj_fk_mean": 6.427073436376293,
+      "mj_fk_max": 10.266441192799162,
+      "mj_fk_change_pct": 5.233656258022224e-10,
+      "rmse_pin_vs_py": 0.02815604598555869,
+      "rmse_mj_vs_py": 8.220173581506592e-11,
+      "mad_pin_vs_py": 0.01478285443829033,
+      "mad_mj_vs_py": 1.0469736704068451e-11,
+      "pin_ms": 0.2815054416666667,
+      "mj_ms": 0.7432390166666667,
+      "pin_fk_worse_frames": 0
+    },
+    {
+      "clip": "gait_track_12",
+      "n_frames": 120,
+      "fps": 30.0,
+      "py_fk_mean": 5.97829428204417,
+      "py_fk_max": 8.133708712210577,
+      "pin_fk_mean": 6.064011704133935,
+      "pin_fk_max": 8.012192046677567,
+      "pin_fk_change_pct": 1.433810683211386,
+      "mj_fk_mean": 5.978294282044171,
+      "mj_fk_max": 8.133708712210684,
+      "mj_fk_change_pct": 1.485671962264843e-14,
+      "rmse_pin_vs_py": 0.00836350352440509,
+      "rmse_mj_vs_py": 5.42252548740379e-13,
+      "mad_pin_vs_py": 0.005151422643195616,
+      "mad_mj_vs_py": 6.879346134972263e-14,
+      "pin_ms": 0.17338777500000002,
+      "mj_ms": 0.36604224166666666,
+      "pin_fk_worse_frames": 0
+    },
+    {
+      "clip": "tennis",
+      "n_frames": 120,
+      "fps": 30.0,
+      "py_fk_mean": 5.265582033582276,
+      "py_fk_max": 9.82089925570857,
+      "pin_fk_mean": 5.271900177419195,
+      "pin_fk_max": 9.959023474330413,
+      "pin_fk_change_pct": 0.11998946738697333,
+      "mj_fk_mean": 5.265582033645429,
+      "mj_fk_max": 9.820899255708571,
+      "mj_fk_change_pct": 1.1993553220059414e-09,
+      "rmse_pin_vs_py": 0.04610930291896042,
+      "rmse_mj_vs_py": 1.3473884136979194e-09,
+      "mad_pin_vs_py": 0.013829704274505526,
+      "mad_mj_vs_py": 6.637158606116907e-11,
+      "pin_ms": 0.19224415,
+      "mj_ms": 0.44896782500000004,
+      "pin_fk_worse_frames": 0
+    }
+  ],
+  "verdict_pin_consistent": true
+}

@@ -87,21 +87,17 @@ INVERSE_RATE_LIMIT_TYPES = frozenset({"gvhmr_pt", "video_gvhmr"})
 
 RETARGET_ALGOS = {
     "ik": {"label": "Per-frame IK (GMR)"},
-    "to": {"label": "Trajectory Optimization (TO)"},
+    "online_batch": {"label": "Online Batch-Lite (在线 · 推荐)"},
     "batch_to": {"label": "Batch TO (Python)"},
     "cpp_batch_to": {"label": "Batch TO (C++ · 一键回放)"},
-    "cpp_causal_to": {"label": "Causal TO (C++ · 在线)"},
 }
 RETARGET_ALGO_LABELS = {key: cfg["label"] for key, cfg in RETARGET_ALGOS.items()}
 LABEL_TO_RETARGET_ALGO = {cfg["label"]: key for key, cfg in RETARGET_ALGOS.items()}
 
-TO_SCRIPT_BY_INPUT = {
-    "bvh_lafan1": "retarget/bvh_to_robot_trajectory_opt.py",
-    "bvh_nokov": "retarget/bvh_to_robot_trajectory_opt.py",
-    "smplx": "retarget/smplx_to_robot_trajectory_opt.py",
-    "gvhmr_pt": "gvhmr/to_robot_trajectory_opt.py",
+ONLINE_BATCH_SCRIPT_BY_INPUT = {
+    "gvhmr_pt": "gvhmr/to_robot_online_batch.py",
 }
-TO_SUPPORTED_INPUT_TYPES = frozenset(set(TO_SCRIPT_BY_INPUT) | {"video_gvhmr"})
+ONLINE_BATCH_SUPPORTED_INPUT_TYPES = frozenset(ONLINE_BATCH_SCRIPT_BY_INPUT)
 
 BATCH_TO_SCRIPT_BY_INPUT = {
     "gvhmr_pt": "retarget/to_robot_batch.py",
@@ -143,15 +139,11 @@ class GMRRunConfig:
     gvhmr_root: str = ""
     gvhmr_python: str = ""
     gvhmr_static_cam: bool = True
-    to_mode: str = "fast"
-    to_window_size: int = 8
-    to_w_velocity: float = 2.0
-    to_w_acceleration: float = 10.0
-    to_use_gmr_init: bool = True
     batch_to_fast: bool = False
     batch_to_window_size: int = 16
     batch_to_window_stride: int = 8
     batch_to_gn_steps: int = 3
+    online_batch_preset: str = "balanced"
 
 
 def robots_for_input(input_type: str) -> list[str]:
@@ -173,10 +165,6 @@ def tri_state_to_args(name: str, value: str) -> list[str]:
     return []
 
 
-def supports_to(input_type: str) -> bool:
-    return input_type in TO_SUPPORTED_INPUT_TYPES
-
-
 def supports_batch_to(input_type: str) -> bool:
     return input_type in BATCH_TO_SUPPORTED_INPUT_TYPES
 
@@ -186,21 +174,35 @@ def supports_cpp_to(input_type: str) -> bool:
 
 
 def is_cpp_retarget_algo(retarget_algo: str) -> bool:
-    return retarget_algo in ("cpp_batch_to", "cpp_causal_to")
+    return retarget_algo == "cpp_batch_to"
+
+
+def supports_online_batch(input_type: str) -> bool:
+    return input_type in ONLINE_BATCH_SUPPORTED_INPUT_TYPES
 
 
 def resolve_retarget_script(input_type: str, retarget_algo: str) -> str:
+    if retarget_algo == "online_batch":
+        if input_type not in ONLINE_BATCH_SCRIPT_BY_INPUT:
+            raise ValueError(f"Online Batch not supported for input type: {input_type}")
+        return ONLINE_BATCH_SCRIPT_BY_INPUT[input_type]
     if retarget_algo == "batch_to":
         if input_type not in BATCH_TO_SCRIPT_BY_INPUT:
             raise ValueError(f"Batch TO not supported for input type: {input_type}")
         return BATCH_TO_SCRIPT_BY_INPUT[input_type]
-    if retarget_algo == "to":
-        if input_type == "video_gvhmr":
-            return INPUT_TYPES[input_type]["script"]
-        if input_type not in TO_SCRIPT_BY_INPUT:
-            raise ValueError(f"TO not supported for input type: {input_type}")
-        return TO_SCRIPT_BY_INPUT[input_type]
     return INPUT_TYPES[input_type]["script"]
+
+
+def append_online_batch_args(cmd: list[str], cfg: GMRRunConfig) -> None:
+    if cfg.retarget_algo != "online_batch":
+        return
+    cmd += ["--preset", str(cfg.online_batch_preset)]
+    if cfg.loop:
+        cmd.append("--loop")
+    if cfg.rate_limit:
+        cmd.append("--rate_limit")
+    else:
+        cmd.append("--no-rate-limit")
 
 
 def append_batch_to_args(cmd: list[str], cfg: GMRRunConfig) -> None:
@@ -219,17 +221,6 @@ def append_batch_to_args(cmd: list[str], cfg: GMRRunConfig) -> None:
         cmd.append("--rate_limit")
     else:
         cmd.append("--no-rate-limit")
-
-
-def append_to_args(cmd: list[str], cfg: GMRRunConfig) -> None:
-    if cfg.retarget_algo != "to":
-        return
-    cmd += ["--to_mode", cfg.to_mode]
-    cmd += ["--window_size", str(int(cfg.to_window_size))]
-    cmd += ["--w_velocity", str(float(cfg.to_w_velocity))]
-    cmd += ["--w_acceleration", str(float(cfg.to_w_acceleration))]
-    if not cfg.to_use_gmr_init:
-        cmd.append("--no-use_gmr_init")
 
 
 def default_save_path(input_path: str, robot: str) -> str:
@@ -262,11 +253,11 @@ def validate_config(cfg: GMRRunConfig) -> str | None:
             return f"未找到 GVHMR demo 脚本: {demo_script}"
     if cfg.input_type == "video_gvhmr" and p.suffix.lower() not in VIDEO_EXTENSIONS:
         return f"视频模式需要 {', '.join(VIDEO_EXTENSIONS)} 格式文件"
-    if cfg.retarget_algo == "to":
+    if cfg.retarget_algo == "online_batch":
         if cfg.run_mode == "batch":
-            return "Trajectory Optimization (TO) 暂不支持批量模式"
-        if not supports_to(cfg.input_type):
-            return "当前数据类型不支持 TO，请改用 Per-frame IK 或更换输入类型"
+            return "Online Batch-Lite 暂不支持批量模式"
+        if not supports_online_batch(cfg.input_type):
+            return "当前数据类型不支持 Online Batch（支持 GVHMR .pt）"
     if cfg.retarget_algo == "batch_to":
         if cfg.run_mode == "batch":
             return "Batch TO 暂不支持批量模式"
@@ -279,8 +270,6 @@ def validate_config(cfg: GMRRunConfig) -> str | None:
             return "当前数据类型不支持 C++ TO（支持 GVHMR .pt / SMPL-X / BVH）"
         if not DEFAULT_CPP_VIEWER.is_file():
             return f"未找到 C++ viewer: {DEFAULT_CPP_VIEWER}（请先 cmake --build cpp/build）"
-        if cfg.save_output and cfg.retarget_algo == "cpp_causal_to":
-            return "C++ Causal TO 暂不支持保存 PKL/JSON"
         if cfg.record_video:
             return "C++ TO 暂不支持 GUI 内录制视频，请用 Python 流程或后续扩展"
     return None
@@ -289,7 +278,7 @@ def validate_config(cfg: GMRRunConfig) -> str | None:
 def append_cpp_to_viewer_args(cmd: list[str], cfg: GMRRunConfig) -> None:
     if not is_cpp_retarget_algo(cfg.retarget_algo):
         return
-    method = "batch_to" if cfg.retarget_algo == "cpp_batch_to" else "causal_to"
+    method = "batch_to"
     cmd += ["--method", method]
     input_type = cfg.input_type
     path = cfg.input_path.strip()
@@ -383,8 +372,6 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
         cmd += ["--gvhmr_pred_file", path, "--robot", robot]
     elif input_type == "video_gvhmr":
         cmd += ["--video", path, "--robot", robot]
-        if cfg.retarget_algo == "to":
-            cmd += ["--retarget_algo", "to"]
         gvhmr_root = cfg.gvhmr_root.strip() or str(DEFAULT_GVHMR_ROOT)
         cmd += ["--gvhmr_root", gvhmr_root]
         if cfg.gvhmr_python.strip():
@@ -426,12 +413,9 @@ def build_command(cfg: GMRRunConfig) -> list[str]:
         cmd.append("--record_video")
         cmd += ["--video_path", cfg.video_path.strip()]
 
-    if cfg.retarget_algo == "to":
-        if input_type == "video_gvhmr":
-            append_to_args(cmd, cfg)
-        elif input_type != "playback_pkl":
-            append_to_args(cmd, cfg)
     if cfg.retarget_algo == "batch_to" and input_type != "playback_pkl":
         append_batch_to_args(cmd, cfg)
+    if cfg.retarget_algo == "online_batch" and input_type != "playback_pkl":
+        append_online_batch_args(cmd, cfg)
 
     return cmd

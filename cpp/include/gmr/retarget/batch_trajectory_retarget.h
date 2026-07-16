@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -54,16 +55,41 @@ namespace gmr {
         const BatchTrajectoryProfile& lastProfile() const { return lastProfile_; }
         int modelNq() const { return nq_; }
 
+        BatchTrajectoryConfig& config() { return config_; }
+        const BatchTrajectoryConfig& config() const { return config_; }
+
+        void applyContactGroundConfig(const ContactGroundConfig& contactGround);
+
+        HumanFrame prepareHumanFrame(const HumanFrame& frame, bool offsetToGround) const;
+        FrameTargets targetsForPrepared(const HumanFrame& prepared) const;
+
+        /// Constrained window GN (DAQP) used by Online QP-MPC.
+        struct QpWindowOptions {
+            const Eigen::VectorXd* qPrev = nullptr;
+            int pinFrames                = 0;
+            double wGmr                  = 0.0;
+            double dqMax                 = 4.0;
+            double motionDt              = 1.0 / 30.0;
+            bool useJointLimits          = true;
+            bool useVelocityLimits       = true;
+            std::string qpBackend        = "daqp";
+        };
+
+        std::vector<Eigen::VectorXd> optimizeQpWindow(const std::vector<Eigen::VectorXd>& qInit,
+                                                      const std::vector<FrameTargets>& targets,
+                                                      const Eigen::VectorXd& anchor,
+                                                      const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
+                                                      double anchorWeight, const QpWindowOptions& qpOpts);
+
+        void clearFootContactSchedule();
+        void setFootContactFromQRef(const std::vector<Eigen::VectorXd>& qRef);
+
        private:
         void buildTrackEntries();
         void buildOptIndices();
         void buildSmoothMappings();
         void resolveFootBodyIds();
-        void applyContactGroundConfig(const ContactGroundConfig& contactGround);
         void ensureGnWorkspace(int nFrames) const;
-
-        HumanFrame prepareHumanFrame(const HumanFrame& frame, bool offsetToGround) const;
-        FrameTargets targetsForPrepared(const HumanFrame& prepared) const;
 
         std::vector<Eigen::VectorXd> bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
                                                 bool offsetToGround, const BatchIkBootstrapContext* ikBootstrap);
@@ -77,7 +103,8 @@ namespace gmr {
         std::vector<Eigen::VectorXd> optimizeGnWindow(const std::vector<Eigen::VectorXd>& qInit,
                                                       const std::vector<FrameTargets>& targets,
                                                       const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef,
-                                                      int frameOffset, double anchorWeight);
+                                                      int frameOffset, double anchorWeight,
+                                                      const QpWindowOptions* qpOpts = nullptr);
 
         void clipHingeQpos(Eigen::VectorXd& q) const;
         void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot C++ batch / causal TO: load motion file → temp human JSON → gmr_retarget_viewer."""
+"""One-shot C++ batch TO / online QP: load motion file → temp human JSON → gmr_retarget_viewer."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _tri_bool(value: str | None, flag: str, cmd: list[str]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="C++ batch/causal TO viewer from .pt/.npz/.bvh.")
+    parser = argparse.ArgumentParser(description="C++ batch TO / online QP viewer from .pt/.npz/.bvh.")
     parser.add_argument("--input_file", required=True)
     parser.add_argument(
         "--input_type",
@@ -36,7 +36,7 @@ def main() -> None:
         choices=["auto", "gvhmr_pt", "smplx", "bvh_lafan1", "bvh_nokov"],
     )
     parser.add_argument("--robot", default="unitree_g1")
-    parser.add_argument("--method", required=True, choices=["batch_to", "causal_to"])
+    parser.add_argument("--method", required=True, choices=["batch_to", "online_qp"])
     parser.add_argument("--gmr_root", default=str(REPO))
     parser.add_argument("--viewer", default=str(DEFAULT_VIEWER))
     parser.add_argument("--motion_fps", type=int, default=30)
@@ -54,6 +54,8 @@ def main() -> None:
     parser.add_argument("--fix_robot_penetration", default=None)
     parser.add_argument("--foot_ground_limit", default=None)
     parser.add_argument("--out_json", default=None, help="batch_to only: save qpos JSON after optimize")
+    parser.add_argument("--online_qp_preset", default="anti_slip", choices=["default", "smooth", "anti_slip"])
+    parser.add_argument("--online_qp_mode", default="lookahead", choices=["lookahead", "causal"])
     args = parser.parse_args()
 
     if args.fast and args.quality:
@@ -77,7 +79,7 @@ def main() -> None:
     }
 
     print(f"[run_cpp_to_viewer] loaded {len(frames)} frames @ {fps:.1f} fps src_human={src_human}", flush=True)
-    if len(frames) > 300:
+    if len(frames) > 300 and args.method == "batch_to":
         print(
             "[run_cpp_to_viewer] Large clip: batch GN runs in the terminal first; "
             "MuJoCo window opens when optimization finishes.",
@@ -128,7 +130,13 @@ def main() -> None:
             if args.out_json:
                 cmd += ["--out_json", args.out_json]
         else:
-            cmd.append("--realtime")
+            cmd += [
+                "--realtime",
+                "--online_qp_preset",
+                args.online_qp_preset,
+                "--online_qp_mode",
+                args.online_qp_mode,
+            ]
 
         if args.loop:
             cmd.append("--loop")

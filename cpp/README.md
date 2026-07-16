@@ -67,11 +67,11 @@ Parity 回归：
 ./scripts/tools/verify_batch_to_parity.sh
 ```
 
-## GUI 一键 C++ Batch / Causal TO
+## GUI 一键 C++ Batch TO / Online QP
 
 ```bash
 python scripts/gmr_gui.py
-# 算法选 Batch TO (C++ · 一键回放) 或 Causal TO (C++ · 在线)
+# 算法选 Batch TO (C++ · 一键回放)
 # 支持 GVHMR .pt / SMPL-X / BVH；内部调用 run_cpp_to_viewer.py
 ```
 
@@ -107,22 +107,21 @@ cpp/build/gmr_retarget_viewer \
   --realtime --loop
 ```
 
-**因果 TO（在线）** — 每帧因果 FK GN + 时序平滑，实时播放：
+**Online QP（在线）** — 每帧流式 QP-MPC，实时播放：
 
 ```bash
 cpp/build/gmr_retarget_viewer \
   --backend mujoco_se3 \
-  --method causal_to \
+  --method online_qp \
+  --online_qp_preset anti_slip \
+  --online_qp_mode lookahead \
   --gmr_root . \
   --robot unitree_g1 \
   --human_frame_json output/cxk_ball_human_frames.json \
   --actual_human_height 1.7 \
   --contact_ground \
-  --max_iter 5 \
   --realtime --loop
 ```
-
-`--max_iter 5` 用于 IK warm start（对齐 Python light IK）。首帧 bootstrap 用完整 IK，之后每帧 GN 精修。
 
 **Batch TO（先优化再播放）** — C++ 内完成 batch GN，MuJoCo 窗口直接回放，**不写 JSON**：
 
