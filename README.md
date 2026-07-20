@@ -12,6 +12,7 @@
 - Decoupled C++ retarget backends and rendering targets (MuJoCo / ROS / custom viewers).
 - Reuse of existing GMR IK configs in `general_motion_retargeting/ik_configs/*.json` to keep Python/C++ setup aligned.
 - Add self collision constraints and optimization on foot slide problem with ground contact constraints.
+- Joint-limit safety margin (`joint_limit_margin_deg`) that keeps committed hinge joints a configurable number of degrees away from their hard limits, improving trackability. Available in the trajectory-optimization retargeters (Python `OnlineBatchRetargeter` / `OnlineQpRetargeter`; C++ `OnlineQpRetargeter` and offline `BatchTrajectoryRetargeter`). See [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md).
 - Decoupled Python contact/ground controls for old `contact_ground`, experimental `foot_ground_limit`, and `fix_robot_penetration` so each mode can be evaluated independently.
 - Offline contact-mode analysis tools for BVH retargeting, with CSV/JSON summaries for penetration, root lift, foot slip, and IK tracking metrics.
 
@@ -22,6 +23,7 @@ This repo is licensed under the [MIT License](LICENSE).
 
 
 # News & Updates
+- **2026-07-20:** Added a **joint-limit safety margin** (`joint_limit_margin_deg`) to the trajectory-optimization retargeters. It keeps committed hinge joints a set number of degrees off their hard limits (0 disables), eliminating joint-limit saturation with negligible tracking cost. Supported in Python (`OnlineBatchRetargeter`, `OnlineQpRetargeter`) and C++ (`gmr_online_qp_cli`, `gmr_batch_to_cli`, and `gmr_retarget_viewer`). See [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md).
 - **2026-07-13:** Added **Unitree H2** (`unitree_h2`) with SMPL-X and LAFAN1 BVH IK configs, `contact_ground` preset, and tuned `bvh_lafan1_to_h2.json`. Real-time retargeting via `bvh_to_robot.py` / `human_json_to_robot.py`; playback with IK-target overlays via `vis_robot_motion.py --human_frame_json`.
 - **2026-06-26:** Added decoupled contact/ground mode controls and offline analysis tooling for BVH retargeting. See [`docs/contact_ground.md`](docs/contact_ground.md) and [`docs/contact_modes_analysis.md`](docs/contact_modes_analysis.md).
 - **2026-04-15:** This repository adds an experimental C++ retargeting feature set based on GMR. See the new "C++ Feature (Experimental)" section and [`cpp/README.md`](cpp/README.md).

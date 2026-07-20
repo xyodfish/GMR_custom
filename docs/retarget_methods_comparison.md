@@ -95,6 +95,48 @@
 
 ---
 
+## 4b. 关节限位安全余量（`joint_limit_margin_deg`）
+
+在轨迹优化类方法上新增的可选约束：让**提交的旋转关节**始终离机械硬限位保持 `margin` 度，避免贴限位导致的控制饱和 / 难 track。默认 `0`（关闭）。
+
+**机制**（灵感来自 `robot_retargeter`）
+- 把受限 hinge 关节的范围由 `[qmin, qmax]` 收紧为 `[qmin+margin, qmax-margin]`（范围不足 `2*margin` 的窄关节自动跳过，slide 关节不加余量）。
+- online_qp：QP box 约束按余量收紧 **＋** 对最终提交姿态做一次余量裁剪（Python `_apply_margin_clip` / C++ `clipHingeQposMargin`）。
+- offline batch_to：**只对最终提交姿态裁剪一次**，不在 GN 迭代内裁剪（避免与优化器对抗、引入震荡）。
+
+**支持矩阵**
+
+| 方法 | Python | C++ | 参数 / CLI |
+|------|:------:|:---:|------------|
+| Online Batch-Lite (`OnlineBatchRetargeter`) | ✅ | — | `OnlineBatchConfig.joint_limit_margin_deg`；`to_robot_online_batch.py --joint_limit_margin_deg` |
+| Online QP-MPC (`OnlineQpRetargeter`) | ✅ | ✅ | `OnlineQpConfig.joint_limit_margin_deg`；`gmr_online_qp_cli --joint_limit_margin_deg`；viewer `--online_qp_joint_limit_margin_deg` |
+| Batch TO (`BatchTrajectoryRetargeter`) | — | ✅ | `BatchTrajectoryConfig.jointLimitMarginDeg`；`gmr_batch_to_cli --joint_limit_margin_deg`；viewer `--batch_to_joint_limit_margin_deg` |
+| 逐帧 IK（基线） | — | — | 未接入 |
+
+**实测**（`unitree_g1`，cxk_ball 120 帧；`near<3°` = 有关节距限位<3° 的帧数；`minMrg` = 全程最小余量；`meanDrift` = 相对 margin=0 的平均关节漂移，度）
+
+C++ Online QP（preset=smooth, lookahead）
+
+| margin(°) | jerkRMS | near<3° | minMrg(°) | meanDrift(°) |
+|---:|---:|---:|---:|---:|
+| 0 | 855.7 | 45 | 0.00 | – |
+| 3 | 856.5 | **0** | 3.00 | 0.05 |
+| 5 | 787.2 | 0 | 5.00 | 0.18 |
+| 10 | 741.4 | 0 | 10.00 | 0.49 |
+
+C++ Batch TO（quality）
+
+| margin(°) | jerkRMS | near<3° | minMrg(°) | meanDrift(°) |
+|---:|---:|---:|---:|---:|
+| 0 | 897.1 | 46 | 0.00 | – |
+| 3 | 897.5 | **0** | 3.00 | 0.04 |
+| 5 | 899.1 | 0 | 5.00 | 0.07 |
+| 10 | 885.0 | 0 | 10.00 | 0.25 |
+
+**结论**：`margin=3°` 即可把近限位帧数降到 0、硬保证每个受限 hinge 关节离限位 ≥3°，且 jerk 与跟随几乎无损（漂移 ~0.04°）；余量越大越平滑但漂移线性增大，是"平滑度 ↔ 跟随精度"的取舍。运行开销可忽略（C++ online_qp margin 0 vs 3 仅差约 0.08 ms/帧）。
+
+---
+
 ## 5. 复现
 
 ```bash
@@ -110,6 +152,16 @@ python scripts/gvhmr/to_robot_online_qp.py \
 python scripts/tools/run_cpp_batch_to.py \
   --input_file data/gvhmr_test_videos/walking/hmr4d_results.pt \
   --out_json /tmp/batch.json --contact_ground --quality --benchmark
+
+# 关节限位安全余量（C++ Online QP，3° 余量）
+cpp/build/gmr_online_qp_cli --gmr_root . --robot unitree_g1 \
+  --human_frame_json output/cxk_ball_human_frames.json --out_json /tmp/qp.json \
+  --src_human smplx --preset smooth --joint_limit_margin_deg 3
+
+# 关节限位安全余量（C++ Batch TO，3° 余量）
+cpp/build/gmr_batch_to_cli --gmr_root . --robot unitree_g1 \
+  --human_frame_json output/cxk_ball_human_frames.json --out_json /tmp/batch.json \
+  --src_human smplx --joint_limit_margin_deg 3
 ```
 
 相关文档：

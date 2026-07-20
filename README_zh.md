@@ -12,6 +12,7 @@
 - C++ 重定向后端与渲染目标解耦（MuJoCo / ROS / 自定义 viewer）。
 - 复用 `general_motion_retargeting/ik_configs/*.json` 中的 IK 配置，保持 Python/C++ 配置一致。
 - 增加自碰撞约束，以及基于地面接触的脚滑优化。
+- 关节限位安全余量（`joint_limit_margin_deg`）：让提交的旋转关节始终离机械硬限位保持可配置的度数，改善可跟踪性。已接入轨迹优化类重定向器（Python `OnlineBatchRetargeter` / `OnlineQpRetargeter`；C++ `OnlineQpRetargeter` 与离线 `BatchTrajectoryRetargeter`）。详见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
 - Python 侧将 `contact_ground`、实验性 `foot_ground_limit`、`fix_robot_penetration` 解耦，便于独立评估各模式。
 - 提供 BVH 重定向的离线接触模式分析工具，输出穿透、root 抬升、脚滑、IK 跟踪误差等 CSV/JSON 汇总。
 
@@ -22,6 +23,7 @@
 
 
 # 新闻与更新
+- **2026-07-20：** 为轨迹优化类重定向器新增**关节限位安全余量**（`joint_limit_margin_deg`）：让提交的旋转关节离硬限位保持设定度数（0 关闭），可消除限位饱和且跟踪代价极小。Python（`OnlineBatchRetargeter`、`OnlineQpRetargeter`）与 C++（`gmr_online_qp_cli`、`gmr_batch_to_cli`、`gmr_retarget_viewer`）均支持。见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
 - **2026-07-16：** 移除不可用的 Sliding Window / Causal TO 公开算法；在线推荐 Online QP / Online Batch，离线推荐 Batch TO。见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
 - **2026-07-15：** 新增 **Online Batch-Lite** 在线多帧 GN 重定向（`OnlineBatchRetargeter`）：~7.7 ms/帧、30 FPS 实时，jerk 优于 IK。见 [`docs/online_batch_retargeting.md`](docs/online_batch_retargeting.md)。
 - **2026-07-13：** 新增 **Unitree H2**（`unitree_h2`），包含 SMPL-X 与 LAFAN1 BVH 的 IK 配置、`contact_ground` preset，以及调优后的 `bvh_lafan1_to_h2.json`。可通过 `bvh_to_robot.py` / `human_json_to_robot.py` 实时重定向；通过 `vis_robot_motion.py --human_frame_json` 回放并叠加 IK 目标锚点。
