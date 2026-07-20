@@ -72,6 +72,7 @@ namespace gmr {
             double motionDt              = 1.0 / 30.0;
             bool useJointLimits          = true;
             bool useVelocityLimits       = true;
+            double jointLimitMarginDeg   = 0.0;
             std::string qpBackend        = "daqp";
         };
 
@@ -107,6 +108,13 @@ namespace gmr {
                                                       const QpWindowOptions* qpOpts = nullptr);
 
         void clipHingeQpos(Eigen::VectorXd& q) const;
+
+       public:
+        /// Clamp limited hinge joints to their range shrunk by ``marginDeg`` (slide joints use the
+        /// hard range). Mirrors Python ``_apply_margin_clip`` so committed poses stay off the limits.
+        void clipHingeQposMargin(Eigen::VectorXd& q, double marginDeg) const;
+
+       private:
         void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;
         double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
                           const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,

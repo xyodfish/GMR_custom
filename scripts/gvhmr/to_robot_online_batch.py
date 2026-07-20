@@ -101,6 +101,18 @@ if __name__ == "__main__":
         default=None,
         help="Blend TO result toward seed in [0,1]. Higher → closer to warmstart.",
     )
+    parser.add_argument(
+        "--knee_min_bend_deg",
+        type=float,
+        default=None,
+        help="Enforce a minimum knee bend on near-straight legs (0 disables).",
+    )
+    parser.add_argument(
+        "--joint_limit_margin_deg",
+        type=float,
+        default=None,
+        help="Keep committed hinge joints this many degrees away from hard limits.",
+    )
     parser.add_argument("--w_velocity", type=float, default=None)
     parser.add_argument("--w_acceleration", type=float, default=None)
     parser.add_argument("--w_foot_slip", type=float, default=None)
@@ -159,6 +171,8 @@ if __name__ == "__main__":
         "gmr_bootstrap_frames",
         "extrap_policy",
         "bootstrap_commit_gmr",
+        "knee_min_bend_deg",
+        "joint_limit_margin_deg",
         "w_velocity",
         "w_acceleration",
         "w_foot_slip",

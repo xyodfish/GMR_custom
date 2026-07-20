@@ -360,6 +360,29 @@ namespace gmr {
         }
     }
 
+    void BatchTrajectoryRetargeter::clipHingeQposMargin(Eigen::VectorXd& q, double marginDeg) const {
+        if (marginDeg <= 0.0) {
+            clipHingeQpos(q);
+            return;
+        }
+        mjModel* model         = impl_->model.get();
+        const double marginRad = marginDeg * 0.017453292519943295;
+        for (int j = 0; j < model->njnt; ++j) {
+            const int jtype = model->jnt_type[j];
+            if ((jtype != mjJNT_HINGE && jtype != mjJNT_SLIDE) || model->jnt_limited[j] <= 0) {
+                continue;
+            }
+            const int qadr = model->jnt_qposadr[j];
+            double qmin    = model->jnt_range[2 * j + 0];
+            double qmax    = model->jnt_range[2 * j + 1];
+            if (jtype == mjJNT_HINGE && (qmax - qmin) > 2.0 * marginRad) {
+                qmin += marginRad;
+                qmax -= marginRad;
+            }
+            q[qadr] = std::min(std::max(q[qadr], qmin), qmax);
+        }
+    }
+
     void BatchTrajectoryRetargeter::applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat,
                                                         double alpha) const {
         mjModel* model    = impl_->model.get();
@@ -991,6 +1014,8 @@ namespace gmr {
                 }
 
                 if (qpOpts->useJointLimits) {
+                    constexpr double kDeg2Rad = 0.017453292519943295;
+                    const double marginRad    = std::max(0.0, qpOpts->jointLimitMarginDeg) * kDeg2Rad;
                     for (int t = 0; t < nFrames; ++t) {
                         const int off = t * m;
                         for (const auto& hp : hingePairs) {
@@ -998,8 +1023,15 @@ namespace gmr {
                             if (model->jnt_limited[j] <= 0) {
                                 continue;
                             }
-                            const double qmin   = model->jnt_range[2 * j + 0];
-                            const double qmax   = model->jnt_range[2 * j + 1];
+                            double qmin = model->jnt_range[2 * j + 0];
+                            double qmax = model->jnt_range[2 * j + 1];
+                            // Keep revolute joints a safety margin away from the hard limits so the
+                            // commanded trajectory stays inside the trackable range.
+                            if (marginRad > 0.0 && model->jnt_type[j] == mjJNT_HINGE &&
+                                (qmax - qmin) > 2.0 * marginRad) {
+                                qmin += marginRad;
+                                qmax -= marginRad;
+                            }
                             const double q0     = qWin[t][hp.qadr];
                             lb[off + hp.localV] = std::max(lb[off + hp.localV], qmin - q0);
                             ub[off + hp.localV] = std::min(ub[off + hp.localV], qmax - q0);
@@ -1269,6 +1301,14 @@ namespace gmr {
             }
         }
         lastProfile_.finalizeMs = elapsedMs(t0);
+
+        // Keep committed hinge joints a safety margin off the hard limits (Python _apply_margin_clip).
+        // Applied once on the final pose so it does not disturb the GN optimizer.
+        if (config_.jointLimitMarginDeg > 0.0) {
+            for (auto& q : qOut) {
+                clipHingeQposMargin(q, config_.jointLimitMarginDeg);
+            }
+        }
 
         lastProfile_.nFrames = static_cast<int>(humanFrames.size());
         lastProfile_.totalMs = elapsedMs(tTotal);

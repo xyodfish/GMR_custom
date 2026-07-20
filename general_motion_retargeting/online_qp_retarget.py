@@ -54,6 +54,8 @@ class OnlineQpConfig:
     dq_max: float = 4.0  # rad/s (hinge/slide)
     use_joint_limits: bool = True
     use_velocity_limits: bool = True
+    # Keep committed hinge joints this many degrees away from hard limits (0 disables).
+    joint_limit_margin_deg: float = 0.0
     # Sequence lookahead (peek future human frames). Streaming falls back to causal.
     use_lookahead: bool = True
     qp_solver: str = "daqp"
@@ -145,6 +147,23 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
             if jtype in (mj.mjtJoint.mjJNT_HINGE, mj.mjtJoint.mjJNT_SLIDE):
                 self._hinge_pairs.append((li, int(self.model.jnt_qposadr[j])))
 
+        # Box bounds tightened by the safety margin (revolute joints only).
+        self._qp_lower = self._qpos_lower.copy()
+        self._qp_upper = self._qpos_upper.copy()
+        margin = float(np.deg2rad(max(0.0, oc.joint_limit_margin_deg)))
+        if margin > 0.0:
+            for v in self._opt_vidx:
+                j = int(self.model.dof_jntid[v])
+                if self.model.jnt_type[j] != mj.mjtJoint.mjJNT_HINGE:
+                    continue
+                if not self.model.jnt_limited[j]:
+                    continue
+                qadr = int(self.model.jnt_qposadr[j])
+                lo, hi = float(self._qpos_lower[qadr]), float(self._qpos_upper[qadr])
+                if hi - lo > 2.0 * margin:
+                    self._qp_lower[qadr] = lo + margin
+                    self._qp_upper[qadr] = hi - margin
+
     @property
     def frame_index(self) -> int:
         return self._frame_index
@@ -173,6 +192,14 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
             return self._light_ik_warmstart(q0, prepared, human_data, offset_to_ground)
         return q0
 
+    def _apply_margin_clip(self, q: np.ndarray) -> np.ndarray:
+        """Clamp hinge joints into the margined band (covers non-QP bootstrap frames)."""
+        if self.qp_config.joint_limit_margin_deg <= 0.0:
+            return q
+        for _, qadr in self._hinge_pairs:
+            q[qadr] = min(max(float(q[qadr]), float(self._qp_lower[qadr])), float(self._qp_upper[qadr]))
+        return q
+
     def _build_qp_constraints(
         self,
         q_lin: np.ndarray,
@@ -186,13 +213,13 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
         lb = -np.full(nvar, oc.gn_max_step, dtype=float)
         ub = np.full(nvar, oc.gn_max_step, dtype=float)
 
-        # Joint limits on hinge/slide: q_lin + dq ∈ [qmin, qmax]
+        # Joint limits on hinge/slide (margined): q_lin + dq ∈ [qmin, qmax]
         if oc.use_joint_limits:
             for t in range(Hn):
                 off = t * m
                 for li, qadr in self._hinge_pairs:
-                    lo = float(self._qpos_lower[qadr])
-                    hi = float(self._qpos_upper[qadr])
+                    lo = float(self._qp_lower[qadr])
+                    hi = float(self._qp_upper[qadr])
                     q0 = float(q_lin[t, qadr])
                     lb[off + li] = max(lb[off + li], lo - q0)
                     ub[off + li] = min(ub[off + li], hi - q0)
@@ -401,6 +428,7 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
         if self.qp_config.finalize_contact:
             q_out = self._finalize_qpos(q_out, prepared, human_data, offset_to_ground)
 
+        q_out = self._apply_margin_clip(q_out)
         self._q_buf.append(q_out.copy())
         self.gmr.configuration.data.qpos[:] = q_out
         mj.mj_forward(self.gmr.model, self.gmr.configuration.data)
@@ -487,6 +515,7 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
                     q_cmd, prepared_slice[0], frames_slice[0], offset_to_ground
                 )
 
+            q_cmd = self._apply_margin_clip(q_cmd)
             q_prev = q_cmd
             self._q_buf.append(q_cmd.copy())
             self.gmr.configuration.data.qpos[:] = q_cmd

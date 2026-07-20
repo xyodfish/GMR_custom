@@ -31,6 +31,8 @@ namespace gmr {
         double wRootXyContact       = 100.0;
         double wContactJointAnchor  = 400.0;
         double footContactMargin    = 0.02;
+        // Keep committed hinge joints this many degrees away from hard limits (0 disables).
+        double jointLimitMarginDeg  = 0.0;
         bool footContactFromRef     = true;
         bool smoothRootXyz          = false;
         std::vector<double> gnLineSearchAlphas = {1.0, 0.5, 0.25, 0.125};

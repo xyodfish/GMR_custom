@@ -75,6 +75,17 @@ class OnlineBatchConfig:
     w_root_xy_contact: float = 0.0
     w_contact_joint_anchor: float = 0.0
     finalize_contact: bool = True
+    # Knee pre-bend (from robot_retargeter): enforce a minimum knee bend on the
+    # human leg targets to avoid straight-leg IK singularity → smoother, more
+    # trackable knee joints. 0 disables. Only near-straight legs are touched.
+    knee_min_bend_deg: float = 0.0
+    knee_prebend_legs: tuple[tuple[str, str, str], ...] = (
+        ("left_hip", "left_knee", "left_foot"),
+        ("right_hip", "right_knee", "right_foot"),
+    )
+    # Joint-limit safety margin (deg) kept away from hard hinge limits so the
+    # committed trajectory stays inside the controllable range. 0 disables.
+    joint_limit_margin_deg: float = 0.0
     profile: bool = False
     verbose: bool = False
 
@@ -219,6 +230,31 @@ class OnlineBatchRetargeter(BatchTrajectoryRetargeter):
         self.last_frame_ms: float = 0.0
         self.last_seed_source: str = ""
 
+        # (qadr, lo, hi) margined bounds for revolute joints; empty when disabled.
+        self._margin_bounds = self._build_margin_bounds(oc.joint_limit_margin_deg)
+
+    def _build_margin_bounds(self, margin_deg: float) -> list[tuple[int, float, float]]:
+        margin = float(np.deg2rad(max(0.0, float(margin_deg))))
+        if margin <= 0.0:
+            return []
+        bounds: list[tuple[int, float, float]] = []
+        for j in range(self.model.njnt):
+            if not self.model.jnt_limited[j]:
+                continue
+            if self.model.jnt_type[j] != mj.mjtJoint.mjJNT_HINGE:
+                continue
+            qadr = int(self.model.jnt_qposadr[j])
+            lo, hi = float(self.model.jnt_range[j][0]), float(self.model.jnt_range[j][1])
+            if hi - lo <= 2.0 * margin:
+                continue  # range too tight for the margin; leave hard limits.
+            bounds.append((qadr, lo + margin, hi - margin))
+        return bounds
+
+    def _clip_hinge_qpos(self, q: np.ndarray) -> None:
+        super()._clip_hinge_qpos(q)
+        for qadr, lo, hi in self._margin_bounds:
+            q[qadr] = min(max(float(q[qadr]), lo), hi)
+
     @property
     def frame_index(self) -> int:
         return self._frame_index
@@ -240,6 +276,90 @@ class OnlineBatchRetargeter(BatchTrajectoryRetargeter):
         if nrm > 1e-9:
             out[3:7] /= nrm
         return out
+
+    @staticmethod
+    def _two_bone_ik_knee(
+        hip: np.ndarray,
+        knee: np.ndarray,
+        foot: np.ndarray,
+        target_foot: np.ndarray,
+    ) -> np.ndarray:
+        """Knee position for a bent leg (thigh len a, calf len b) reaching target_foot.
+
+        Preserves the original bend plane/direction to avoid knee reversal.
+        Single-frame port of robot_retargeter's two-bone IK.
+        """
+        world_up = np.array([0.0, 0.0, 1.0])
+        world_y = np.array([0.0, 1.0, 0.0])
+
+        def _unit(v: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+            n = float(np.linalg.norm(v))
+            return v / n if n > 1e-8 else fallback
+
+        a = float(np.linalg.norm(knee - hip))
+        b = float(np.linalg.norm(foot - knee))
+        orig = foot - hip
+        u0 = _unit(orig, world_up)
+
+        # Bend preference: knee offset off the original hip→foot line.
+        knee_proj = hip + np.dot(knee - hip, u0) * u0
+        bend_pref = knee - knee_proj
+        bend_pref = _unit(bend_pref, np.cross(u0, world_up))
+        bend_pref = _unit(bend_pref, np.cross(u0, world_y))
+
+        plane_n = np.cross(knee - hip, orig)
+        plane_n = _unit(plane_n, np.cross(u0, bend_pref))
+        plane_n = _unit(plane_n, np.cross(u0, world_up))
+
+        thf = target_foot - hip
+        d = float(np.clip(np.linalg.norm(thf), 1e-8, a + b - 1e-8))
+        tu = _unit(thf, u0)
+        x = (a * a - b * b + d * d) / (2.0 * max(d, 1e-8))
+        h = float(np.sqrt(max(a * a - x * x, 0.0)))
+
+        bend_pref_proj = bend_pref - np.dot(bend_pref, tu) * tu
+        bend_dir = np.cross(plane_n, tu)
+        bend_dir = _unit(bend_dir, bend_pref_proj)
+        bend_dir = _unit(bend_dir, np.cross(tu, world_y))
+        if float(np.linalg.norm(bend_pref_proj)) < 1e-8:
+            bend_pref_proj = bend_pref
+        if float(np.dot(bend_dir, bend_pref_proj)) < 0.0:
+            bend_dir = -bend_dir
+
+        return hip + x * tu + h * bend_dir
+
+    def _apply_knee_prebend(self, prepared: dict) -> dict:
+        """Enforce a minimum knee bend on near-straight legs (in place on prepared)."""
+        min_angle = float(np.deg2rad(self.online_config.knee_min_bend_deg))
+        if min_angle <= 0.0:
+            return prepared
+        for hip_n, knee_n, foot_n in self.online_config.knee_prebend_legs:
+            if hip_n not in prepared or knee_n not in prepared or foot_n not in prepared:
+                continue
+            hip = np.asarray(prepared[hip_n][0], dtype=float).reshape(3)
+            knee = np.asarray(prepared[knee_n][0], dtype=float).reshape(3)
+            foot = np.asarray(prepared[foot_n][0], dtype=float).reshape(3)
+            upper = knee - hip
+            lower = foot - knee
+            a = float(np.linalg.norm(upper))
+            b = float(np.linalg.norm(lower))
+            if a < 1e-6 or b < 1e-6:
+                continue
+            # Turn angle between thigh and calf (0 = straight leg).
+            cos_now = float(np.dot(upper, lower) / (a * b))
+            angle_now = float(np.arccos(np.clip(cos_now, -1.0, 1.0)))
+            if angle_now >= min_angle:
+                continue  # already bent enough; leave stance/bent legs untouched.
+            hf = foot - hip
+            hf_len = float(np.linalg.norm(hf))
+            if hf_len < 1e-6:
+                continue
+            d_new = float(np.sqrt(max(a * a + b * b + 2.0 * a * b * np.cos(min_angle), 0.0)))
+            target_foot = hip + (hf / hf_len) * d_new
+            new_knee = self._two_bone_ik_knee(hip, knee, foot, target_foot)
+            prepared[foot_n] = [target_foot, prepared[foot_n][1]]
+            prepared[knee_n] = [new_knee, prepared[knee_n][1]]
+        return prepared
 
     def _seed_extrapolate(self) -> np.ndarray:
         """History warmstart: hold last q (default) or constant-velocity extrapolate."""
@@ -408,6 +528,8 @@ class OnlineBatchRetargeter(BatchTrajectoryRetargeter):
         t0 = time.perf_counter()
         # Always keep GMR human scaling + link target mapping.
         prepared = self.gmr._prepare_scaled_human_data(human_data, offset_to_ground)
+        if self.online_config.knee_min_bend_deg > 0.0:
+            prepared = self._apply_knee_prebend(prepared)
         targets = self._targets_for_prepared(prepared)
         self._frame_index += 1
 
@@ -479,6 +601,10 @@ class OnlineBatchRetargeter(BatchTrajectoryRetargeter):
             q_out = self._finalize_qpos(
                 q_out, prepared, human_data, offset_to_ground
             )
+
+        # Keep every committed frame inside the joint-limit safety margin.
+        if self._margin_bounds:
+            self._clip_hinge_qpos(q_out)
 
         self._q_buf.append(q_out.copy())
         self.gmr.configuration.data.qpos[:] = q_out

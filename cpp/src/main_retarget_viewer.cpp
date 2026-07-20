@@ -51,12 +51,14 @@ struct ViewerConfig {
     int batchToWindowSize   = 16;
     int batchToWindowStride = 8;
     int batchToGnSteps      = 3;
+    double batchToJointLimitMarginDeg = 0.0;
     bool batchToFast        = false;
     int maxFrames           = 0;
     std::string outJson;
 
     std::string onlineQpPreset = "anti_slip";
     std::string onlineQpMode   = "lookahead";  // lookahead | causal
+    double onlineQpJointLimitMarginDeg = 0.0;
 
     int transparentRobot  = 0;
     bool showHumanOverlay = true;
@@ -301,6 +303,7 @@ void loadConfigYaml(const std::filesystem::path& configPath, ViewerConfig* confi
     setIfPresent(root, "batch_to_window_size", &config->batchToWindowSize);
     setIfPresent(root, "batch_to_window_stride", &config->batchToWindowStride);
     setIfPresent(root, "batch_to_gn_steps", &config->batchToGnSteps);
+    setIfPresent(root, "batch_to_joint_limit_margin_deg", &config->batchToJointLimitMarginDeg);
     setIfPresent(root, "batch_to_fast", &config->batchToFast);
     setIfPresent(root, "max_frames", &config->maxFrames);
 
@@ -334,6 +337,10 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     }
     if (hasArg(argc, argv, "--online_qp_mode")) {
         config->onlineQpMode = getArg(argc, argv, "--online_qp_mode");
+    }
+    if (hasArg(argc, argv, "--online_qp_joint_limit_margin_deg")) {
+        config->onlineQpJointLimitMarginDeg =
+            std::stod(getArg(argc, argv, "--online_qp_joint_limit_margin_deg"));
     }
     if (hasArg(argc, argv, "--actual_human_height")) {
         config->actualHumanHeight = std::stod(getArg(argc, argv, "--actual_human_height"));
@@ -419,6 +426,10 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     }
     if (hasArg(argc, argv, "--gn_steps")) {
         config->batchToGnSteps = std::stoi(getArg(argc, argv, "--gn_steps"));
+    }
+    if (hasArg(argc, argv, "--batch_to_joint_limit_margin_deg")) {
+        config->batchToJointLimitMarginDeg =
+            std::stod(getArg(argc, argv, "--batch_to_joint_limit_margin_deg"));
     }
     if (hasFlag(argc, argv, "--fast")) {
         config->batchToFast = true;
@@ -650,6 +661,7 @@ void printUsage() {
               << " [--method <ik|batch_to|online_qp>]"
               << " [--online_qp_preset default|smooth|anti_slip]"
               << " [--online_qp_mode lookahead|causal]"
+              << " [--online_qp_joint_limit_margin_deg 0]"
               << " [--actual_human_height <float>]"
               << " [--damping <float>]"
               << " [--max_iter <int>]"
@@ -744,6 +756,7 @@ int main(int argc, char** argv) {
         if (useOnlineQp) {
             gmr::OnlineQpConfig qpCfg = gmr::OnlineQpConfig::fromPresetName(config.onlineQpPreset);
             qpCfg.useLookahead        = (config.onlineQpMode != "causal");
+            qpCfg.jointLimitMarginDeg = config.onlineQpJointLimitMarginDeg;
             onlineQp                  = std::make_unique<gmr::OnlineQpRetargeter>(xmlPath, ikConfigCopy, qpCfg);
             onlineQp->applyContactGroundConfig(opts.contactGround);
             if (playSequence.fps > 0.0) {
@@ -759,6 +772,7 @@ int main(int argc, char** argv) {
             batchCfg.windowSize   = config.batchToWindowSize;
             batchCfg.windowStride = config.batchToWindowStride;
             batchCfg.gnSteps      = config.batchToGnSteps;
+            batchCfg.jointLimitMarginDeg = config.batchToJointLimitMarginDeg;
             batchCfg.verbose      = true;
             if (config.batchToFast) {
                 batchCfg.gnSteps             = 2;

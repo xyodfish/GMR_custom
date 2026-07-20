@@ -51,6 +51,7 @@ namespace {
                   << " [--w_foot_slip 2000]"
                   << " [--w_gmr 0.4]"
                   << " [--dq_max 4]"
+                  << " [--joint_limit_margin_deg 0]"
                   << " [--src_human smplx|bvh_lafan1]"
                   << " [--actual_human_height <m>]"
                   << " [--contact_ground]"
@@ -126,6 +127,9 @@ int main(int argc, char** argv) {
         if (!getArg(argc, argv, "--light_ik_iters").empty()) {
             qpCfg.lightIkIters = std::stoi(getArg(argc, argv, "--light_ik_iters"));
         }
+        if (!getArg(argc, argv, "--joint_limit_margin_deg").empty()) {
+            qpCfg.jointLimitMarginDeg = std::stod(getArg(argc, argv, "--joint_limit_margin_deg"));
+        }
         qpCfg.qpBackend = getArg(argc, argv, "--qp_solver", "daqp");
 
         std::unique_ptr<gmr::Retargeter> retargeter =
@@ -174,6 +178,7 @@ int main(int argc, char** argv) {
             {"w_foot_slip", qpCfg.wFootSlip},
             {"w_gmr", qpCfg.wGmr},
             {"dq_max", qpCfg.dqMax},
+            {"joint_limit_margin_deg", qpCfg.jointLimitMarginDeg},
             {"finalize_contact", qpCfg.finalizeContact},
             {"qp_backend", qpCfg.qpBackend},
         };

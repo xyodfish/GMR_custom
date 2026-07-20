@@ -49,6 +49,7 @@ namespace {
                   << " [--window_size 16]"
                   << " [--window_stride 8]"
                   << " [--gn_steps 3]"
+                  << " [--joint_limit_margin_deg 0]"
                   << " [--fast]"
                   << " [--ceiling]"
                   << " [--no_foot_penalties]"
@@ -174,6 +175,9 @@ int main(int argc, char** argv) {
             batchCfg.qInitJsonPath = qInitJson;
         }
         batchCfg.verbose = hasFlag(argc, argv, "--verbose");
+        if (!getArg(argc, argv, "--joint_limit_margin_deg").empty()) {
+            batchCfg.jointLimitMarginDeg = std::stod(getArg(argc, argv, "--joint_limit_margin_deg"));
+        }
 
         std::unique_ptr<gmr::Retargeter> ikRetargeter =
             gmr::createRetargeter(backend, robotXml, ikConfig, ikOpts);
@@ -218,6 +222,7 @@ int main(int argc, char** argv) {
         out["config"] = {{"window_size", batchCfg.windowSize},
                          {"window_stride", batchCfg.windowStride},
                          {"gn_steps", batchCfg.gnSteps},
+                         {"joint_limit_margin_deg", batchCfg.jointLimitMarginDeg},
                          {"fast", fast},
                          {"ceiling", ceiling},
                          {"enable_foot_penalties", batchCfg.enableFootPenalties}};

@@ -1,0 +1,22 @@
+{
+  "clip": "walking",
+  "n_frames": 80,
+  "window": "16/8 gn=3",
+  "results": {
+    "hard+anchors": {
+      "jerk": 7237.0,
+      "slip": 0.2888
+    },
+    "soft+keep_anchors": {
+      "jerk": 7312.0,
+      "slip": 0.4331,
+      "note": "fair soft-contact delta"
+    },
+    "soft-no_anchors": {
+      "jerk": 7833.1,
+      "slip": 0.5897,
+      "note": "anchors off hurts more than soft helps"
+    }
+  },
+  "takeaway": "Phase-1 soft contact runs and optimizes c, but on this walking clip does not yet beat hard-mask Batch TO on slip. Needs more tuning (c temporal smooth / residual scaling)."
+}

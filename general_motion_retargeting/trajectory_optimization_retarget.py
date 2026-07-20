@@ -133,6 +133,62 @@ class TrajectoryOptimizationRetargeter:
                 targets[entry["robot_frame"]] = (pos, rot)
         return targets
 
+    def _set_mink_targets(self, prepared: dict) -> None:
+        import mink
+
+        if self.gmr.use_ik_match_table1:
+            for entry in self.gmr.task_frames1:
+                pos, rot = self.gmr._resolve_ik_target(entry, prepared)
+                entry["task"].set_target(
+                    mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos)
+                )
+        if self.gmr.use_ik_match_table2:
+            for entry in self.gmr.task_frames2:
+                pos, rot = self.gmr._resolve_ik_target(entry, prepared)
+                entry["task"].set_target(
+                    mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos)
+                )
+
+    def _light_ik_warmstart(
+        self,
+        q_init: np.ndarray,
+        prepared: dict,
+        human_data,
+        offset_to_ground: bool,
+    ) -> np.ndarray:
+        """Few mink IK iterations to seed q (not full ``GMR.retarget()``)."""
+        if self.config.light_ik_warmstart_iters <= 0:
+            return q_init
+
+        self.gmr.configuration.data.qpos[:] = q_init
+        mj.mj_forward(self.gmr.model, self.gmr.configuration.data)
+        self._set_mink_targets(prepared)
+
+        freeze_base = (
+            self.gmr.tgt_robot in PLANAR_BASE_ROBOTS and bool(self.gmr.planar_base_cfg)
+        )
+        base_qpos = None
+        if freeze_base:
+            self.gmr._snap_planar_base_qpos(prepared, raw_human_data=human_data)
+            base_qpos = self.gmr.configuration.data.qpos[:3].copy()
+
+        n_iter = self.config.light_ik_warmstart_iters
+        if self.gmr.use_ik_match_table1:
+            self.gmr._run_ik_tasks(
+                self.gmr.tasks1,
+                max_iter=n_iter,
+                freeze_base=freeze_base,
+                base_qpos=base_qpos,
+            )
+        if self.gmr.use_ik_match_table2:
+            self.gmr._run_ik_tasks(
+                self.gmr.tasks2,
+                max_iter=n_iter,
+                freeze_base=freeze_base,
+                base_qpos=base_qpos,
+            )
+        return self.gmr.configuration.data.qpos.copy()
+
     def _build_track_entries(self) -> List[_TrackEntry]:
         entries: dict[str, _TrackEntry] = {}
 

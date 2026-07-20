@@ -31,6 +31,8 @@ namespace gmr {
         double dqMax             = 4.0;
         bool useJointLimits      = true;
         bool useVelocityLimits   = true;
+        // Keep committed hinge joints this many degrees away from hard limits (0 disables).
+        double jointLimitMarginDeg = 0.0;
         bool useLookahead        = true;
         std::string qpBackend    = "daqp";
         bool finalizeContact     = true;

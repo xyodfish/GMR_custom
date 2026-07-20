@@ -101,9 +101,10 @@ namespace gmr {
         opts.wGmr              = config_.wGmr;
         opts.dqMax             = config_.dqMax;
         opts.motionDt          = 1.0 / std::max(motionFps_, 1e-6);
-        opts.useJointLimits    = config_.useJointLimits;
-        opts.useVelocityLimits = config_.useVelocityLimits;
-        opts.qpBackend         = config_.qpBackend;
+        opts.useJointLimits      = config_.useJointLimits;
+        opts.useVelocityLimits   = config_.useVelocityLimits;
+        opts.jointLimitMarginDeg = config_.jointLimitMarginDeg;
+        opts.qpBackend           = config_.qpBackend;
 
         // Sync batch weights in case CLI overrode config after construction.
         BatchTrajectoryConfig& bc = batch_->config();
@@ -169,6 +170,11 @@ namespace gmr {
             retargeter.finalizeContact();
             qOut = retargeter.currentQpos();
         } else {
+            retargeter.setQpos(qOut);
+        }
+
+        if (config_.jointLimitMarginDeg > 0.0) {
+            batch_->clipHingeQposMargin(qOut, config_.jointLimitMarginDeg);
             retargeter.setQpos(qOut);
         }
 
@@ -253,6 +259,11 @@ namespace gmr {
                 retargeter.finalizeContact();
                 qCmd = retargeter.currentQpos();
             } else {
+                retargeter.setQpos(qCmd);
+            }
+
+            if (config_.jointLimitMarginDeg > 0.0) {
+                batch_->clipHingeQposMargin(qCmd, config_.jointLimitMarginDeg);
                 retargeter.setQpos(qCmd);
             }
 
@@ -358,6 +369,11 @@ namespace gmr {
             retargeter.finalizeContact();
             qCmd = retargeter.currentQpos();
         } else {
+            retargeter.setQpos(qCmd);
+        }
+
+        if (config_.jointLimitMarginDeg > 0.0) {
+            batch_->clipHingeQposMargin(qCmd, config_.jointLimitMarginDeg);
             retargeter.setQpos(qCmd);
         }
 
