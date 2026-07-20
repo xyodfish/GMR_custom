@@ -1,0 +1,16 @@
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/air_squat.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/air_squat/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/clinical_gait.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/clinical_gait/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/kevin_parry_walks.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/kevin_parry_walks/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_boyish_walk.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_boyish_walk/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_cautious_backwalk.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_cautious_backwalk/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_cheerful_school_walk.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_cheerful_school_walk/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_cute_school_walk.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_cute_school_walk/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_girl_run.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_girl_run/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_waitress_walk.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_waitress_walk/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_walk_around.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_walk_around/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_walk_stumble.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_walk_stumble/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_yankee_walk.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/ma_yankee_walk/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/natural_gait.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/natural_gait/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/posture_march_in_place.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/posture_march_in_place/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/shadow_tennis.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/shadow_tennis/hmr4d_results.pt
+/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/walking_lunge.mp4	/home/xiayu/Workspace/open_source_code/GMR_custom/data/gvhmr_test_videos/walking_lunge/hmr4d_results.pt

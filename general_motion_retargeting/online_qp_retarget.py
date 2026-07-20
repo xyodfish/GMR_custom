@@ -56,6 +56,19 @@ class OnlineQpConfig:
     use_velocity_limits: bool = True
     # Keep committed hinge joints this many degrees away from hard limits (0 disables).
     joint_limit_margin_deg: float = 0.0
+    # Control-feasibility: soft inverse-dynamics torque-limit barrier in the QP window
+    # (penalise only torque beyond kappa*tau_max). See BatchTrajectoryConfig for semantics.
+    torque_limit_constraint: bool = False
+    torque_limit_margin: float = 0.1
+    torque_limit_weight: float = 20.0
+    torque_limit_scope: str = "upper"  # "upper" | "all"
+    torque_limit_gate_mode: str = "soft"  # "off" | "soft" | "hard"
+    torque_limit_gate_r_on: float = 0.85
+    torque_limit_gate_r_full: float = 0.95
+    torque_limit_gate_r_off: float = 0.85
+    torque_limit_gate_min_on_frames: int = 5
+    torque_limit_gate_min_off_frames: int = 10
+    torque_limit_gate_floor: float = 0.0
     # Sequence lookahead (peek future human frames). Streaming falls back to causal.
     use_lookahead: bool = True
     qp_solver: str = "daqp"
@@ -122,6 +135,17 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
             smooth_root_xyz=False,
             use_gmr_init=False,
             finalize_contact=False,
+            torque_limit_constraint=oc.torque_limit_constraint,
+            torque_limit_margin=oc.torque_limit_margin,
+            torque_limit_weight=oc.torque_limit_weight,
+            torque_limit_scope=oc.torque_limit_scope,
+            torque_limit_gate_mode=oc.torque_limit_gate_mode,
+            torque_limit_gate_r_on=oc.torque_limit_gate_r_on,
+            torque_limit_gate_r_full=oc.torque_limit_gate_r_full,
+            torque_limit_gate_r_off=oc.torque_limit_gate_r_off,
+            torque_limit_gate_min_on_frames=oc.torque_limit_gate_min_on_frames,
+            torque_limit_gate_min_off_frames=oc.torque_limit_gate_min_off_frames,
+            torque_limit_gate_floor=oc.torque_limit_gate_floor,
             verbose=oc.verbose,
             show_progress=False,
         )
@@ -177,6 +201,7 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
         self.last_frame_ms = 0.0
         self.last_qp_status = ""
         self._global_ref_contact = None
+        self.reset_torque_limit_gate()
 
     def _soft_seed(
         self,
@@ -199,6 +224,19 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
         for _, qadr in self._hinge_pairs:
             q[qadr] = min(max(float(q[qadr]), float(self._qp_lower[qadr])), float(self._qp_upper[qadr]))
         return q
+
+    def _apply_penetration_fix(self, q: np.ndarray) -> np.ndarray:
+        """Lift root Z so foot/trunk geoms clear the floor (idempotent).
+
+        ``anti_slip`` disables full ``finalize_contact`` for speed, but still needs
+        this lift — especially after offline ``ground_align`` parks feet near z=0.
+        """
+        if not self.gmr.contact_ground.fix_penetration:
+            return q
+        self.data.qpos[:] = q
+        mj.mj_forward(self.model, self.data)
+        self.gmr.contact_ground.fix_robot_penetration(self.model, self.data)
+        return self.data.qpos.copy()
 
     def _build_qp_constraints(
         self,
@@ -330,6 +368,8 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
             self._accumulate_window_temporal_gn(
                 H, g, q_win, smooth_v, smooth_q, m, w_v, w_a
             )
+            self._update_torque_limit_gate_from_window(q_win)
+            self._accumulate_window_torque_limit_gn(H, g, q_win, m)
             self._accumulate_window_foot_gn(H, g, q_win, vidx, m, jacp, q_ref)
             self._accumulate_gmr_prior_gn(H, g, q_win, q_ref, vidx, oc.w_gmr)
 
@@ -427,6 +467,9 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
 
         if self.qp_config.finalize_contact:
             q_out = self._finalize_qpos(q_out, prepared, human_data, offset_to_ground)
+        else:
+            # Still clear ground penetration when full finalize is off (anti_slip).
+            q_out = self._apply_penetration_fix(q_out)
 
         q_out = self._apply_margin_clip(q_out)
         self._q_buf.append(q_out.copy())
@@ -514,6 +557,8 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
                 q_cmd = self._finalize_qpos(
                     q_cmd, prepared_slice[0], frames_slice[0], offset_to_ground
                 )
+            else:
+                q_cmd = self._apply_penetration_fix(q_cmd)
 
             q_cmd = self._apply_margin_clip(q_cmd)
             q_prev = q_cmd

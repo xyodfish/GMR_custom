@@ -89,8 +89,18 @@ namespace gmr {
         void buildTrackEntries();
         void buildOptIndices();
         void buildSmoothMappings();
+        void buildTorqueLimitJoints();
         void resolveFootBodyIds();
         void ensureGnWorkspace(int nFrames) const;
+
+        double windowTorquePeakRatio(const std::vector<Eigen::VectorXd>& qWin) const;
+        double torqueLimitGateFromRatio(double rPeak);
+        void updateTorqueLimitGateFromWindow(const std::vector<Eigen::VectorXd>& qWin);
+
+        /// Inverse-dynamics torque-limit barrier (control feasibility). Adds a GN term / cost
+        /// penalising torque beyond kappa*tau_max on the configured joint set.
+        void accumulateWindowTorqueLimitGn(const std::vector<Eigen::VectorXd>& qWin, int m) const;
+        double windowTorqueCost(const std::vector<Eigen::VectorXd>& qWin) const;
 
         std::vector<Eigen::VectorXd> bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
                                                 bool offsetToGround, const BatchIkBootstrapContext* ikBootstrap);
@@ -114,6 +124,13 @@ namespace gmr {
         /// hard range). Mirrors Python ``_apply_margin_clip`` so committed poses stay off the limits.
         void clipHingeQposMargin(Eigen::VectorXd& q, double marginDeg) const;
 
+        /// Reset torque-limit gate hysteresis (call on sequence reset).
+        void resetTorqueLimitGate();
+        double lastTorqueGate() const { return lastTorqueGate_; }
+        double lastTorquePeakRatio() const { return lastTorquePeakRatio_; }
+        double meanTorqueGate() const { return torqueGateUpdates_ > 0 ? torqueGateSum_ / static_cast<double>(torqueGateUpdates_) : 1.0; }
+        double maxTorquePeakRatio() const { return maxTorquePeakRatio_; }
+
        private:
         void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;
         double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
@@ -133,6 +150,23 @@ namespace gmr {
         int nq_ = 0;
 
         std::filesystem::path robotModelPath_;
+        struct TorqueLimitJoint {
+            int localv    = -1;  ///< index within optVidx_ (per-frame variable slot)
+            int dof       = -1;  ///< global DoF index
+            double tauMax = 0.0;
+        };
+        std::vector<TorqueLimitJoint> torqueLimitJoints_;
+        mutable double motionDtForTorque_ = 1.0 / 30.0;
+        double torqueLimitGate_           = 1.0;
+        bool torqueGateActive_            = false;
+        int torqueGateOnStreak_           = 0;
+        int torqueGateOffStreak_          = 0;
+        double lastTorqueGate_            = 1.0;
+        double lastTorquePeakRatio_       = 0.0;
+        int torqueGateUpdates_            = 0;
+        double torqueGateSum_             = 0.0;
+        double maxTorquePeakRatio_        = 0.0;
+
         std::vector<TrackEntry> trackEntries_;
         std::vector<int> optVidx_;
         std::vector<int> smoothQidx_;

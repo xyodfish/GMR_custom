@@ -147,7 +147,28 @@ if __name__ == "__main__":
     parser.add_argument("--no-rate-limit", dest="rate_limit", action="store_false")
     parser.set_defaults(rate_limit=True)
     parser.add_argument("--save_path", default=None)
+    parser.add_argument(
+        "--torque_limit_weight",
+        type=float,
+        default=0.0,
+        help=">0 enables ID torque-limit soft constraint (playback/python only).",
+    )
+    parser.add_argument("--torque_limit_margin", type=float, default=0.1)
+    parser.add_argument("--torque_limit_scope", choices=["upper", "all"], default="upper")
+    parser.add_argument(
+        "--torque_limit_gate_mode",
+        choices=["off", "soft", "hard"],
+        default="soft",
+    )
     add_optional_bool_arg(parser, "contact_ground", "Enable contact/ground pipeline.")
+    parser.add_argument(
+        "--ground_align",
+        nargs="?",
+        const="lower_envelope",
+        default=None,
+        choices=["lower_envelope", "support_hold"],
+        help="Offline Z ground-align human frames before retarget (fixes GVHMR float).",
+    )
     args = parser.parse_args()
 
     input_path = args.input_file or args.gvhmr_pred_file
@@ -164,11 +185,21 @@ if __name__ == "__main__":
         else:
             args.viz_mode = "python"
 
+    # Streaming viewer does not yet forward torque_limit; fall back to playback.
+    if args.torque_limit_weight > 0 and args.viz_mode == "stream":
+        print(
+            "[online-qp] torque_limit_weight>0: switching stream→playback "
+            "(viewer has no torque_limit flags yet)"
+        )
+        args.viz_mode = "playback"
+
     frames, fps, height, src_human = load_human_motion_frames(
         input_path,
         input_type=args.input_type,
         body_model_dir=args.body_model_dir,
         max_frames=args.max_frames,
+        ground_align=args.ground_align or False,
+        ground_align_verbose=bool(args.ground_align),
     )
 
     stem = pathlib.Path(input_path).stem
@@ -228,6 +259,12 @@ if __name__ == "__main__":
         )
         cfg = OnlineQpConfig.from_preset(args.preset)
         cfg.use_lookahead = args.mode == "lookahead"
+        if args.torque_limit_weight > 0:
+            cfg.torque_limit_constraint = True
+            cfg.torque_limit_weight = args.torque_limit_weight
+            cfg.torque_limit_margin = args.torque_limit_margin
+            cfg.torque_limit_scope = args.torque_limit_scope
+            cfg.torque_limit_gate_mode = args.torque_limit_gate_mode
         online = OnlineQpRetargeter(gmr, cfg)
         online.set_motion_fps(fps)
         print(f"[online-qp] Python stream {len(frames)} frames (~40ms/f) ...")
@@ -294,6 +331,17 @@ if __name__ == "__main__":
             ]
             if args.contact_ground:
                 cmd.append("--contact_ground")
+            if args.torque_limit_weight > 0:
+                cmd += [
+                    "--torque_limit_weight",
+                    str(args.torque_limit_weight),
+                    "--torque_limit_margin",
+                    str(args.torque_limit_margin),
+                    "--torque_limit_scope",
+                    args.torque_limit_scope,
+                    "--torque_limit_gate_mode",
+                    args.torque_limit_gate_mode,
+                ]
             print("[online-qp] C++ solve-all then playback ...")
             subprocess.run(cmd, check=True, env=env_with_ld(), cwd=REPO)
             data = json.loads(oj.read_text())
@@ -330,6 +378,12 @@ if __name__ == "__main__":
             viewer.close()
 
     print(f"\n[online-qp] backend={backend} preset={args.preset} mode={args.mode} src={src_human}")
+    if args.torque_limit_weight > 0:
+        print(
+            f"  torque_limit: w={args.torque_limit_weight} "
+            f"margin={args.torque_limit_margin} scope={args.torque_limit_scope} "
+            f"gate={args.torque_limit_gate_mode}"
+        )
     print(f"  frames={len(qpos_arr)}  mean={mean_ms:.2f} ms/f  realtime@30={mean_ms <= 1000/30}")
 
     if args.save_path:

@@ -36,6 +36,17 @@ namespace gmr {
         bc.smoothRootXyz          = false;
         bc.useGmrInit             = false;
         bc.finalizeContact        = false;
+        bc.torqueLimitConstraint  = config_.torqueLimitConstraint;
+        bc.torqueLimitMargin      = config_.torqueLimitMargin;
+        bc.torqueLimitWeight      = config_.torqueLimitWeight;
+        bc.torqueLimitScope       = config_.torqueLimitScope;
+        bc.torqueLimitGateMode    = config_.torqueLimitGateMode;
+        bc.torqueLimitGateROn     = config_.torqueLimitGateROn;
+        bc.torqueLimitGateRFull   = config_.torqueLimitGateRFull;
+        bc.torqueLimitGateROff    = config_.torqueLimitGateROff;
+        bc.torqueLimitGateMinOnFrames  = config_.torqueLimitGateMinOnFrames;
+        bc.torqueLimitGateMinOffFrames = config_.torqueLimitGateMinOffFrames;
+        bc.torqueLimitGateFloor   = config_.torqueLimitGateFloor;
         bc.gnLineSearchAlphas     = {1.0, 0.5, 0.25, 0.1};
         bc.gnLineSearchMode       = GnLineSearchMode::kBest;
         bc.useBandedSolver        = false;
@@ -64,6 +75,7 @@ namespace gmr {
         sequencePrepared_.clear();
         sequencePreparedReady_.clear();
         sequenceTargets_.clear();
+        batch_->resetTorqueLimitGate();
     }
 
     void OnlineQpRetargeter::setMotionFps(double fps) {
@@ -120,6 +132,16 @@ namespace gmr {
         bc.wFootIkAnchor       = config_.wFootIkAnchor;
         bc.wRootXyContact      = config_.wRootXyContact;
         bc.wContactJointAnchor = config_.wContactJointAnchor;
+        bc.torqueLimitConstraint = config_.torqueLimitConstraint;
+        bc.torqueLimitMargin   = config_.torqueLimitMargin;
+        bc.torqueLimitWeight   = config_.torqueLimitWeight;
+        bc.torqueLimitGateMode = config_.torqueLimitGateMode;
+        bc.torqueLimitGateROn  = config_.torqueLimitGateROn;
+        bc.torqueLimitGateRFull = config_.torqueLimitGateRFull;
+        bc.torqueLimitGateROff = config_.torqueLimitGateROff;
+        bc.torqueLimitGateMinOnFrames  = config_.torqueLimitGateMinOnFrames;
+        bc.torqueLimitGateMinOffFrames = config_.torqueLimitGateMinOffFrames;
+        bc.torqueLimitGateFloor = config_.torqueLimitGateFloor;
 
         // Match Python: contact from seed/ref trajectory for this window.
         batch_->setFootContactFromQRef(qRef);

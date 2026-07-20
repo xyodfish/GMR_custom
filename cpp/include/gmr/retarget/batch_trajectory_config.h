@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "gmr/retarget/contact_ground.h"
@@ -33,6 +34,23 @@ namespace gmr {
         double footContactMargin    = 0.02;
         // Keep committed hinge joints this many degrees away from hard limits (0 disables).
         double jointLimitMarginDeg  = 0.0;
+        // Control-feasibility: soft inverse-dynamics torque-limit barrier inside the window GN.
+        // Penalises only torque exceeding (1 - torqueLimitMargin)*tau_max, using RNE on the
+        // finite-difference (qvel, qacc) across the window. Leg torques need ground-reaction
+        // forces so scope "upper" (waist/arms, contact-independent) is the safe default.
+        bool torqueLimitConstraint  = false;
+        double torqueLimitMargin    = 0.1;
+        double torqueLimitWeight    = 20.0;
+        std::string torqueLimitScope = "upper";  // "upper" | "all"
+        double motionDt             = 1.0 / 30.0;  ///< frame dt for the torque barrier only
+        // Risk-driven gating: scale torqueLimitWeight by estimated headroom.
+        std::string torqueLimitGateMode = "soft";  // "off" | "soft" | "hard"
+        double torqueLimitGateROn       = 0.85;
+        double torqueLimitGateRFull     = 0.95;
+        double torqueLimitGateROff      = 0.85;
+        int torqueLimitGateMinOnFrames  = 5;
+        int torqueLimitGateMinOffFrames = 10;
+        double torqueLimitGateFloor     = 0.0;
         bool footContactFromRef     = true;
         bool smoothRootXyz          = false;
         std::vector<double> gnLineSearchAlphas = {1.0, 0.5, 0.25, 0.125};

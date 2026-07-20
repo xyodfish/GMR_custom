@@ -52,6 +52,12 @@ namespace {
                   << " [--w_gmr 0.4]"
                   << " [--dq_max 4]"
                   << " [--joint_limit_margin_deg 0]"
+                  << " [--torque_limit_weight 0]"
+                  << " [--torque_limit_margin 0.1]"
+                  << " [--torque_limit_scope upper|all]"
+                  << " [--torque_limit_gate_mode off|soft|hard]"
+                  << " [--torque_limit_gate_r_on 0.85]"
+                  << " [--torque_limit_gate_r_full 0.95]"
                   << " [--src_human smplx|bvh_lafan1]"
                   << " [--actual_human_height <m>]"
                   << " [--contact_ground]"
@@ -130,6 +136,21 @@ int main(int argc, char** argv) {
         if (!getArg(argc, argv, "--joint_limit_margin_deg").empty()) {
             qpCfg.jointLimitMarginDeg = std::stod(getArg(argc, argv, "--joint_limit_margin_deg"));
         }
+        if (!getArg(argc, argv, "--torque_limit_weight").empty()) {
+            qpCfg.torqueLimitConstraint = true;
+            qpCfg.torqueLimitWeight     = std::stod(getArg(argc, argv, "--torque_limit_weight"));
+        }
+        if (!getArg(argc, argv, "--torque_limit_margin").empty()) {
+            qpCfg.torqueLimitMargin = std::stod(getArg(argc, argv, "--torque_limit_margin"));
+        }
+        qpCfg.torqueLimitScope = getArg(argc, argv, "--torque_limit_scope", qpCfg.torqueLimitScope);
+        qpCfg.torqueLimitGateMode = getArg(argc, argv, "--torque_limit_gate_mode", qpCfg.torqueLimitGateMode);
+        if (!getArg(argc, argv, "--torque_limit_gate_r_on").empty()) {
+            qpCfg.torqueLimitGateROn = std::stod(getArg(argc, argv, "--torque_limit_gate_r_on"));
+        }
+        if (!getArg(argc, argv, "--torque_limit_gate_r_full").empty()) {
+            qpCfg.torqueLimitGateRFull = std::stod(getArg(argc, argv, "--torque_limit_gate_r_full"));
+        }
         qpCfg.qpBackend = getArg(argc, argv, "--qp_solver", "daqp");
 
         std::unique_ptr<gmr::Retargeter> retargeter =
@@ -172,6 +193,12 @@ int main(int argc, char** argv) {
             {"n_frames", static_cast<int>(frameCount)},
             {"last_frame_ms", onlineQp.lastFrameMs()},
         };
+        out["torque_gate"] = {
+            {"last_gate", onlineQp.lastTorqueGate()},
+            {"mean_gate", onlineQp.meanTorqueGate()},
+            {"last_peak_ratio", onlineQp.lastTorquePeakRatio()},
+            {"max_peak_ratio", onlineQp.maxTorquePeakRatio()},
+        };
         out["config"] = {
             {"horizon", qpCfg.horizon},
             {"sqp_iters", qpCfg.sqpIters},
@@ -179,6 +206,13 @@ int main(int argc, char** argv) {
             {"w_gmr", qpCfg.wGmr},
             {"dq_max", qpCfg.dqMax},
             {"joint_limit_margin_deg", qpCfg.jointLimitMarginDeg},
+            {"torque_limit_constraint", qpCfg.torqueLimitConstraint},
+            {"torque_limit_weight", qpCfg.torqueLimitWeight},
+            {"torque_limit_margin", qpCfg.torqueLimitMargin},
+            {"torque_limit_scope", qpCfg.torqueLimitScope},
+            {"torque_limit_gate_mode", qpCfg.torqueLimitGateMode},
+            {"torque_limit_gate_r_on", qpCfg.torqueLimitGateROn},
+            {"torque_limit_gate_r_full", qpCfg.torqueLimitGateRFull},
             {"finalize_contact", qpCfg.finalizeContact},
             {"qp_backend", qpCfg.qpBackend},
         };

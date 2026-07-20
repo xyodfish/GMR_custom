@@ -108,6 +108,10 @@ class GeneralMotionRetargeting:
         foot_ground_limit: Optional[bool] = None,
         fix_robot_penetration: Optional[bool] = None,
         motion_fps: float = 30.0,
+        control_feasibility: bool = False,
+        cf_margin: float = 0.2,
+        cf_mode: str = "torque",
+        cf_uniform_accel_cap: float = 30.0,
     ) -> None:
         self.verbose = verbose
 
@@ -261,6 +265,26 @@ class GeneralMotionRetargeting:
                 self.ik_limits.append(foot_ground_limit_obj)
 
         self.contact_ground.foot_ground_limit_enabled = foot_ground_limit_obj is not None
+
+        # Control-feasibility limiter: keep committed joint torques away from actuator
+        # saturation (upgrades the objective from kinematic smoothness to control feasibility).
+        self.control_feasibility = bool(control_feasibility)
+        self._cf_q_prev = None
+        self.cf_limiter = None
+        if self.control_feasibility:
+            from .control_feasibility import TorqueFeasibilityLimiter
+            self.cf_limiter = TorqueFeasibilityLimiter(
+                self.model,
+                margin=cf_margin,
+                mode=cf_mode,
+                uniform_accel_cap=cf_uniform_accel_cap,
+                fps=motion_fps,
+            )
+            if self.verbose:
+                print(
+                    f"[GMR] control_feasibility enabled: mode={cf_mode}, "
+                    f"margin={cf_margin}, joints={self.cf_limiter.qadr.size}"
+                )
 
         if self.verbose and self.contact_ground.enabled:
             print(
@@ -583,11 +607,21 @@ class GeneralMotionRetargeting:
             self.configuration.data.qpos[:3] = base_qpos
             mj.mj_forward(self.model, self.configuration.data)
 
+        if self.cf_limiter is not None:
+            q_raw = self.configuration.data.qpos.copy()
+            q_prev = self._cf_q_prev if self._cf_q_prev is not None else q_raw
+            q_feasible = self.cf_limiter.project(self.configuration.data, q_raw, q_prev)
+            self.configuration.data.qpos[:] = q_feasible
+            mj.mj_forward(self.model, self.configuration.data)
+            self._cf_q_prev = q_feasible.copy()
+
         return self.configuration.data.qpos.copy()
 
     def set_motion_fps(self, fps: float) -> None:
         if self.contact_ground.enabled:
             self.contact_ground.set_fps(fps)
+        if self.cf_limiter is not None:
+            self.cf_limiter.set_fps(fps)
 
 
     def error1(self):

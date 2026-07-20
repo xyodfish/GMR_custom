@@ -50,6 +50,12 @@ namespace {
                   << " [--window_stride 8]"
                   << " [--gn_steps 3]"
                   << " [--joint_limit_margin_deg 0]"
+                  << " [--torque_limit_weight 0]"
+                  << " [--torque_limit_margin 0.1]"
+                  << " [--torque_limit_scope upper|all]"
+                  << " [--torque_limit_gate_mode off|soft|hard]"
+                  << " [--torque_limit_gate_r_on 0.85]"
+                  << " [--torque_limit_gate_r_full 0.95]"
                   << " [--fast]"
                   << " [--ceiling]"
                   << " [--no_foot_penalties]"
@@ -178,6 +184,24 @@ int main(int argc, char** argv) {
         if (!getArg(argc, argv, "--joint_limit_margin_deg").empty()) {
             batchCfg.jointLimitMarginDeg = std::stod(getArg(argc, argv, "--joint_limit_margin_deg"));
         }
+        if (!getArg(argc, argv, "--torque_limit_weight").empty()) {
+            batchCfg.torqueLimitConstraint = true;
+            batchCfg.torqueLimitWeight     = std::stod(getArg(argc, argv, "--torque_limit_weight"));
+        }
+        if (!getArg(argc, argv, "--torque_limit_margin").empty()) {
+            batchCfg.torqueLimitMargin = std::stod(getArg(argc, argv, "--torque_limit_margin"));
+        }
+        batchCfg.torqueLimitScope = getArg(argc, argv, "--torque_limit_scope", batchCfg.torqueLimitScope);
+        batchCfg.torqueLimitGateMode = getArg(argc, argv, "--torque_limit_gate_mode", batchCfg.torqueLimitGateMode);
+        if (!getArg(argc, argv, "--torque_limit_gate_r_on").empty()) {
+            batchCfg.torqueLimitGateROn = std::stod(getArg(argc, argv, "--torque_limit_gate_r_on"));
+        }
+        if (!getArg(argc, argv, "--torque_limit_gate_r_full").empty()) {
+            batchCfg.torqueLimitGateRFull = std::stod(getArg(argc, argv, "--torque_limit_gate_r_full"));
+        }
+        if (sequence.fps > 0.0) {
+            batchCfg.motionDt = 1.0 / sequence.fps;
+        }
 
         std::unique_ptr<gmr::Retargeter> ikRetargeter =
             gmr::createRetargeter(backend, robotXml, ikConfig, ikOpts);
@@ -219,6 +243,10 @@ int main(int argc, char** argv) {
                              {"ms_per_frame", prof.msPerFrame()},
                              {"effective_fps", prof.effectiveFps()},
                              {"wall_ms", wallMs}};
+        out["torque_gate"] = {{"last_gate", batchTo.lastTorqueGate()},
+                              {"mean_gate", batchTo.meanTorqueGate()},
+                              {"last_peak_ratio", batchTo.lastTorquePeakRatio()},
+                              {"max_peak_ratio", batchTo.maxTorquePeakRatio()}};
         out["config"] = {{"window_size", batchCfg.windowSize},
                          {"window_stride", batchCfg.windowStride},
                          {"gn_steps", batchCfg.gnSteps},

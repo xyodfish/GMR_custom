@@ -43,6 +43,10 @@ namespace gmr {
 
         int frameIndex() const { return frameIndex_; }
         double lastFrameMs() const { return lastFrameMs_; }
+        double lastTorqueGate() const { return batch_ ? batch_->lastTorqueGate() : 1.0; }
+        double meanTorqueGate() const { return batch_ ? batch_->meanTorqueGate() : 1.0; }
+        double lastTorquePeakRatio() const { return batch_ ? batch_->lastTorquePeakRatio() : 0.0; }
+        double maxTorquePeakRatio() const { return batch_ ? batch_->maxTorquePeakRatio() : 0.0; }
 
        private:
         BatchTrajectoryConfig makeBatchConfig() const;

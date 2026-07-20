@@ -52,6 +52,38 @@ class BatchTrajectoryConfig:
     foot_contact_margin: float = 0.02
     foot_contact_from_ref: bool = True
     smooth_root_xyz: bool = False
+    # Control-feasibility: scale the per-joint smoothing penalty by (M_jj/tau_max)^(2*power)
+    # so the (fixed) smoothing budget is spent on joints closest to torque saturation
+    # instead of uniformly. This upgrades the objective from kinematic smoothness to
+    # control feasibility without changing the GN structure or run time.
+    torque_weighted_smoothing: bool = False
+    torque_weight_power: float = 1.0
+    # Control-feasibility: adaptively boost the smoothing penalty on joints whose current
+    # trajectory speed approaches the actuator velocity limit. Unlike the static torque
+    # weighting, this is measured per GN step from the working trajectory, so the smoothing
+    # budget is concentrated exactly on the joints that are actually saturating.
+    vel_aware_smoothing: bool = False
+    vel_ref: float = 9.42  # rad/s reference joint-speed limit (~3*pi)
+    vel_aware_thresh: float = 0.7  # start boosting above this fraction of vel_ref
+    vel_aware_gain: float = 6.0  # max extra multiplier at/above the limit
+    # Control-feasibility: soft inverse-dynamics torque-limit barrier inside the window GN.
+    # Penalises only the torque that exceeds kappa*tau_max (kappa = 1 - torque_limit_margin),
+    # using RNE on the finite-difference (qvel, qacc) available across the window. Because
+    # leg torques during stance need ground-reaction forces they are excluded by default;
+    # scope "upper" constrains contact-independent joints (waist/arms), "all" adds legs.
+    torque_limit_constraint: bool = False
+    torque_limit_margin: float = 0.1
+    torque_limit_weight: float = 20.0
+    torque_limit_scope: str = "upper"  # "upper" | "all"
+    # Risk-driven gating: scale torque_limit_weight by estimated headroom (see
+    # _update_torque_limit_gate_from_window).  "off" = always full weight.
+    torque_limit_gate_mode: str = "soft"  # "off" | "soft" | "hard"
+    torque_limit_gate_r_on: float = 0.85  # soft: start ramp; hard: unused
+    torque_limit_gate_r_full: float = 0.95  # soft: full weight; hard: trigger on
+    torque_limit_gate_r_off: float = 0.85  # hard mode hysteresis off threshold
+    torque_limit_gate_min_on_frames: int = 5
+    torque_limit_gate_min_off_frames: int = 10
+    torque_limit_gate_floor: float = 0.0  # min weight fraction when gate > 0
     max_opt_iter: int = 40
     opt_tol: float = 1e-5
     use_gmr_init: bool = True
@@ -89,11 +121,323 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
                 [q for q in self._smooth_qidx if q >= 3],
                 dtype=int,
             )
+        self._torque_w_by_dof = self._build_torque_smoothing_weights()
+        # Static per-DoF smoothing weights (torque re-weighting), aligned to self._smooth_qidx.
+        qadr_to_dof = {
+            int(self.model.jnt_qposadr[j]): int(self.model.jnt_dofadr[j])
+            for j in range(self.model.njnt)
+        }
+        self._smooth_qidx_dof = np.array(
+            [qadr_to_dof.get(int(q), -1) for q in self._smooth_qidx], dtype=int
+        )
+        self._smooth_static_w = np.ones(len(self._smooth_qidx), dtype=float)
+        if self._torque_w_by_dof:
+            for i, dof in enumerate(self._smooth_qidx_dof):
+                if dof >= 0:
+                    self._smooth_static_w[i] = self._torque_w_by_dof.get(int(dof), 1.0)
+        # Effective weights (static x dynamic velocity-aware) consumed by GN + cost.
+        self._eff_smooth_qidx_w = self._smooth_static_w.copy()
+        self._eff_smooth_w_by_dof = dict(self._torque_w_by_dof)
+        self._torque_limit_joints = self._build_torque_limit_joints()
+        self._M_full = np.zeros((self.model.nv, self.model.nv))
+        self._torque_limit_gate = 1.0
+        self._torque_gate_active = False
+        self._torque_gate_on_streak = 0
+        self._torque_gate_off_streak = 0
+        self.last_torque_gate: float = 1.0
+        self.last_torque_peak_ratio: float = 0.0
+        self._torque_gate_updates = 0
+        self._torque_gate_sum = 0.0
+        self._torque_peak_ratio_max = 0.0
         self._foot_body_ids = self._resolve_foot_body_ids()
         self._ground_z = float(self.gmr.contact_ground.ground_aligner.ground_z)
         self._global_ref_contact: np.ndarray | None = None
         self._window_frame_offset: int = 0
         self.last_profile: Dict[str, float] = {}
+
+    def _build_torque_smoothing_weights(self) -> Dict[int, float]:
+        """Per-DoF smoothing weight ~ (M_jj/tau_max)^(2*power), normalised to unit mean.
+
+        Effective joint torque scales as ``M_jj * qddot``; penalising ``(M_jj/tau_max)^2 *
+        qddot^2`` therefore penalises squared normalised torque. Weights are computed once
+        at the neutral pose (inertia varies little over the reachable range) so the GN
+        Hessian keeps its constant per-joint structure. Non-actuated / base DoFs get 1.0.
+        """
+        if not self.batch_config.torque_weighted_smoothing:
+            return {}
+        data = mj.MjData(self.model)
+        mj.mj_resetData(self.model, data)
+        mj.mj_forward(self.model, data)
+        M = np.zeros((self.model.nv, self.model.nv))
+        mj.mj_fullM(self.model, data, M)
+        power = float(self.batch_config.torque_weight_power)
+
+        dof_ratio: Dict[int, float] = {}
+        for j in range(self.model.njnt):
+            if self.model.jnt_type[j] != mj.mjtJoint.mjJNT_HINGE:
+                continue
+            lo, hi = self.model.jnt_actfrcrange[j]
+            taumax = float(max(abs(lo), abs(hi)))
+            if taumax <= 0.0:
+                continue
+            dof = int(self.model.jnt_dofadr[j])
+            m_jj = max(float(M[dof, dof]), 1e-4)
+            dof_ratio[dof] = (m_jj / taumax) ** (2.0 * power)
+
+        if not dof_ratio:
+            return {}
+        mean = float(np.mean(list(dof_ratio.values())))
+        if mean <= 0.0:
+            return {}
+        return {dof: r / mean for dof, r in dof_ratio.items()}
+
+    def _build_torque_limit_joints(self) -> List[Tuple[int, int, float]]:
+        """(global dof, local index within opt vidx, tau_max) for torque-limited joints."""
+        if not self.batch_config.torque_limit_constraint:
+            return []
+        upper_keys = ("waist", "shoulder", "elbow", "wrist")
+        lower_keys = ("hip", "knee", "ankle")
+        scope = self.batch_config.torque_limit_scope
+        dof_to_local = {int(v): i for i, v in enumerate(self._opt_vidx)}
+        out: List[Tuple[int, int, float]] = []
+        for j in range(self.model.njnt):
+            if self.model.jnt_type[j] != mj.mjtJoint.mjJNT_HINGE:
+                continue
+            lo, hi = self.model.jnt_actfrcrange[j]
+            taumax = float(max(abs(lo), abs(hi)))
+            if taumax <= 0.0:
+                continue
+            name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_JOINT, j) or ""
+            is_upper = any(k in name for k in upper_keys)
+            is_lower = any(k in name for k in lower_keys)
+            if scope == "upper" and not is_upper:
+                continue
+            if scope != "all" and scope != "upper" and not (is_upper or is_lower):
+                continue
+            dof = int(self.model.jnt_dofadr[j])
+            local = dof_to_local.get(dof)
+            if local is None:
+                continue
+            out.append((dof, local, taumax))
+        return out
+
+    def _window_torque_peak_ratio(self, q_win: np.ndarray) -> float:
+        """Max |tau|/tau_max over constrained joints and interior window frames."""
+        joints = self._torque_limit_joints
+        n_frames = len(q_win)
+        if not joints or n_frames < 3:
+            return 0.0
+        dt = self.dt
+        model = self.model
+        data = self.data
+        tau = np.zeros(model.nv)
+        v_plus = np.zeros(model.nv)
+        v_minus = np.zeros(model.nv)
+        peak = 0.0
+        for t in range(1, n_frames - 1):
+            mj.mj_differentiatePos(model, v_plus, dt, q_win[t], q_win[t + 1])
+            mj.mj_differentiatePos(model, v_minus, dt, q_win[t - 1], q_win[t])
+            data.qpos[:] = q_win[t]
+            data.qvel[:] = 0.5 * (v_plus + v_minus)
+            mj.mj_forward(model, data)
+            data.qacc[:] = (v_plus - v_minus) / dt
+            mj.mj_rne(model, data, 1, tau)
+            for dof, _local, taumax in joints:
+                peak = max(peak, abs(tau[dof]) / taumax)
+        return float(peak)
+
+    def _torque_limit_gate_from_ratio(self, r_peak: float) -> float:
+        cfg = self.batch_config
+        mode = str(cfg.torque_limit_gate_mode).lower()
+        if not cfg.torque_limit_constraint or mode == "off":
+            return 1.0
+        if mode == "soft":
+            r_on = float(cfg.torque_limit_gate_r_on)
+            r_full = float(cfg.torque_limit_gate_r_full)
+            if r_peak <= r_on:
+                gate = 0.0
+            elif r_peak >= r_full:
+                gate = 1.0
+            else:
+                gate = (r_peak - r_on) / max(r_full - r_on, 1e-9)
+            floor = float(cfg.torque_limit_gate_floor)
+            return float(floor + (1.0 - floor) * gate)
+        if mode == "hard":
+            r_on = float(cfg.torque_limit_gate_r_full)
+            r_off = float(cfg.torque_limit_gate_r_off)
+            if self._torque_gate_active:
+                if r_peak < r_off:
+                    self._torque_gate_off_streak += 1
+                    self._torque_gate_on_streak = 0
+                    if self._torque_gate_off_streak >= int(cfg.torque_limit_gate_min_off_frames):
+                        self._torque_gate_active = False
+                        self._torque_gate_off_streak = 0
+                else:
+                    self._torque_gate_off_streak = 0
+            elif r_peak > r_on:
+                self._torque_gate_on_streak += 1
+                self._torque_gate_off_streak = 0
+                if self._torque_gate_on_streak >= int(cfg.torque_limit_gate_min_on_frames):
+                    self._torque_gate_active = True
+                    self._torque_gate_on_streak = 0
+            else:
+                self._torque_gate_on_streak = 0
+            return 1.0 if self._torque_gate_active else 0.0
+        return 1.0
+
+    def _update_torque_limit_gate_from_window(self, q_win: np.ndarray) -> float:
+        r_peak = self._window_torque_peak_ratio(q_win)
+        gate = self._torque_limit_gate_from_ratio(r_peak)
+        self._torque_limit_gate = gate
+        self.last_torque_gate = gate
+        self.last_torque_peak_ratio = r_peak
+        self._torque_gate_updates += 1
+        self._torque_gate_sum += gate
+        self._torque_peak_ratio_max = max(self._torque_peak_ratio_max, r_peak)
+        return gate
+
+    def reset_torque_limit_gate(self) -> None:
+        self._torque_limit_gate = 1.0
+        self._torque_gate_active = False
+        self._torque_gate_on_streak = 0
+        self._torque_gate_off_streak = 0
+        self.last_torque_gate = 1.0
+        self.last_torque_peak_ratio = 0.0
+        self._torque_gate_updates = 0
+        self._torque_gate_sum = 0.0
+        self._torque_peak_ratio_max = 0.0
+
+    def torque_limit_gate_stats(self) -> Dict[str, float]:
+        n = max(1, int(self._torque_gate_updates))
+        return {
+            "last_gate": float(self.last_torque_gate),
+            "mean_gate": float(self._torque_gate_sum / n) if self._torque_gate_updates > 0 else 1.0,
+            "last_peak_ratio": float(self.last_torque_peak_ratio),
+            "max_peak_ratio": float(self._torque_peak_ratio_max),
+            "updates": float(self._torque_gate_updates),
+        }
+
+    def _accumulate_window_torque_limit_gn(
+        self, H: np.ndarray, g: np.ndarray, q_win: np.ndarray, m: int
+    ) -> None:
+        """Soft one-sided barrier on inverse-dynamics torque exceeding kappa*tau_max.
+
+        Residual per active (frame, joint): e = (|tau| - kappa*tau_max) / tau_max, with the
+        GN Jacobian approximated by the dominant inertial term ``d tau/d q ~ M_jj * accel
+        stencil`` (central second difference). tau itself is the full RNE torque (inertia +
+        Coriolis + gravity), so the barrier is placed at the true operating point.
+        """
+        joints = self._torque_limit_joints
+        n_frames = len(q_win)
+        if not joints or n_frames < 3:
+            return
+        dt = self.dt
+        kappa = max(0.0, 1.0 - float(self.batch_config.torque_limit_margin))
+        w = float(self.batch_config.torque_limit_weight) * float(self._torque_limit_gate)
+        if w <= 0.0:
+            return
+        model = self.model
+        data = self.data
+        tau = np.zeros(model.nv)
+        v_plus = np.zeros(model.nv)
+        v_minus = np.zeros(model.nv)
+
+        for t in range(1, n_frames - 1):
+            mj.mj_differentiatePos(model, v_plus, dt, q_win[t], q_win[t + 1])
+            mj.mj_differentiatePos(model, v_minus, dt, q_win[t - 1], q_win[t])
+            qvel = 0.5 * (v_plus + v_minus)
+            qacc = (v_plus - v_minus) / dt
+            data.qpos[:] = q_win[t]
+            data.qvel[:] = qvel
+            mj.mj_forward(model, data)
+            data.qacc[:] = qacc
+            mj.mj_rne(model, data, 1, tau)
+            mj.mj_fullM(model, data, self._M_full)
+
+            for dof, local, taumax in joints:
+                tj = tau[dof]
+                bound = kappa * taumax
+                if abs(tj) <= bound:
+                    continue
+                e0 = (tj - np.sign(tj) * bound) / taumax  # normalised signed excess
+                c = (max(self._M_full[dof, dof], 1e-4) / taumax) / (dt * dt)
+                i0 = (t - 1) * m + local
+                i1 = t * m + local
+                i2 = (t + 1) * m + local
+                # J = c * [+1, -2, +1] on (t-1, t, t+1)
+                H[i2, i2] += w * c * c
+                H[i1, i1] += w * 4.0 * c * c
+                H[i0, i0] += w * c * c
+                H[i2, i1] += -2.0 * w * c * c
+                H[i1, i2] += -2.0 * w * c * c
+                H[i2, i0] += w * c * c
+                H[i0, i2] += w * c * c
+                H[i1, i0] += -2.0 * w * c * c
+                H[i0, i1] += -2.0 * w * c * c
+                ge = w * c * e0
+                g[i2] += ge
+                g[i1] += -2.0 * ge
+                g[i0] += ge
+
+    def _window_torque_cost(self, q_win: np.ndarray) -> float:
+        joints = self._torque_limit_joints
+        n_frames = len(q_win)
+        if not joints or n_frames < 3:
+            return 0.0
+        dt = self.dt
+        kappa = max(0.0, 1.0 - float(self.batch_config.torque_limit_margin))
+        w = float(self.batch_config.torque_limit_weight) * float(self._torque_limit_gate)
+        if w <= 0.0:
+            return 0.0
+        model = self.model
+        data = self.data
+        tau = np.zeros(model.nv)
+        v_plus = np.zeros(model.nv)
+        v_minus = np.zeros(model.nv)
+        cost = 0.0
+        for t in range(1, n_frames - 1):
+            mj.mj_differentiatePos(model, v_plus, dt, q_win[t], q_win[t + 1])
+            mj.mj_differentiatePos(model, v_minus, dt, q_win[t - 1], q_win[t])
+            data.qpos[:] = q_win[t]
+            data.qvel[:] = 0.5 * (v_plus + v_minus)
+            mj.mj_forward(model, data)
+            data.qacc[:] = (v_plus - v_minus) / dt
+            mj.mj_rne(model, data, 1, tau)
+            for dof, _local, taumax in joints:
+                tj = tau[dof]
+                bound = kappa * taumax
+                if abs(tj) > bound:
+                    e0 = (tj - np.sign(tj) * bound) / taumax
+                    cost += w * e0 * e0
+        return cost
+
+    def _update_dynamic_smooth_weights(self, q_win: np.ndarray) -> None:
+        """Recompute effective per-joint smoothing weights from the current window speed.
+
+        For joints whose peak speed exceeds ``vel_aware_thresh * vel_ref``, the smoothing
+        weight is ramped up (linearly to ``1 + vel_aware_gain`` at the limit) on top of the
+        static torque weight. Called once per GN step so the boost tracks the working
+        trajectory. When velocity-aware smoothing is off this is a no-op.
+        """
+        if not self.batch_config.vel_aware_smoothing or len(self._smooth_qidx) == 0:
+            return
+        if q_win.shape[0] < 2:
+            return
+        dt = self.dt
+        vref = max(float(self.batch_config.vel_ref), 1e-6)
+        thresh = float(self.batch_config.vel_aware_thresh)
+        gain = float(self.batch_config.vel_aware_gain)
+
+        # peak |speed| per smoothed column over the window
+        vmax = np.abs(np.diff(q_win[:, self._smooth_qidx], axis=0)).max(axis=0) / dt
+        frac = (vmax / vref - thresh) / max(1.0 - thresh, 1e-6)
+        boost = 1.0 + gain * np.clip(frac, 0.0, 1.0)
+        self._eff_smooth_qidx_w = self._smooth_static_w * boost
+        self._eff_smooth_w_by_dof = {
+            int(dof): float(self._eff_smooth_qidx_w[i])
+            for i, dof in enumerate(self._smooth_qidx_dof)
+            if dof >= 0
+        }
 
     def _resolve_foot_body_ids(self) -> List[int]:
         ids = list(getattr(self.gmr.contact_ground, "foot_body_ids", []) or [])
@@ -534,7 +878,8 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
             smooth_qidx = self._smooth_qidx
             if len(smooth_qidx) > 0:
                 diffs = np.diff(q_window[:, smooth_qidx], axis=0)
-                cost += self.config.w_velocity * float(np.sum(diffs * diffs))
+                col = np.sum(diffs * diffs, axis=0) * self._eff_smooth_qidx_w
+                cost += self.config.w_velocity * float(np.sum(col))
 
         if self.config.w_acceleration > 0.0 and q_window.shape[0] >= 3:
             smooth_qidx = self._smooth_qidx
@@ -544,7 +889,8 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
                     - 2.0 * q_window[1:-1, smooth_qidx]
                     + q_window[:-2, smooth_qidx]
                 )
-                cost += self.config.w_acceleration * float(np.sum(acc * acc))
+                col = np.sum(acc * acc, axis=0) * self._eff_smooth_qidx_w
+                cost += self.config.w_acceleration * float(np.sum(col))
 
         anchor_w = getattr(self, "_window_anchor_w", self.config.w_anchor)
         if anchor_w > 0.0:
@@ -552,6 +898,7 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
             cost += anchor_w * float(np.dot(delta, delta))
 
         cost += self._window_foot_cost(q_window, q_ref_window)
+        cost += self._window_torque_cost(q_window)
         return cost
 
     def _window_starts(self, n_frames: int) -> List[int]:
@@ -736,6 +1083,8 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
         if len(smooth_v) == 0:
             return
 
+        tw = self._eff_smooth_w_by_dof
+
         if w_velocity > 0.0:
             for t in range(1, n_frames):
                 off_t = t * m
@@ -744,7 +1093,7 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
                 for k, vi in enumerate(smooth_v):
                     i_t = off_t + vi
                     i_m = off_tm1 + vi
-                    w = w_velocity
+                    w = w_velocity * tw.get(vi, 1.0)
                     H[i_t, i_t] += w
                     H[i_m, i_m] += w
                     H[i_t, i_m] -= w
@@ -764,7 +1113,7 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
                     i0 = offs[0] + vi
                     i1 = offs[1] + vi
                     i2 = offs[2] + vi
-                    w = w_acceleration
+                    w = w_acceleration * tw.get(vi, 1.0)
                     e = acc[k]
                     H[i2, i2] += w
                     H[i1, i1] += 4.0 * w
@@ -840,6 +1189,8 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
                 H = np.zeros((nvar, nvar), dtype=float)
                 g = np.zeros(nvar, dtype=float)
 
+                self._update_dynamic_smooth_weights(q_win)
+
                 for t in range(n_frames):
                     self._accumulate_frame_fk_gn(
                         H,
@@ -858,6 +1209,8 @@ class BatchTrajectoryRetargeter(TrajectoryOptimizationRetargeter):
                 self._accumulate_window_temporal_gn(
                     H, g, q_win, smooth_v, smooth_q, m, w_v, w_a
                 )
+                self._update_torque_limit_gate_from_window(q_win)
+                self._accumulate_window_torque_limit_gn(H, g, q_win, m)
                 self._accumulate_window_foot_gn(
                     H, g, q_win, vidx, m, jacp, q_ref_win
                 )

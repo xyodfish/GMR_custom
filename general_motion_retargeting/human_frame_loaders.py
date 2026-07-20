@@ -7,6 +7,7 @@ from typing import Literal
 
 import numpy as np
 
+from general_motion_retargeting.ground_align_frames import FootMode, ground_align_human_frames
 from general_motion_retargeting.utils.lafan1 import load_bvh_file
 from general_motion_retargeting.utils.smpl import (
     get_gvhmr_data_offline_fast,
@@ -79,8 +80,15 @@ def load_human_motion_frames(
     bvh_format: str = "lafan1",
     tgt_fps: int = 30,
     max_frames: int | None = None,
+    ground_align: bool | FootMode = False,
+    ground_align_verbose: bool = False,
 ) -> tuple[list[dict], float, float, str]:
-    """Return (human_frames, fps, actual_human_height, src_human)."""
+    """Return (human_frames, fps, actual_human_height, src_human).
+
+    ``ground_align``: if True, apply offline Z ground alignment (``lower_envelope``).
+    Pass ``"lower_envelope"`` or ``"support_hold"`` to choose the mode explicitly.
+    Useful for GVHMR .pt clips with global height drift / floating feet.
+    """
     path = pathlib.Path(input_file).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"Input file not found: {path}")
@@ -112,6 +120,13 @@ def load_human_motion_frames(
 
     if max_frames is not None:
         frames = frames[:max_frames]
+
+    if ground_align:
+        mode: FootMode = "lower_envelope" if ground_align is True else ground_align
+        frames = ground_align_human_frames(
+            frames, float(fps), mode=mode, verbose=ground_align_verbose
+        )
+
     return frames, float(fps), float(height), src_human
 
 

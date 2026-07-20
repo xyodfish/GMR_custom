@@ -121,6 +121,7 @@ namespace gmr {
         buildTrackEntries();
         buildOptIndices();
         buildSmoothMappings();
+        buildTorqueLimitJoints();
         resolveFootBodyIds();
     }
 
@@ -210,6 +211,268 @@ namespace gmr {
                 smoothV_.push_back(i);
             }
         }
+    }
+
+    void BatchTrajectoryRetargeter::buildTorqueLimitJoints() {
+        torqueLimitJoints_.clear();
+        if (!config_.torqueLimitConstraint) {
+            return;
+        }
+        mjModel* model = impl_->model.get();
+        const auto contains = [](const std::string& s, std::initializer_list<const char*> keys) {
+            for (const char* k : keys) {
+                if (s.find(k) != std::string::npos) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (int j = 0; j < model->njnt; ++j) {
+            if (model->jnt_type[j] != mjJNT_HINGE) {
+                continue;
+            }
+            const double lo     = model->jnt_actfrcrange[2 * j + 0];
+            const double hi     = model->jnt_actfrcrange[2 * j + 1];
+            const double tauMax = std::max(std::abs(lo), std::abs(hi));
+            if (tauMax <= 0.0) {
+                continue;
+            }
+            const char* namePtr = mj_id2name(model, mjOBJ_JOINT, j);
+            const std::string name = namePtr ? namePtr : "";
+            const bool isUpper = contains(name, {"waist", "shoulder", "elbow", "wrist"});
+            const bool isLower = contains(name, {"hip", "knee", "ankle"});
+            if (config_.torqueLimitScope == "upper" && !isUpper) {
+                continue;
+            }
+            if (config_.torqueLimitScope != "upper" && config_.torqueLimitScope != "all" && !(isUpper || isLower)) {
+                continue;
+            }
+            const int dof = model->jnt_dofadr[j];
+            auto it       = qToOptV_.find(model->jnt_qposadr[j]);
+            if (it == qToOptV_.end()) {
+                continue;
+            }
+            torqueLimitJoints_.push_back({it->second, dof, tauMax});
+        }
+    }
+
+    double BatchTrajectoryRetargeter::windowTorquePeakRatio(const std::vector<Eigen::VectorXd>& qWin) const {
+        if (torqueLimitJoints_.empty()) {
+            return 0.0;
+        }
+        const int nFrames = static_cast<int>(qWin.size());
+        if (nFrames < 3) {
+            return 0.0;
+        }
+        mjModel* model = impl_->model.get();
+        mjData* data   = impl_->data.get();
+        const int nv   = model->nv;
+        const double dtReal = std::max(motionDtForTorque_, 1e-6);
+        std::vector<double> vPlus(nv, 0.0);
+        std::vector<double> vMinus(nv, 0.0);
+        std::vector<double> tau(nv, 0.0);
+        double peak = 0.0;
+        for (int t = 1; t < nFrames - 1; ++t) {
+            mj_differentiatePos(model, vPlus.data(), dtReal, qWin[t].data(), qWin[t + 1].data());
+            mj_differentiatePos(model, vMinus.data(), dtReal, qWin[t - 1].data(), qWin[t].data());
+            mju_copy(data->qpos, qWin[t].data(), model->nq);
+            for (int i = 0; i < nv; ++i) {
+                data->qvel[i] = 0.5 * (vPlus[i] + vMinus[i]);
+            }
+            mj_forward(model, data);
+            for (int i = 0; i < nv; ++i) {
+                data->qacc[i] = (vPlus[i] - vMinus[i]) / dtReal;
+            }
+            mj_rne(model, data, 1, tau.data());
+            for (const auto& jt : torqueLimitJoints_) {
+                peak = std::max(peak, std::abs(tau[jt.dof]) / jt.tauMax);
+            }
+        }
+        return peak;
+    }
+
+    double BatchTrajectoryRetargeter::torqueLimitGateFromRatio(double rPeak) {
+        const std::string mode = config_.torqueLimitGateMode;
+        if (!config_.torqueLimitConstraint || mode == "off") {
+            return 1.0;
+        }
+        if (mode == "soft") {
+            const double rOn   = config_.torqueLimitGateROn;
+            const double rFull = config_.torqueLimitGateRFull;
+            double gate        = 0.0;
+            if (rPeak <= rOn) {
+                gate = 0.0;
+            } else if (rPeak >= rFull) {
+                gate = 1.0;
+            } else {
+                gate = (rPeak - rOn) / std::max(rFull - rOn, 1e-9);
+            }
+            const double floor = config_.torqueLimitGateFloor;
+            return floor + (1.0 - floor) * gate;
+        }
+        if (mode == "hard") {
+            const double rOn  = config_.torqueLimitGateRFull;
+            const double rOff = config_.torqueLimitGateROff;
+            if (torqueGateActive_) {
+                if (rPeak < rOff) {
+                    ++torqueGateOffStreak_;
+                    torqueGateOnStreak_ = 0;
+                    if (torqueGateOffStreak_ >= config_.torqueLimitGateMinOffFrames) {
+                        torqueGateActive_   = false;
+                        torqueGateOffStreak_ = 0;
+                    }
+                } else {
+                    torqueGateOffStreak_ = 0;
+                }
+            } else if (rPeak > rOn) {
+                ++torqueGateOnStreak_;
+                torqueGateOffStreak_ = 0;
+                if (torqueGateOnStreak_ >= config_.torqueLimitGateMinOnFrames) {
+                    torqueGateActive_  = true;
+                    torqueGateOnStreak_ = 0;
+                }
+            } else {
+                torqueGateOnStreak_ = 0;
+            }
+            return torqueGateActive_ ? 1.0 : 0.0;
+        }
+        return 1.0;
+    }
+
+    void BatchTrajectoryRetargeter::updateTorqueLimitGateFromWindow(const std::vector<Eigen::VectorXd>& qWin) {
+        const double rPeak        = windowTorquePeakRatio(qWin);
+        const double gate         = torqueLimitGateFromRatio(rPeak);
+        torqueLimitGate_          = gate;
+        lastTorqueGate_           = gate;
+        lastTorquePeakRatio_      = rPeak;
+        ++torqueGateUpdates_;
+        torqueGateSum_ += gate;
+        maxTorquePeakRatio_ = std::max(maxTorquePeakRatio_, rPeak);
+    }
+
+    void BatchTrajectoryRetargeter::resetTorqueLimitGate() {
+        torqueLimitGate_     = 1.0;
+        torqueGateActive_    = false;
+        torqueGateOnStreak_  = 0;
+        torqueGateOffStreak_ = 0;
+        lastTorqueGate_      = 1.0;
+        lastTorquePeakRatio_ = 0.0;
+        torqueGateUpdates_   = 0;
+        torqueGateSum_       = 0.0;
+        maxTorquePeakRatio_  = 0.0;
+    }
+
+    void BatchTrajectoryRetargeter::accumulateWindowTorqueLimitGn(const std::vector<Eigen::VectorXd>& qWin, int m) const {
+        if (torqueLimitJoints_.empty()) {
+            return;
+        }
+        const int nFrames = static_cast<int>(qWin.size());
+        if (nFrames < 3) {
+            return;
+        }
+        mjModel* model = impl_->model.get();
+        mjData* data   = impl_->data.get();
+        const int nv   = model->nv;
+        const double dtReal = std::max(motionDtForTorque_, 1e-6);
+        const double kappa  = std::max(0.0, 1.0 - config_.torqueLimitMargin);
+        const double w      = config_.torqueLimitWeight * torqueLimitGate_;
+        if (w <= 0.0) {
+            return;
+        }
+
+        std::vector<double> vPlus(nv, 0.0);
+        std::vector<double> vMinus(nv, 0.0);
+        std::vector<double> tau(nv, 0.0);
+        std::vector<double> Mfull(static_cast<std::size_t>(nv) * nv, 0.0);
+
+        GnWorkspace& ws = *gnWs_;
+        for (int t = 1; t < nFrames - 1; ++t) {
+            mj_differentiatePos(model, vPlus.data(), dtReal, qWin[t].data(), qWin[t + 1].data());
+            mj_differentiatePos(model, vMinus.data(), dtReal, qWin[t - 1].data(), qWin[t].data());
+            mju_copy(data->qpos, qWin[t].data(), model->nq);
+            for (int i = 0; i < nv; ++i) {
+                data->qvel[i] = 0.5 * (vPlus[i] + vMinus[i]);
+            }
+            mj_forward(model, data);
+            mj_fullM(model, data, Mfull.data());
+            for (int i = 0; i < nv; ++i) {
+                data->qacc[i] = (vPlus[i] - vMinus[i]) / dtReal;
+            }
+            mj_rne(model, data, 1, tau.data());
+
+            for (const auto& jt : torqueLimitJoints_) {
+                const double tj    = tau[jt.dof];
+                const double bound = kappa * jt.tauMax;
+                if (std::abs(tj) <= bound) {
+                    continue;
+                }
+                const double e0 = (tj - std::copysign(bound, tj)) / jt.tauMax;  // normalised excess
+                const double mjj = std::max(Mfull[static_cast<std::size_t>(jt.dof) * nv + jt.dof], 1e-4);
+                const double c   = (mjj / jt.tauMax) / (dtReal * dtReal);
+                const int i0     = (t - 1) * m + jt.localv;
+                const int i1     = t * m + jt.localv;
+                const int i2     = (t + 1) * m + jt.localv;
+                ws.Hdense(i2, i2) += w * c * c;
+                ws.Hdense(i1, i1) += 4.0 * w * c * c;
+                ws.Hdense(i0, i0) += w * c * c;
+                ws.Hdense(i2, i1) -= 2.0 * w * c * c;
+                ws.Hdense(i1, i2) -= 2.0 * w * c * c;
+                ws.Hdense(i2, i0) += w * c * c;
+                ws.Hdense(i0, i2) += w * c * c;
+                ws.Hdense(i1, i0) -= 2.0 * w * c * c;
+                ws.Hdense(i0, i1) -= 2.0 * w * c * c;
+                const double ge = w * c * e0;
+                ws.g[i2] += ge;
+                ws.g[i1] -= 2.0 * ge;
+                ws.g[i0] += ge;
+            }
+        }
+    }
+
+    double BatchTrajectoryRetargeter::windowTorqueCost(const std::vector<Eigen::VectorXd>& qWin) const {
+        if (torqueLimitJoints_.empty()) {
+            return 0.0;
+        }
+        const int nFrames = static_cast<int>(qWin.size());
+        if (nFrames < 3) {
+            return 0.0;
+        }
+        mjModel* model = impl_->model.get();
+        mjData* data   = impl_->data.get();
+        const int nv   = model->nv;
+        const double dtReal = std::max(motionDtForTorque_, 1e-6);
+        const double kappa  = std::max(0.0, 1.0 - config_.torqueLimitMargin);
+        const double w      = config_.torqueLimitWeight * torqueLimitGate_;
+        if (w <= 0.0) {
+            return 0.0;
+        }
+
+        std::vector<double> vPlus(nv, 0.0);
+        std::vector<double> vMinus(nv, 0.0);
+        std::vector<double> tau(nv, 0.0);
+        double cost = 0.0;
+        for (int t = 1; t < nFrames - 1; ++t) {
+            mj_differentiatePos(model, vPlus.data(), dtReal, qWin[t].data(), qWin[t + 1].data());
+            mj_differentiatePos(model, vMinus.data(), dtReal, qWin[t - 1].data(), qWin[t].data());
+            mju_copy(data->qpos, qWin[t].data(), model->nq);
+            for (int i = 0; i < nv; ++i) {
+                data->qvel[i] = 0.5 * (vPlus[i] + vMinus[i]);
+            }
+            mj_forward(model, data);
+            for (int i = 0; i < nv; ++i) {
+                data->qacc[i] = (vPlus[i] - vMinus[i]) / dtReal;
+            }
+            mj_rne(model, data, 1, tau.data());
+            for (const auto& jt : torqueLimitJoints_) {
+                const double tj    = tau[jt.dof];
+                const double bound = kappa * jt.tauMax;
+                if (std::abs(tj) > bound) {
+                    const double e0 = (tj - std::copysign(bound, tj)) / jt.tauMax;
+                    cost += w * e0 * e0;
+                }
+            }
+        }
+        return cost;
     }
 
     void BatchTrajectoryRetargeter::ensureGnWorkspace(int nFrames) const {
@@ -480,6 +743,7 @@ namespace gmr {
         }
 
         cost += velCost + accCost + anchorCost;
+        cost += windowTorqueCost(qWin);
 
         if (!footActive) {
             if (config_.verbose && frameOffset == 0) {
@@ -743,6 +1007,8 @@ namespace gmr {
         mjModel* model = impl_->model.get();
         mjData* data   = impl_->data.get();
 
+        motionDtForTorque_ = qpOpts != nullptr ? qpOpts->motionDt : config_.motionDt;
+
         const bool footActive = config_.enableFootPenalties && !footBodyIds_.empty() &&
                                 (config_.wFootHeight > 0.0 || config_.wFootSlip > 0.0 || config_.wFootIkAnchor > 0.0 ||
                                  config_.wRootXyContact > 0.0 || config_.wContactJointAnchor > 0.0);
@@ -876,6 +1142,9 @@ namespace gmr {
                     }
                 }
             }
+
+            updateTorqueLimitGateFromWindow(qWin);
+            accumulateWindowTorqueLimitGn(qWin, m);
 
             if (footActive) {
                 for (int t = 0; t < nFrames; ++t) {
@@ -1235,6 +1504,7 @@ namespace gmr {
         }
 
         const auto tTotal = Clock::now();
+        resetTorqueLimitGate();
         std::vector<HumanFrame> prepared;
         std::vector<FrameTargets> targets;
         prepared.reserve(humanFrames.size());

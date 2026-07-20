@@ -32,6 +32,14 @@ def main() -> None:
         type=str,
         default=str(REPO / "assets" / "body_models"),
     )
+    parser.add_argument(
+        "--ground_align",
+        nargs="?",
+        const="lower_envelope",
+        default=None,
+        choices=["lower_envelope", "support_hold"],
+        help="Offline Z ground-align before export.",
+    )
     args = parser.parse_args()
 
     input_file = args.input_file or args.pt_file
@@ -45,6 +53,8 @@ def main() -> None:
         bvh_format=args.format,
         tgt_fps=args.motion_fps,
         max_frames=args.max_frames,
+        ground_align=args.ground_align or False,
+        ground_align_verbose=bool(args.ground_align),
     )
 
     payload = {

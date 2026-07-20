@@ -33,6 +33,18 @@ namespace gmr {
         bool useVelocityLimits   = true;
         // Keep committed hinge joints this many degrees away from hard limits (0 disables).
         double jointLimitMarginDeg = 0.0;
+        // Control-feasibility: soft inverse-dynamics torque-limit barrier (see BatchTrajectoryConfig).
+        bool torqueLimitConstraint  = false;
+        double torqueLimitMargin    = 0.1;
+        double torqueLimitWeight    = 20.0;
+        std::string torqueLimitScope = "upper";  // "upper" | "all"
+        std::string torqueLimitGateMode = "soft";
+        double torqueLimitGateROn       = 0.85;
+        double torqueLimitGateRFull     = 0.95;
+        double torqueLimitGateROff      = 0.85;
+        int torqueLimitGateMinOnFrames  = 5;
+        int torqueLimitGateMinOffFrames = 10;
+        double torqueLimitGateFloor     = 0.0;
         bool useLookahead        = true;
         std::string qpBackend    = "daqp";
         bool finalizeContact     = true;

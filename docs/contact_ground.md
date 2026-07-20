@@ -2,6 +2,21 @@
 
 为 GMR 提供流式接触检测、人体地面对齐、足部锁定，以及**机器人地面穿透修正**。设计思路参考 `robot_retargeter` 中的 KCR（Keypoint-Contact Retargeting），并适配因果 / 实时、逐帧 retargeting 场景。
 
+## 离线人体地面对齐（`.pt` 后处理）
+
+对 GVHMR 等长时漂高 / 双脚悬空的 clip，可在加载帧后做一次性 Z 平移（比在线 `contact_ground` 更适合全局高度漂移）：
+
+```bash
+# 扫目录看 float%>5cm 前后
+python scripts/tools/ground_align_pt.py --input_dir data/gvhmr_test_videos
+
+# retarget / dual-viz 时启用（默认 lower_envelope）
+python scripts/viz/vis_dual_robot_compare.py --input_file ... --compare_torque_limit --ground_align
+python scripts/gvhmr/to_robot_online_qp.py --input_file ... --ground_align support_hold
+```
+
+实现见 `general_motion_retargeting/ground_align_frames.py`；经 `load_human_motion_frames(..., ground_align=...)` 接入。
+
 ## 解决的问题
 
 | 阶段 | 问题 | 处理方式 |
