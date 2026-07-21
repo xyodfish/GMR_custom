@@ -57,7 +57,7 @@ struct ViewerConfig {
     std::string outJson;
 
     std::string onlineQpPreset = "anti_slip";
-    std::string onlineQpMode   = "lookahead";  // lookahead | causal
+    std::string onlineQpMode   = "causal";  // causal | lookahead (delayed buffer, not full preload)
     double onlineQpJointLimitMarginDeg = 0.0;
 
     int transparentRobot  = 0;
@@ -683,7 +683,10 @@ void printUsage() {
               << "Defaults: realtime=true (no precompute), loop=false, "
                  "show_human_overlay=true, method=ik.\n"
               << "batch_to: offline batch GN first, then playback (implies precompute; use mujoco_se3).\n"
-              << "online_qp: stream C++ online QP-MPC per frame (implies realtime; use mujoco_se3).\n"
+              << "online_qp: live frame feed → retargetFrame / arrival-buffer MPC (implies realtime).\n"
+              << "  --online_qp_mode causal: one arrived human frame → one solve (true streaming).\n"
+              << "  --online_qp_mode lookahead: short delay buffer (horizon frames) for MPC peek;\n"
+              << "    does NOT preload the whole sequence into the solver.\n"
               << "CLI options override config file values.\n";
 }
 
@@ -755,6 +758,8 @@ int main(int argc, char** argv) {
         std::unique_ptr<gmr::OnlineQpRetargeter> onlineQp;
         if (useOnlineQp) {
             gmr::OnlineQpConfig qpCfg = gmr::OnlineQpConfig::fromPresetName(config.onlineQpPreset);
+            // "lookahead" here means delayed short-horizon MPC on an arrival buffer, NOT
+            // preloading the whole motion into the solver.
             qpCfg.useLookahead        = (config.onlineQpMode != "causal");
             qpCfg.jointLimitMarginDeg = config.onlineQpJointLimitMarginDeg;
             onlineQp                  = std::make_unique<gmr::OnlineQpRetargeter>(xmlPath, ikConfigCopy, qpCfg);
@@ -762,7 +767,7 @@ int main(int argc, char** argv) {
             if (playSequence.fps > 0.0) {
                 onlineQp->setMotionFps(playSequence.fps);
             }
-            onlineQp->beginSequence(playSequence.frames, *retargeter, config.offsetToGround);
+            onlineQp->reset();
         }
 
         // Run expensive offline work before opening GLFW (avoids black/unresponsive window during batch GN).
@@ -902,9 +907,33 @@ int main(int argc, char** argv) {
 
         std::size_t frameIdx             = 0;
         std::size_t shownIdx             = std::numeric_limits<std::size_t>::max();
+        std::size_t onlineSrcIdx         = 0;  // next human frame to "arrive" from the file source
         bool playbackFinished            = false;
         gmr::HumanFrame visualHumanFrame =
             retargeter->prepareHumanFrame(playSequence.frames.front(), config.offsetToGround);
+
+        auto feedOnlineQpArrival = [&](bool flush) -> bool {
+            // Returns true if a robot command was produced this call.
+            // Lookahead fill: while buffer < horizon, stepArrived emits traditional GMR (no blank).
+            if (!useOnlineQp || !onlineQp) {
+                return false;
+            }
+            if (!flush) {
+                if (onlineSrcIdx >= playSequence.frames.size()) {
+                    return false;
+                }
+                onlineQp->pushArrivedFrame(playSequence.frames[onlineSrcIdx]);
+                visualHumanFrame =
+                    retargeter->prepareHumanFrame(playSequence.frames[onlineSrcIdx], config.offsetToGround);
+                ++onlineSrcIdx;
+            }
+            if (!onlineQp->canStepArrived(flush)) {
+                return false;
+            }
+            retargeter->setQpos(onlineQp->stepArrived(*retargeter, config.offsetToGround, flush));
+            syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
+            return true;
+        };
 
         if (config.realtime && !useOnlineQp) {
             retargeter->retargetFrame(playSequence.frames.front(), config.offsetToGround);
@@ -913,20 +942,28 @@ int main(int argc, char** argv) {
                 frameIdx = 1;
             }
         } else if (config.realtime && useOnlineQp) {
-            retargeter->setQpos(onlineQp->stepSequence(*retargeter));
-            syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
-            frameIdx = 1;
+            // First tick: push one arrived frame; causal / lookahead-fill both produce a pose.
+            feedOnlineQpArrival(/*flush=*/false);
         }
 
         const char* modeLabel = "precomputed IK";
         if (useBatchTo) {
             modeLabel = "batch_to";
         } else if (useOnlineQp) {
-            modeLabel = "online_qp (streaming)";
+            modeLabel = (config.onlineQpMode == "causal") ? "online_qp live/causal"
+                                                          : "online_qp live/lookahead-buffer";
         } else if (config.realtime) {
             modeLabel = "realtime IK";
         }
         std::cout << "Starting playback at " << playSequence.fps << " FPS (" << modeLabel << ")" << std::endl;
+        if (useOnlineQp) {
+            std::cout << "[online_qp] human frames are fed one-by-one as arrivals; "
+                         "solver does not preload the full sequence.\n";
+            if (config.onlineQpMode != "causal") {
+                std::cout << "[online_qp] lookahead fill uses traditional GMR until the arrival "
+                             "buffer reaches horizon, then switches to delayed QP.\n";
+            }
+        }
 
         auto lastStep      = std::chrono::steady_clock::now();
         auto playbackStart = std::chrono::steady_clock::now();
@@ -936,21 +973,18 @@ int main(int argc, char** argv) {
             if (config.realtime) {
                 while (now - lastStep >= frameDtDuration) {
                     if (useOnlineQp) {
-                        if (onlineQp->sequenceDone()) {
-                            if (config.loop) {
-                                onlineQp->beginSequence(playSequence.frames, *retargeter, config.offsetToGround);
-                            } else {
-                                playbackFinished = true;
-                                break;
-                            }
+                        if (onlineSrcIdx < playSequence.frames.size()) {
+                            feedOnlineQpArrival(/*flush=*/false);
+                        } else if (onlineQp->arrivalBufferSize() > 0) {
+                            feedOnlineQpArrival(/*flush=*/true);
+                        } else if (config.loop) {
+                            onlineQp->reset();
+                            onlineSrcIdx = 0;
+                            feedOnlineQpArrival(/*flush=*/false);
+                        } else {
+                            playbackFinished = true;
+                            break;
                         }
-                        visualHumanFrame =
-                            retargeter->prepareHumanFrame(playSequence.frames[static_cast<std::size_t>(
-                                                              std::min(onlineQp->frameIndex(),
-                                                                       static_cast<int>(playSequence.frames.size()) - 1))],
-                                                          config.offsetToGround);
-                        retargeter->setQpos(onlineQp->stepSequence(*retargeter));
-                        syncRenderDataFromQpos(retargeter->currentQpos(), renderModel.get(), renderData.get(), qposMap);
                         lastStep += frameDtDuration;
                         continue;
                     }

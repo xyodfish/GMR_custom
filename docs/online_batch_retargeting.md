@@ -9,6 +9,8 @@
 
 ## Online QP-MPC（新）
 
+> 完整算法文档见 [`online_qp_retargeting.md`](online_qp_retargeting.md)。
+
 实现：
 - Python：`general_motion_retargeting/online_qp_retarget.py`
 - **C++（推荐实时）**：`cpp/` → `gmr_online_qp_cli`，封装 `scripts/tools/run_cpp_online_qp.py`

@@ -67,6 +67,11 @@ namespace gmr {
         frameIndex_   = 0;
         lastFrameMs_  = 0.0;
         batch_->clearFootContactSchedule();
+        arrivalBuf_.clear();
+        arrivalHasPrev_     = false;
+        arrivalFillPending_ = false;
+        arrivalQPrev_       = Eigen::VectorXd();
+        arrivalPrevTargets_ = BatchTrajectoryRetargeter::FrameTargets{};
         sequenceActive_  = false;
         sequenceK_       = 0;
         sequenceT_       = 0;
@@ -86,6 +91,19 @@ namespace gmr {
 
     void OnlineQpRetargeter::applyContactGroundConfig(const ContactGroundConfig& contactGround) {
         batch_->applyContactGroundConfig(contactGround);
+    }
+
+    Eigen::VectorXd OnlineQpRetargeter::commitOutputQpos(Retargeter& retargeter, Eigen::VectorXd q) {
+        retargeter.setQpos(q);
+        // anti_slip sets finalizeContact=false for historical speed reasons, but Python still runs
+        // _apply_penetration_fix. Always lift root-Z here so feet/trunk clear the floor.
+        retargeter.finalizeContact();
+        q = retargeter.currentQpos();
+        if (config_.jointLimitMarginDeg > 0.0) {
+            batch_->clipHingeQposMargin(q, config_.jointLimitMarginDeg);
+            retargeter.setQpos(q);
+        }
+        return q;
     }
 
     Eigen::VectorXd OnlineQpRetargeter::softSeed(const HumanFrame& humanFrame, const HumanFrame& prepared,
@@ -187,18 +205,7 @@ namespace gmr {
             qOut            = qOpt.back();
         }
 
-        if (config_.finalizeContact) {
-            retargeter.setQpos(qOut);
-            retargeter.finalizeContact();
-            qOut = retargeter.currentQpos();
-        } else {
-            retargeter.setQpos(qOut);
-        }
-
-        if (config_.jointLimitMarginDeg > 0.0) {
-            batch_->clipHingeQposMargin(qOut, config_.jointLimitMarginDeg);
-            retargeter.setQpos(qOut);
-        }
+        qOut = commitOutputQpos(retargeter, std::move(qOut));
 
         qBuf_.push_back(qOut);
         lastFrameMs_ = elapsedMs(t0);
@@ -276,18 +283,7 @@ namespace gmr {
                 qCmd      = qOpt[static_cast<std::size_t>(pin)];
             }
 
-            if (config_.finalizeContact) {
-                retargeter.setQpos(qCmd);
-                retargeter.finalizeContact();
-                qCmd = retargeter.currentQpos();
-            } else {
-                retargeter.setQpos(qCmd);
-            }
-
-            if (config_.jointLimitMarginDeg > 0.0) {
-                batch_->clipHingeQposMargin(qCmd, config_.jointLimitMarginDeg);
-                retargeter.setQpos(qCmd);
-            }
+            qCmd = commitOutputQpos(retargeter, std::move(qCmd));
 
             out.push_back(qCmd);
             qPrev     = qCmd;
@@ -386,24 +382,141 @@ namespace gmr {
             qCmd      = qOpt[static_cast<std::size_t>(pin)];
         }
 
-        if (config_.finalizeContact) {
-            retargeter.setQpos(qCmd);
-            retargeter.finalizeContact();
-            qCmd = retargeter.currentQpos();
-        } else {
-            retargeter.setQpos(qCmd);
-        }
-
-        if (config_.jointLimitMarginDeg > 0.0) {
-            batch_->clipHingeQposMargin(qCmd, config_.jointLimitMarginDeg);
-            retargeter.setQpos(qCmd);
-        }
+        qCmd = commitOutputQpos(retargeter, std::move(qCmd));
 
         sequenceQPrev_   = qCmd;
         sequenceHasPrev_ = true;
         qBuf_.push_back(qCmd);
         lastFrameMs_ = elapsedMs(t0);
         ++sequenceK_;
+        return qCmd;
+    }
+
+    void OnlineQpRetargeter::pushArrivedFrame(const HumanFrame& humanFrame) {
+        arrivalBuf_.push_back(humanFrame);
+        if (config_.useLookahead &&
+            static_cast<int>(arrivalBuf_.size()) < std::max(1, config_.horizon)) {
+            // One traditional-GMR output per push while the lookahead buffer fills.
+            arrivalFillPending_ = true;
+        }
+    }
+
+    bool OnlineQpRetargeter::canStepArrived(bool flush) const {
+        if (arrivalBuf_.empty()) {
+            return false;
+        }
+        if (!config_.useLookahead || flush) {
+            return true;
+        }
+        if (arrivalFillPending_) {
+            return true;
+        }
+        return static_cast<int>(arrivalBuf_.size()) >= std::max(1, config_.horizon);
+    }
+
+    Eigen::VectorXd OnlineQpRetargeter::stepLookaheadWindow(const std::vector<HumanFrame>& windowFrames,
+                                                            Retargeter& retargeter, bool offsetToGround) {
+        if (windowFrames.empty()) {
+            throw std::runtime_error("stepLookaheadWindow: empty window");
+        }
+        const auto t0 = Clock::now();
+        ++frameIndex_;
+        const int Hn = static_cast<int>(windowFrames.size());
+
+        std::vector<BatchTrajectoryRetargeter::FrameTargets> tgtWin;
+        tgtWin.reserve(static_cast<std::size_t>(Hn));
+        for (const auto& f : windowFrames) {
+            HumanFrame prepared = retargeter.prepareRetargetInput(f, offsetToGround);
+            tgtWin.push_back(batch_->targetsForPrepared(prepared));
+        }
+
+        std::vector<Eigen::VectorXd> seeds;
+        seeds.reserve(static_cast<std::size_t>(Hn));
+        Eigen::VectorXd qCursor = arrivalHasPrev_ ? arrivalQPrev_ : retargeter.currentQpos();
+        for (int i = 0; i < Hn; ++i) {
+            Eigen::VectorXd qS;
+            if (frameIndex_ <= config_.bootstrapGmrFrames && i == 0) {
+                qS = retargeter.retargetFrame(windowFrames[static_cast<std::size_t>(i)], offsetToGround);
+            } else if (config_.lightIkIters > 0) {
+                retargeter.setQpos(qCursor);
+                qS = retargeter.retargetLightIk(windowFrames[static_cast<std::size_t>(i)], offsetToGround,
+                                                config_.lightIkIters);
+            } else {
+                qS = qCursor;
+            }
+            seeds.push_back(qS);
+            qCursor = qS;
+        }
+
+        Eigen::VectorXd qCmd = seeds.front();
+        // Commit-frame targets before optional pin insert (always index 0 of tgtWin here).
+        const BatchTrajectoryRetargeter::FrameTargets commitTargets = tgtWin.front();
+        if (frameIndex_ > config_.bootstrapGmrFrames) {
+            std::vector<Eigen::VectorXd> qWin   = seeds;
+            std::vector<Eigen::VectorXd> refWin = seeds;
+            int pin                             = 0;
+            const Eigen::VectorXd* qPrevPtr     = arrivalHasPrev_ ? &arrivalQPrev_ : nullptr;
+            if (arrivalHasPrev_) {
+                qWin.insert(qWin.begin(), arrivalQPrev_);
+                refWin.insert(refWin.begin(), arrivalQPrev_);
+                tgtWin.insert(tgtWin.begin(), arrivalPrevTargets_);
+                pin = 1;
+            }
+            auto qOpt = solveQpWindow(qWin, tgtWin, refWin, qPrevPtr, pin);
+            qCmd      = qOpt[static_cast<std::size_t>(pin)];
+        }
+
+        qCmd = commitOutputQpos(retargeter, std::move(qCmd));
+
+        arrivalPrevTargets_ = commitTargets;
+        arrivalQPrev_       = qCmd;
+        arrivalHasPrev_     = true;
+        qBuf_.push_back(qCmd);
+        while (qBuf_.size() > static_cast<std::size_t>(std::max(config_.horizon, 8))) {
+            qBuf_.pop_front();
+        }
+        lastFrameMs_ = elapsedMs(t0);
+        return qCmd;
+    }
+
+    Eigen::VectorXd OnlineQpRetargeter::stepArrived(Retargeter& retargeter, bool offsetToGround, bool flush) {
+        if (!canStepArrived(flush)) {
+            throw std::runtime_error("OnlineQpRetargeter::stepArrived: arrival buffer not ready");
+        }
+        if (!config_.useLookahead) {
+            HumanFrame frame = arrivalBuf_.front();
+            arrivalBuf_.pop_front();
+            return retargetFrame(frame, retargeter, offsetToGround);
+        }
+
+        const int Hneed = std::max(1, config_.horizon);
+        // Fill phase: traditional GMR for the newest arrived frame (no pop). Keeps the robot
+        // moving during the H-1 frame lookahead delay; seeds arrivalQPrev for the first QP.
+        // When the buffer reaches horizon, subsequent steps switch to delayed QP (commit front).
+        if (!flush && arrivalFillPending_ && static_cast<int>(arrivalBuf_.size()) < Hneed) {
+            const auto t0            = Clock::now();
+            arrivalFillPending_      = false;
+            const HumanFrame& latest = arrivalBuf_.back();
+            Eigen::VectorXd qCmd     = retargeter.retargetFrame(latest, offsetToGround);
+            HumanFrame prepared      = retargeter.prepareRetargetInput(latest, offsetToGround);
+            arrivalPrevTargets_      = batch_->targetsForPrepared(prepared);
+            arrivalQPrev_            = qCmd;
+            arrivalHasPrev_          = true;
+            ++frameIndex_;
+            qBuf_.push_back(qCmd);
+            while (qBuf_.size() > static_cast<std::size_t>(std::max(config_.horizon, 8))) {
+                qBuf_.pop_front();
+            }
+            lastFrameMs_ = elapsedMs(t0);
+            return qCmd;
+        }
+
+        arrivalFillPending_ = false;
+        const int Hn = flush ? static_cast<int>(arrivalBuf_.size())
+                             : std::min(config_.horizon, static_cast<int>(arrivalBuf_.size()));
+        std::vector<HumanFrame> window(arrivalBuf_.begin(), arrivalBuf_.begin() + Hn);
+        Eigen::VectorXd qCmd = stepLookaheadWindow(window, retargeter, offsetToGround);
+        arrivalBuf_.pop_front();
         return qCmd;
     }
 

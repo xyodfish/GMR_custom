@@ -53,6 +53,11 @@ def main() -> None:
     parser.add_argument("--contact_ground", default=None, help="IK 默认|开启|关闭")
     parser.add_argument("--fix_robot_penetration", default=None)
     parser.add_argument("--foot_ground_limit", default=None)
+    parser.add_argument(
+        "--ground_align",
+        action="store_true",
+        help="Offline Z ground-align human frames before export (helps GVHMR float/sink).",
+    )
     parser.add_argument("--out_json", default=None, help="batch_to only: save qpos JSON after optimize")
     parser.add_argument("--online_qp_preset", default="anti_slip", choices=["default", "smooth", "anti_slip"])
     parser.add_argument("--online_qp_mode", default="lookahead", choices=["lookahead", "causal"])
@@ -68,6 +73,8 @@ def main() -> None:
         bvh_format=args.format,
         tgt_fps=args.motion_fps,
         max_frames=args.max_frames,
+        ground_align=bool(args.ground_align),
+        ground_align_verbose=bool(args.ground_align),
     )
 
     payload = {

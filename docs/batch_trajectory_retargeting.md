@@ -11,7 +11,7 @@
 | 每步优化变量 | 单帧 `q_t` | 窗口尾帧 | 窗口 `q` | **窗口 `q_{start…start+H-1}`** |
 | 求解器 | mink QP | 多帧 GN | 线性化 QP (DAQP) | **多帧 GN（默认）** |
 | 典型用途 | 实时 teleop | 在线 30fps | 在线减滑脚 | **离线数据生成 / 质量优先** |
-| 文档 | — | [`online_batch_retargeting.md`](online_batch_retargeting.md) | 同上 | **本文** |
+| 文档 | — | [`online_batch_retargeting.md`](online_batch_retargeting.md) | [`online_qp_retargeting.md`](online_qp_retargeting.md) | **本文** |
 
 ---
 
