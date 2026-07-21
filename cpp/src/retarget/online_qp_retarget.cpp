@@ -18,44 +18,43 @@ namespace gmr {
 
     BatchTrajectoryConfig OnlineQpRetargeter::makeBatchConfig() const {
         BatchTrajectoryConfig bc;
-        bc.windowSize             = config_.horizon;
-        bc.windowStride           = 1;
-        bc.gnSteps                = config_.sqpIters;
-        bc.gnDamping              = config_.gnDamping;
-        bc.gnMaxStep              = config_.gnMaxStep;
-        bc.wVelocity              = config_.wVelocity;
-        bc.wAcceleration          = config_.wAcceleration;
-        bc.wAnchor                = config_.wAnchor;
-        bc.enableFootPenalties    = config_.enableFootPenalties;
-        bc.wFootHeight            = config_.wFootHeight;
-        bc.wFootSlip              = config_.wFootSlip;
-        bc.wFootIkAnchor          = config_.wFootIkAnchor;
-        bc.wRootXyContact         = config_.wRootXyContact;
-        bc.wContactJointAnchor    = config_.wContactJointAnchor;
-        bc.footContactFromRef     = true;
-        bc.smoothRootXyz          = false;
-        bc.useGmrInit             = false;
-        bc.finalizeContact        = false;
-        bc.torqueLimitConstraint  = config_.torqueLimitConstraint;
-        bc.torqueLimitMargin      = config_.torqueLimitMargin;
-        bc.torqueLimitWeight      = config_.torqueLimitWeight;
-        bc.torqueLimitScope       = config_.torqueLimitScope;
-        bc.torqueLimitGateMode    = config_.torqueLimitGateMode;
-        bc.torqueLimitGateROn     = config_.torqueLimitGateROn;
-        bc.torqueLimitGateRFull   = config_.torqueLimitGateRFull;
-        bc.torqueLimitGateROff    = config_.torqueLimitGateROff;
+        bc.windowSize                  = config_.horizon;
+        bc.windowStride                = 1;
+        bc.gnSteps                     = config_.sqpIters;
+        bc.gnDamping                   = config_.gnDamping;
+        bc.gnMaxStep                   = config_.gnMaxStep;
+        bc.wVelocity                   = config_.wVelocity;
+        bc.wAcceleration               = config_.wAcceleration;
+        bc.wAnchor                     = config_.wAnchor;
+        bc.enableFootPenalties         = config_.enableFootPenalties;
+        bc.wFootHeight                 = config_.wFootHeight;
+        bc.wFootSlip                   = config_.wFootSlip;
+        bc.wFootIkAnchor               = config_.wFootIkAnchor;
+        bc.wRootXyContact              = config_.wRootXyContact;
+        bc.wContactJointAnchor         = config_.wContactJointAnchor;
+        bc.footContactFromRef          = true;
+        bc.smoothRootXyz               = false;
+        bc.useGmrInit                  = false;
+        bc.finalizeContact             = false;
+        bc.torqueLimitConstraint       = config_.torqueLimitConstraint;
+        bc.torqueLimitMargin           = config_.torqueLimitMargin;
+        bc.torqueLimitWeight           = config_.torqueLimitWeight;
+        bc.torqueLimitScope            = config_.torqueLimitScope;
+        bc.torqueLimitGateMode         = config_.torqueLimitGateMode;
+        bc.torqueLimitGateROn          = config_.torqueLimitGateROn;
+        bc.torqueLimitGateRFull        = config_.torqueLimitGateRFull;
+        bc.torqueLimitGateROff         = config_.torqueLimitGateROff;
         bc.torqueLimitGateMinOnFrames  = config_.torqueLimitGateMinOnFrames;
         bc.torqueLimitGateMinOffFrames = config_.torqueLimitGateMinOffFrames;
-        bc.torqueLimitGateFloor   = config_.torqueLimitGateFloor;
-        bc.gnLineSearchAlphas     = {1.0, 0.5, 0.25, 0.1};
-        bc.gnLineSearchMode       = GnLineSearchMode::kBest;
-        bc.useBandedSolver        = false;
-        bc.verbose                = config_.verbose;
+        bc.torqueLimitGateFloor        = config_.torqueLimitGateFloor;
+        bc.gnLineSearchAlphas          = {1.0, 0.5, 0.25, 0.1};
+        bc.gnLineSearchMode            = GnLineSearchMode::kBest;
+        bc.useBandedSolver             = false;
+        bc.verbose                     = config_.verbose;
         return bc;
     }
 
-    OnlineQpRetargeter::OnlineQpRetargeter(const std::filesystem::path& robotModelPath, IkConfig ikConfig,
-                                           OnlineQpConfig config)
+    OnlineQpRetargeter::OnlineQpRetargeter(const std::filesystem::path& robotModelPath, IkConfig ikConfig, OnlineQpConfig config)
         : config_(std::move(config)),
           batch_(std::make_unique<BatchTrajectoryRetargeter>(robotModelPath, std::move(ikConfig), makeBatchConfig())) {}
 
@@ -64,22 +63,14 @@ namespace gmr {
         targetsBuf_.clear();
         qBuf_.clear();
         qRefBuf_.clear();
-        frameIndex_   = 0;
-        lastFrameMs_  = 0.0;
+        frameIndex_  = 0;
+        lastFrameMs_ = 0.0;
         batch_->clearFootContactSchedule();
         arrivalBuf_.clear();
         arrivalHasPrev_     = false;
         arrivalFillPending_ = false;
         arrivalQPrev_       = Eigen::VectorXd();
         arrivalPrevTargets_ = BatchTrajectoryRetargeter::FrameTargets{};
-        sequenceActive_  = false;
-        sequenceK_       = 0;
-        sequenceT_       = 0;
-        sequenceHasPrev_ = false;
-        sequenceFrames_.clear();
-        sequencePrepared_.clear();
-        sequencePreparedReady_.clear();
-        sequenceTargets_.clear();
         batch_->resetTorqueLimitGate();
     }
 
@@ -106,8 +97,8 @@ namespace gmr {
         return q;
     }
 
-    Eigen::VectorXd OnlineQpRetargeter::softSeed(const HumanFrame& humanFrame, const HumanFrame& prepared,
-                                                 Retargeter& retargeter, bool offsetToGround) {
+    Eigen::VectorXd OnlineQpRetargeter::softSeed(const HumanFrame& humanFrame, const HumanFrame& prepared, Retargeter& retargeter,
+                                                 bool offsetToGround) {
         (void)prepared;
         if (frameIndex_ <= config_.bootstrapGmrFrames) {
             return retargeter.retargetFrame(humanFrame, offsetToGround);
@@ -121,45 +112,45 @@ namespace gmr {
         return retargeter.currentQpos();
     }
 
-    std::vector<Eigen::VectorXd> OnlineQpRetargeter::solveQpWindow(
-        const std::vector<Eigen::VectorXd>& qInit,
-        const std::vector<BatchTrajectoryRetargeter::FrameTargets>& targets, const std::vector<Eigen::VectorXd>& qRef,
-        const Eigen::VectorXd* qPrev, int pinFrames) {
+    std::vector<Eigen::VectorXd> OnlineQpRetargeter::solveQpWindow(const std::vector<Eigen::VectorXd>& qInit,
+                                                                   const std::vector<BatchTrajectoryRetargeter::FrameTargets>& targets,
+                                                                   const std::vector<Eigen::VectorXd>& qRef, const Eigen::VectorXd* qPrev,
+                                                                   int pinFrames) {
         BatchTrajectoryRetargeter::QpWindowOptions opts;
-        opts.qPrev             = qPrev;
-        opts.pinFrames         = pinFrames;
-        opts.wGmr              = config_.wGmr;
-        opts.dqMax             = config_.dqMax;
-        opts.motionDt          = 1.0 / std::max(motionFps_, 1e-6);
+        opts.qPrev               = qPrev;
+        opts.pinFrames           = pinFrames;
+        opts.wGmr                = config_.wGmr;
+        opts.dqMax               = config_.dqMax;
+        opts.motionDt            = 1.0 / std::max(motionFps_, 1e-6);
         opts.useJointLimits      = config_.useJointLimits;
         opts.useVelocityLimits   = config_.useVelocityLimits;
         opts.jointLimitMarginDeg = config_.jointLimitMarginDeg;
         opts.qpBackend           = config_.qpBackend;
 
         // Sync batch weights in case CLI overrode config after construction.
-        BatchTrajectoryConfig& bc = batch_->config();
-        bc.gnSteps             = config_.sqpIters;
-        bc.gnDamping           = config_.gnDamping;
-        bc.gnMaxStep           = config_.gnMaxStep;
-        bc.wVelocity           = config_.wVelocity;
-        bc.wAcceleration       = config_.wAcceleration;
-        bc.wAnchor             = config_.wAnchor;
-        bc.enableFootPenalties = config_.enableFootPenalties;
-        bc.wFootHeight         = config_.wFootHeight;
-        bc.wFootSlip           = config_.wFootSlip;
-        bc.wFootIkAnchor       = config_.wFootIkAnchor;
-        bc.wRootXyContact      = config_.wRootXyContact;
-        bc.wContactJointAnchor = config_.wContactJointAnchor;
-        bc.torqueLimitConstraint = config_.torqueLimitConstraint;
-        bc.torqueLimitMargin   = config_.torqueLimitMargin;
-        bc.torqueLimitWeight   = config_.torqueLimitWeight;
-        bc.torqueLimitGateMode = config_.torqueLimitGateMode;
-        bc.torqueLimitGateROn  = config_.torqueLimitGateROn;
-        bc.torqueLimitGateRFull = config_.torqueLimitGateRFull;
-        bc.torqueLimitGateROff = config_.torqueLimitGateROff;
+        BatchTrajectoryConfig& bc      = batch_->config();
+        bc.gnSteps                     = config_.sqpIters;
+        bc.gnDamping                   = config_.gnDamping;
+        bc.gnMaxStep                   = config_.gnMaxStep;
+        bc.wVelocity                   = config_.wVelocity;
+        bc.wAcceleration               = config_.wAcceleration;
+        bc.wAnchor                     = config_.wAnchor;
+        bc.enableFootPenalties         = config_.enableFootPenalties;
+        bc.wFootHeight                 = config_.wFootHeight;
+        bc.wFootSlip                   = config_.wFootSlip;
+        bc.wFootIkAnchor               = config_.wFootIkAnchor;
+        bc.wRootXyContact              = config_.wRootXyContact;
+        bc.wContactJointAnchor         = config_.wContactJointAnchor;
+        bc.torqueLimitConstraint       = config_.torqueLimitConstraint;
+        bc.torqueLimitMargin           = config_.torqueLimitMargin;
+        bc.torqueLimitWeight           = config_.torqueLimitWeight;
+        bc.torqueLimitGateMode         = config_.torqueLimitGateMode;
+        bc.torqueLimitGateROn          = config_.torqueLimitGateROn;
+        bc.torqueLimitGateRFull        = config_.torqueLimitGateRFull;
+        bc.torqueLimitGateROff         = config_.torqueLimitGateROff;
         bc.torqueLimitGateMinOnFrames  = config_.torqueLimitGateMinOnFrames;
         bc.torqueLimitGateMinOffFrames = config_.torqueLimitGateMinOffFrames;
-        bc.torqueLimitGateFloor = config_.torqueLimitGateFloor;
+        bc.torqueLimitGateFloor        = config_.torqueLimitGateFloor;
 
         // Match Python: contact from seed/ref trajectory for this window.
         batch_->setFootContactFromQRef(qRef);
@@ -167,9 +158,8 @@ namespace gmr {
         return batch_->optimizeQpWindow(qInit, targets, qInit.front(), qRef, /*frameOffset=*/0, config_.wAnchor, opts);
     }
 
-    Eigen::VectorXd OnlineQpRetargeter::retargetFrame(const HumanFrame& humanFrame, Retargeter& retargeter,
-                                                      bool offsetToGround) {
-        const auto t0 = Clock::now();
+    Eigen::VectorXd OnlineQpRetargeter::retargetFrame(const HumanFrame& humanFrame, Retargeter& retargeter, bool offsetToGround) {
+        const auto t0       = Clock::now();
         HumanFrame prepared = retargeter.prepareRetargetInput(humanFrame, offsetToGround);
         auto targets        = batch_->targetsForPrepared(prepared);
         ++frameIndex_;
@@ -190,8 +180,7 @@ namespace gmr {
         }
 
         Eigen::VectorXd qOut = qSeed;
-        if (frameIndex_ > config_.bootstrapGmrFrames &&
-            static_cast<int>(qBuf_.size()) + 1 >= config_.minFrames) {
+        if (frameIndex_ > config_.bootstrapGmrFrames && static_cast<int>(qBuf_.size()) + 1 >= config_.minFrames) {
             std::vector<Eigen::VectorXd> qList(qBuf_.begin(), qBuf_.end());
             qList.push_back(qSeed);
             const int Hn = std::min(config_.horizon, static_cast<int>(qList.size()));
@@ -199,10 +188,10 @@ namespace gmr {
             std::vector<BatchTrajectoryRetargeter::FrameTargets> tgtWin(targetsBuf_.end() - Hn, targetsBuf_.end());
             std::vector<Eigen::VectorXd> refWin(qRefBuf_.end() - Hn, qRefBuf_.end());
             const Eigen::VectorXd* qPrev = qBuf_.empty() ? nullptr : &qBuf_.back();
-            const int trail = std::min(2, Hn);
-            const int pin   = Hn - trail;
-            auto qOpt       = solveQpWindow(qWin, tgtWin, refWin, qPrev, pin);
-            qOut            = qOpt.back();
+            const int trail              = std::min(2, Hn);
+            const int pin                = Hn - trail;
+            auto qOpt                    = solveQpWindow(qWin, tgtWin, refWin, qPrev, pin);
+            qOut                         = qOpt.back();
         }
 
         qOut = commitOutputQpos(retargeter, std::move(qOut));
@@ -212,190 +201,27 @@ namespace gmr {
         return qOut;
     }
 
-    std::vector<Eigen::VectorXd> OnlineQpRetargeter::retargetSequence(const std::vector<HumanFrame>& humanFrames,
-                                                                      Retargeter& retargeter, bool offsetToGround) {
+    std::vector<Eigen::VectorXd> OnlineQpRetargeter::retargetSequence(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
+                                                                      bool offsetToGround) {
+        // Convenience only: same live arrival path as the viewer (no future-frame peek).
         reset();
-        if (!config_.useLookahead) {
-            std::vector<Eigen::VectorXd> out;
-            out.reserve(humanFrames.size());
-            for (const auto& f : humanFrames) {
-                out.push_back(retargetFrame(f, retargeter, offsetToGround));
-            }
-            return out;
-        }
-
-        const int T  = static_cast<int>(humanFrames.size());
-        const int Hn = config_.horizon;
-        std::vector<HumanFrame> preparedAll;
-        std::vector<BatchTrajectoryRetargeter::FrameTargets> targetsAll;
-        preparedAll.reserve(static_cast<std::size_t>(T));
-        targetsAll.reserve(static_cast<std::size_t>(T));
-        for (const auto& f : humanFrames) {
-            HumanFrame prepared = retargeter.prepareRetargetInput(f, offsetToGround);
-            targetsAll.push_back(batch_->targetsForPrepared(prepared));
-            preparedAll.push_back(std::move(prepared));
-        }
-
         std::vector<Eigen::VectorXd> out;
-        out.reserve(static_cast<std::size_t>(T));
-        Eigen::VectorXd qPrev;
-        bool hasPrev = false;
-
-        for (int k = 0; k < T; ++k) {
-            const auto t0 = Clock::now();
-            frameIndex_   = k + 1;
-            const int end = std::min(k + Hn, T);
-
-            std::vector<Eigen::VectorXd> seeds;
-            seeds.reserve(static_cast<std::size_t>(end - k));
-            Eigen::VectorXd qCursor = hasPrev ? qPrev : retargeter.currentQpos();
-            for (int i = 0; i < end - k; ++i) {
-                const int fi = k + i;
-                Eigen::VectorXd qS;
-                if (k < config_.bootstrapGmrFrames && i == 0) {
-                    qS = retargeter.retargetFrame(humanFrames[static_cast<std::size_t>(fi)], offsetToGround);
-                } else if (config_.lightIkIters > 0) {
-                    retargeter.setQpos(qCursor);
-                    qS = retargeter.retargetLightIk(humanFrames[static_cast<std::size_t>(fi)], offsetToGround,
-                                                    config_.lightIkIters);
-                } else {
-                    qS = qCursor;
-                }
-                seeds.push_back(qS);
-                qCursor = qS;
+        out.reserve(humanFrames.size());
+        for (const auto& f : humanFrames) {
+            pushArrivedFrame(f);
+            while (canStepArrived(/*flush=*/false)) {
+                out.push_back(stepArrived(retargeter, offsetToGround, /*flush=*/false));
             }
-
-            Eigen::VectorXd qCmd = seeds.front();
-            if (k >= config_.bootstrapGmrFrames) {
-                std::vector<Eigen::VectorXd> qWin = seeds;
-                std::vector<Eigen::VectorXd> refWin = seeds;
-                std::vector<BatchTrajectoryRetargeter::FrameTargets> tgtWin(
-                    targetsAll.begin() + k, targetsAll.begin() + end);
-                int pin = 0;
-                const Eigen::VectorXd* qPrevPtr = hasPrev ? &qPrev : nullptr;
-                if (hasPrev && k > 0) {
-                    qWin.insert(qWin.begin(), qPrev);
-                    refWin.insert(refWin.begin(), qPrev);
-                    tgtWin.insert(tgtWin.begin(), targetsAll[static_cast<std::size_t>(k - 1)]);
-                    pin = 1;
-                }
-                auto qOpt = solveQpWindow(qWin, tgtWin, refWin, qPrevPtr, pin);
-                qCmd      = qOpt[static_cast<std::size_t>(pin)];
-            }
-
-            qCmd = commitOutputQpos(retargeter, std::move(qCmd));
-
-            out.push_back(qCmd);
-            qPrev     = qCmd;
-            hasPrev   = true;
-            qBuf_.push_back(qCmd);
-            lastFrameMs_ = elapsedMs(t0);
+        }
+        while (canStepArrived(/*flush=*/true)) {
+            out.push_back(stepArrived(retargeter, offsetToGround, /*flush=*/true));
         }
         return out;
     }
 
-    void OnlineQpRetargeter::ensurePrepared(int i, Retargeter& retargeter) {
-        if (sequencePreparedReady_[static_cast<std::size_t>(i)]) {
-            return;
-        }
-        sequencePrepared_[static_cast<std::size_t>(i)] =
-            retargeter.prepareRetargetInput(sequenceFrames_[static_cast<std::size_t>(i)], sequenceOffset_);
-        sequenceTargets_[static_cast<std::size_t>(i)] =
-            batch_->targetsForPrepared(sequencePrepared_[static_cast<std::size_t>(i)]);
-        sequencePreparedReady_[static_cast<std::size_t>(i)] = 1;
-    }
-
-    void OnlineQpRetargeter::beginSequence(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                           bool offsetToGround) {
-        (void)retargeter;
-        reset();
-        sequenceFrames_ = humanFrames;
-        sequenceT_      = static_cast<int>(humanFrames.size());
-        sequenceK_      = 0;
-        sequenceOffset_ = offsetToGround;
-        sequenceHasPrev_ = false;
-        sequenceQPrev_   = Eigen::VectorXd();
-        sequencePrepared_.assign(static_cast<std::size_t>(sequenceT_), HumanFrame{});
-        sequenceTargets_.assign(static_cast<std::size_t>(sequenceT_), BatchTrajectoryRetargeter::FrameTargets{});
-        sequencePreparedReady_.assign(static_cast<std::size_t>(sequenceT_), 0);
-        sequenceActive_ = sequenceT_ > 0;
-    }
-
-    Eigen::VectorXd OnlineQpRetargeter::stepSequence(Retargeter& retargeter) {
-        if (!sequenceActive_ || sequenceK_ >= sequenceT_) {
-            throw std::runtime_error("OnlineQpRetargeter::stepSequence called with no active frames.");
-        }
-        if (!config_.useLookahead) {
-            Eigen::VectorXd q =
-                retargetFrame(sequenceFrames_[static_cast<std::size_t>(sequenceK_)], retargeter, sequenceOffset_);
-            ++sequenceK_;
-            return q;
-        }
-
-        const auto t0 = Clock::now();
-        const int k   = sequenceK_;
-        const int Hn  = config_.horizon;
-        const int T   = sequenceT_;
-        frameIndex_   = k + 1;
-        const int end = std::min(k + Hn, T);
-        for (int i = k; i < end; ++i) {
-            ensurePrepared(i, retargeter);
-        }
-        if (k > 0) {
-            ensurePrepared(k - 1, retargeter);
-        }
-
-        std::vector<Eigen::VectorXd> seeds;
-        seeds.reserve(static_cast<std::size_t>(end - k));
-        Eigen::VectorXd qCursor = sequenceHasPrev_ ? sequenceQPrev_ : retargeter.currentQpos();
-        for (int i = 0; i < end - k; ++i) {
-            const int fi = k + i;
-            Eigen::VectorXd qS;
-            if (k < config_.bootstrapGmrFrames && i == 0) {
-                qS = retargeter.retargetFrame(sequenceFrames_[static_cast<std::size_t>(fi)], sequenceOffset_);
-            } else if (config_.lightIkIters > 0) {
-                retargeter.setQpos(qCursor);
-                qS = retargeter.retargetLightIk(sequenceFrames_[static_cast<std::size_t>(fi)], sequenceOffset_,
-                                                config_.lightIkIters);
-            } else {
-                qS = qCursor;
-            }
-            seeds.push_back(qS);
-            qCursor = qS;
-        }
-
-        Eigen::VectorXd qCmd = seeds.front();
-        if (k >= config_.bootstrapGmrFrames) {
-            std::vector<Eigen::VectorXd> qWin   = seeds;
-            std::vector<Eigen::VectorXd> refWin = seeds;
-            std::vector<BatchTrajectoryRetargeter::FrameTargets> tgtWin(
-                sequenceTargets_.begin() + k, sequenceTargets_.begin() + end);
-            int pin                              = 0;
-            const Eigen::VectorXd* qPrevPtr      = sequenceHasPrev_ ? &sequenceQPrev_ : nullptr;
-            if (sequenceHasPrev_ && k > 0) {
-                qWin.insert(qWin.begin(), sequenceQPrev_);
-                refWin.insert(refWin.begin(), sequenceQPrev_);
-                tgtWin.insert(tgtWin.begin(), sequenceTargets_[static_cast<std::size_t>(k - 1)]);
-                pin = 1;
-            }
-            auto qOpt = solveQpWindow(qWin, tgtWin, refWin, qPrevPtr, pin);
-            qCmd      = qOpt[static_cast<std::size_t>(pin)];
-        }
-
-        qCmd = commitOutputQpos(retargeter, std::move(qCmd));
-
-        sequenceQPrev_   = qCmd;
-        sequenceHasPrev_ = true;
-        qBuf_.push_back(qCmd);
-        lastFrameMs_ = elapsedMs(t0);
-        ++sequenceK_;
-        return qCmd;
-    }
-
     void OnlineQpRetargeter::pushArrivedFrame(const HumanFrame& humanFrame) {
         arrivalBuf_.push_back(humanFrame);
-        if (config_.useLookahead &&
-            static_cast<int>(arrivalBuf_.size()) < std::max(1, config_.horizon)) {
+        if (config_.useLookahead && static_cast<int>(arrivalBuf_.size()) < std::max(1, config_.horizon)) {
             // One traditional-GMR output per push while the lookahead buffer fills.
             arrivalFillPending_ = true;
         }
@@ -414,8 +240,8 @@ namespace gmr {
         return static_cast<int>(arrivalBuf_.size()) >= std::max(1, config_.horizon);
     }
 
-    Eigen::VectorXd OnlineQpRetargeter::stepLookaheadWindow(const std::vector<HumanFrame>& windowFrames,
-                                                            Retargeter& retargeter, bool offsetToGround) {
+    Eigen::VectorXd OnlineQpRetargeter::stepLookaheadWindow(const std::vector<HumanFrame>& windowFrames, Retargeter& retargeter,
+                                                            bool offsetToGround) {
         if (windowFrames.empty()) {
             throw std::runtime_error("stepLookaheadWindow: empty window");
         }
@@ -426,26 +252,34 @@ namespace gmr {
         std::vector<BatchTrajectoryRetargeter::FrameTargets> tgtWin;
         tgtWin.reserve(static_cast<std::size_t>(Hn));
         for (const auto& f : windowFrames) {
+            // human frame 预处理 包括 root offset ground 相关处理
+            // targetsForPrepared 则 根据ik config 把human target 映射成 robot body target
             HumanFrame prepared = retargeter.prepareRetargetInput(f, offsetToGround);
             tgtWin.push_back(batch_->targetsForPrepared(prepared));
         }
 
+        // 生成seed
         std::vector<Eigen::VectorXd> seeds;
         seeds.reserve(static_cast<std::size_t>(Hn));
+
+        // 当前滚动到的机器人姿态 一个在窗口帧上滚动前进的 qpos 指针
         Eigen::VectorXd qCursor = arrivalHasPrev_ ? arrivalQPrev_ : retargeter.currentQpos();
+
+        // 每个窗口帧生成一个qSeed
         for (int i = 0; i < Hn; ++i) {
-            Eigen::VectorXd qS;
+            Eigen::VectorXd qSeed;
             if (frameIndex_ <= config_.bootstrapGmrFrames && i == 0) {
-                qS = retargeter.retargetFrame(windowFrames[static_cast<std::size_t>(i)], offsetToGround);
+                qSeed = retargeter.retargetFrame(windowFrames[static_cast<std::size_t>(i)], offsetToGround);
             } else if (config_.lightIkIters > 0) {
+                // 把 retargeter 内部状态设置成 qCursor
+                // 通过传入 ik iters 来控制 ik的量级  内部调用的是 重定向用的ik接口 只是 迭代次数少了
                 retargeter.setQpos(qCursor);
-                qS = retargeter.retargetLightIk(windowFrames[static_cast<std::size_t>(i)], offsetToGround,
-                                                config_.lightIkIters);
+                qSeed = retargeter.retargetLightIk(windowFrames[static_cast<std::size_t>(i)], offsetToGround, config_.lightIkIters);
             } else {
-                qS = qCursor;
+                qSeed = qCursor;
             }
-            seeds.push_back(qS);
-            qCursor = qS;
+            seeds.push_back(qSeed);
+            qCursor = qSeed;
         }
 
         Eigen::VectorXd qCmd = seeds.front();
@@ -512,8 +346,7 @@ namespace gmr {
         }
 
         arrivalFillPending_ = false;
-        const int Hn = flush ? static_cast<int>(arrivalBuf_.size())
-                             : std::min(config_.horizon, static_cast<int>(arrivalBuf_.size()));
+        const int Hn = flush ? static_cast<int>(arrivalBuf_.size()) : std::min(config_.horizon, static_cast<int>(arrivalBuf_.size()));
         std::vector<HumanFrame> window(arrivalBuf_.begin(), arrivalBuf_.begin() + Hn);
         Eigen::VectorXd qCmd = stepLookaheadWindow(window, retargeter, offsetToGround);
         arrivalBuf_.pop_front();

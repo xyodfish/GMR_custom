@@ -69,7 +69,7 @@ namespace gmr {
         std::vector<double> jacr;
         std::vector<double> dq;
         std::vector<std::vector<Eigen::Vector3d>> footPos;
-        std::vector<std::vector<Eigen::MatrixXd>> footJxy;
+        std::vector<std::vector<Eigen::MatrixXd>> footJxy;  // 二维向量 最外层索引为 窗口帧 内层为每个足端的雅可比矩阵
         std::vector<std::vector<Eigen::RowVectorXd>> footJz;
         bool useDense = false;
     };
@@ -218,7 +218,7 @@ namespace gmr {
         if (!config_.torqueLimitConstraint) {
             return;
         }
-        mjModel* model = impl_->model.get();
+        mjModel* model      = impl_->model.get();
         const auto contains = [](const std::string& s, std::initializer_list<const char*> keys) {
             for (const char* k : keys) {
                 if (s.find(k) != std::string::npos) {
@@ -237,10 +237,10 @@ namespace gmr {
             if (tauMax <= 0.0) {
                 continue;
             }
-            const char* namePtr = mj_id2name(model, mjOBJ_JOINT, j);
+            const char* namePtr    = mj_id2name(model, mjOBJ_JOINT, j);
             const std::string name = namePtr ? namePtr : "";
-            const bool isUpper = contains(name, {"waist", "shoulder", "elbow", "wrist"});
-            const bool isLower = contains(name, {"hip", "knee", "ankle"});
+            const bool isUpper     = contains(name, {"waist", "shoulder", "elbow", "wrist"});
+            const bool isLower     = contains(name, {"hip", "knee", "ankle"});
             if (config_.torqueLimitScope == "upper" && !isUpper) {
                 continue;
             }
@@ -264,9 +264,9 @@ namespace gmr {
         if (nFrames < 3) {
             return 0.0;
         }
-        mjModel* model = impl_->model.get();
-        mjData* data   = impl_->data.get();
-        const int nv   = model->nv;
+        mjModel* model      = impl_->model.get();
+        mjData* data        = impl_->data.get();
+        const int nv        = model->nv;
         const double dtReal = std::max(motionDtForTorque_, 1e-6);
         std::vector<double> vPlus(nv, 0.0);
         std::vector<double> vMinus(nv, 0.0);
@@ -318,7 +318,7 @@ namespace gmr {
                     ++torqueGateOffStreak_;
                     torqueGateOnStreak_ = 0;
                     if (torqueGateOffStreak_ >= config_.torqueLimitGateMinOffFrames) {
-                        torqueGateActive_   = false;
+                        torqueGateActive_    = false;
                         torqueGateOffStreak_ = 0;
                     }
                 } else {
@@ -328,7 +328,7 @@ namespace gmr {
                 ++torqueGateOnStreak_;
                 torqueGateOffStreak_ = 0;
                 if (torqueGateOnStreak_ >= config_.torqueLimitGateMinOnFrames) {
-                    torqueGateActive_  = true;
+                    torqueGateActive_   = true;
                     torqueGateOnStreak_ = 0;
                 }
             } else {
@@ -340,11 +340,11 @@ namespace gmr {
     }
 
     void BatchTrajectoryRetargeter::updateTorqueLimitGateFromWindow(const std::vector<Eigen::VectorXd>& qWin) {
-        const double rPeak        = windowTorquePeakRatio(qWin);
-        const double gate         = torqueLimitGateFromRatio(rPeak);
-        torqueLimitGate_          = gate;
-        lastTorqueGate_           = gate;
-        lastTorquePeakRatio_      = rPeak;
+        const double rPeak   = windowTorquePeakRatio(qWin);
+        const double gate    = torqueLimitGateFromRatio(rPeak);
+        torqueLimitGate_     = gate;
+        lastTorqueGate_      = gate;
+        lastTorquePeakRatio_ = rPeak;
         ++torqueGateUpdates_;
         torqueGateSum_ += gate;
         maxTorquePeakRatio_ = std::max(maxTorquePeakRatio_, rPeak);
@@ -370,9 +370,9 @@ namespace gmr {
         if (nFrames < 3) {
             return;
         }
-        mjModel* model = impl_->model.get();
-        mjData* data   = impl_->data.get();
-        const int nv   = model->nv;
+        mjModel* model      = impl_->model.get();
+        mjData* data        = impl_->data.get();
+        const int nv        = model->nv;
         const double dtReal = std::max(motionDtForTorque_, 1e-6);
         const double kappa  = std::max(0.0, 1.0 - config_.torqueLimitMargin);
         const double w      = config_.torqueLimitWeight * torqueLimitGate_;
@@ -406,7 +406,7 @@ namespace gmr {
                 if (std::abs(tj) <= bound) {
                     continue;
                 }
-                const double e0 = (tj - std::copysign(bound, tj)) / jt.tauMax;  // normalised excess
+                const double e0  = (tj - std::copysign(bound, tj)) / jt.tauMax;  // normalised excess
                 const double mjj = std::max(Mfull[static_cast<std::size_t>(jt.dof) * nv + jt.dof], 1e-4);
                 const double c   = (mjj / jt.tauMax) / (dtReal * dtReal);
                 const int i0     = (t - 1) * m + jt.localv;
@@ -437,9 +437,9 @@ namespace gmr {
         if (nFrames < 3) {
             return 0.0;
         }
-        mjModel* model = impl_->model.get();
-        mjData* data   = impl_->data.get();
-        const int nv   = model->nv;
+        mjModel* model      = impl_->model.get();
+        mjData* data        = impl_->data.get();
+        const int nv        = model->nv;
         const double dtReal = std::max(motionDtForTorque_, 1e-6);
         const double kappa  = std::max(0.0, 1.0 - config_.torqueLimitMargin);
         const double w      = config_.torqueLimitWeight * torqueLimitGate_;
@@ -998,16 +998,17 @@ namespace gmr {
                                                                              double anchorWeight, const QpWindowOptions* qpOpts) {
         std::vector<Eigen::VectorXd> qWin = qInit;
         const int nFrames                 = static_cast<int>(qWin.size());
-        const int m                       = static_cast<int>(optVidx_.size());
-        const int nvar                    = nFrames * m;
+        const int m                       = static_cast<int>(optVidx_.size());  // 每帧参与优化的速度自由度数量
+        const int nvar = nFrames * m;  // QP 总变量数 QP 变量不是完整 qpos，而是窗口内每帧的优化 dof 增量：
 
+        // 确保这些 buffer 的尺寸够当前窗口 nFrames用 可以复用内存
         ensureGnWorkspace(nFrames);
         GnWorkspace& ws = *gnWs_;
 
         mjModel* model = impl_->model.get();
         mjData* data   = impl_->data.get();
 
-        motionDtForTorque_ = qpOpts != nullptr ? qpOpts->motionDt : config_.motionDt;
+        motionDtForTorque_ = qpOpts != nullptr ? qpOpts->motionDt : config_.motionDt;  // 设置 torque limit 相关计算用的时间步长 dt。
 
         const bool footActive = config_.enableFootPenalties && !footBodyIds_.empty() &&
                                 (config_.wFootHeight > 0.0 || config_.wFootSlip > 0.0 || config_.wFootIkAnchor > 0.0 ||
@@ -1021,6 +1022,9 @@ namespace gmr {
             costBefore = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
         }
 
+        // 这里更准确是 constrained Gauss-Newton / SCP 外循环，而不是严格标准 SQP：
+        // 每轮在当前 qWin 附近线性化运动学残差，构造一个凸 QP 子问题，
+        // 解出窗口内各帧的增量后再积分回 qWin，并重复若干轮。
         for (int step = 0; step < config_.gnSteps; ++step) {
             ws.Hdense.setZero();
             ws.g.setZero();
@@ -1028,9 +1032,10 @@ namespace gmr {
             for (int t = 0; t < nFrames; ++t) {
                 mju_copy(data->qpos, qWin[t].data(), model->nq);
                 mj_forward(model, data);
-                const int off = t * m;
+                const int off = t * m;  // 这一帧在大 QP 变量里的偏移
                 const int nv  = model->nv;
 
+                // 计算每个笛卡尔跟踪任务的误差和雅可比，并将其累加到 QP 的 Hessian 矩阵和梯度向量中
                 for (const auto& entry : trackEntries_) {
                     auto tgtIt = targets[t].find(entry.bodyId);
                     if (tgtIt == targets[t].end()) {
@@ -1048,6 +1053,10 @@ namespace gmr {
                             J.col(col) = mjJacColumn(ws.jacp.data(), nv, optVidx_[col]);
                         }
                         const double w = entry.posWeight;
+
+                        // bodyPos(q + dq) ≈ bodyPos(q) + J * dq
+                        // err_new ≈ err + J * dq
+                        // GN近似
                         ws.Hdense.block(off, off, m, m).noalias() += w * J.transpose() * J;
                         ws.g.segment(off, m).noalias() += w * J.transpose() * err;
                     }
@@ -1088,6 +1097,7 @@ namespace gmr {
                 }
             }
 
+            // 将 anchor 约束累加到 QP 的 Hessian 矩阵和梯度向量中 只作用在窗口的第0帧
             if (anchorWeight > 0.0) {
                 for (int vi = 0; vi < m; ++vi) {
                     const int v      = optVidx_[vi];
@@ -1098,15 +1108,20 @@ namespace gmr {
                 }
             }
 
+            // 速度平滑项
             if (config_.wVelocity > 0.0 && nFrames >= 2 && !smoothV_.empty()) {
                 for (int t = 1; t < nFrames; ++t) {
                     const int offT  = t * m;
                     const int offM1 = (t - 1) * m;
+
+                    // 每一帧的每个关节都计算一遍速度平滑引入的代价
                     for (std::size_t k = 0; k < smoothV_.size(); ++k) {
                         const int vi   = smoothV_[k];
                         const int qadr = smoothQ_[k];
                         const double e = qWin[t][qadr] - qWin[t - 1][qadr];
                         const double w = config_.wVelocity;
+
+                        // H 相邻帧之间的 block coupling 抑制轨迹抖动
                         ws.Hdense(offT + vi, offT + vi) += w;
                         ws.Hdense(offM1 + vi, offM1 + vi) += w;
                         ws.Hdense(offT + vi, offM1 + vi) -= w;
@@ -1117,6 +1132,7 @@ namespace gmr {
                 }
             }
 
+            // 加速度平滑项
             if (config_.wAcceleration > 0.0 && nFrames >= 3 && !smoothV_.empty()) {
                 for (int t = 2; t < nFrames; ++t) {
                     for (std::size_t k = 0; k < smoothV_.size(); ++k) {
@@ -1296,8 +1312,7 @@ namespace gmr {
                             double qmax = model->jnt_range[2 * j + 1];
                             // Keep revolute joints a safety margin away from the hard limits so the
                             // commanded trajectory stays inside the trackable range.
-                            if (marginRad > 0.0 && model->jnt_type[j] == mjJNT_HINGE &&
-                                (qmax - qmin) > 2.0 * marginRad) {
+                            if (marginRad > 0.0 && model->jnt_type[j] == mjJNT_HINGE && (qmax - qmin) > 2.0 * marginRad) {
                                 qmin += marginRad;
                                 qmax -= marginRad;
                             }

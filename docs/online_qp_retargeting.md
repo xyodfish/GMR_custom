@@ -70,11 +70,11 @@ Online QP 窗口优化（主循环内不再依赖 mink 收敛）
 | 说法 | 正确含义 | 错误理解 |
 |------|----------|----------|
 | Online QP **算法** | 因果短窗，可 `retargetFrame` 一帧一帧解 | — |
-| Viewer `online_qp` | **人体帧按到达喂入求解器**（文件只作数据源） | 整段 `beginSequence` 预载再播 |
+| Viewer `online_qp` | **人体帧按到达喂入求解器**（文件只作数据源） | ~~整段预载再播~~（已删除） |
 | `causal` | 来一帧解一帧 | — |
 | `lookahead` | 到达缓冲；未满时用 **GMR 顶空窗**，满 `horizon` 后延迟 QP（\(H-1\) 帧） | 预读整段 motion 做前瞻 |
 
-文件仍可能一次性读进内存（JSON 回放源），但 **求解器状态机只看见已 push 的到达帧**。真 live（相机/mocap）应同样调 `pushArrivedFrame` / `retargetFrame`，不要 `beginSequence(全部)`。
+文件仍可能一次性读进内存（JSON 回放源），但 **求解器状态机只看见已 push 的到达帧**。真 live（相机/mocap）调 `pushArrivedFrame` / `retargetFrame`。CLI 的 `retargetSequence` 也只是按帧 push 的便捷封装，**不再 peek 未到达帧**。
 
 若求解比源 FPS 快：可以用短到达缓冲做 lookahead（等未来几帧到齐再提交当前命令），**不必**也不应该把整段原始数据预载进求解器。
 
@@ -108,9 +108,9 @@ Frame t > bootstrap:
 - 代价：QP 路径仍约 \(H-1\) 帧延迟；填充阶段用 GMR 顶上。切换瞬间可能有一次「从当前 GMR 跳到延迟 QP 提交」的位姿不连续（起播约几十毫秒）  
 - 前提：求解足够快，缓冲跟得上源速率  
 
-`beginSequence` + `stepSequence` 仍保留给 **离线批跑/旧回放**；viewer 的 `online_qp` 已改为 arrival 路径。
+**已删除**：`beginSequence` / `stepSequence` 以及按整段 peek 未来帧的旧 lookahead。唯一实时入口是 `retargetFrame` 与 `pushArrivedFrame` / `stepArrived`。
 
-流式 teleop / viewer 默认应使用 **causal**（`retargetFrame` 或 arrival + causal）。
+Viewer / CLI 默认 **arrival + lookahead**（短缓冲延迟 QP）；要零延迟用 `--online_qp_mode causal`。
 
 ### 3.3 单次 SQP 迭代在做什么
 

@@ -27,13 +27,13 @@ namespace gmr {
     class BatchTrajectoryRetargeter {
        public:
         struct TrackEntry {
-            int bodyId = -1;
+            int bodyId       = -1;
             double posWeight = 0.0;
             double rotWeight = 0.0;
         };
         struct FrameTaskTarget {
-            int bodyId = -1;
-            Eigen::Vector3d targetPos = Eigen::Vector3d::Zero();
+            int bodyId                   = -1;
+            Eigen::Vector3d targetPos    = Eigen::Vector3d::Zero();
             Eigen::Quaterniond targetRot = Eigen::Quaterniond::Identity();
         };
 
@@ -49,8 +49,7 @@ namespace gmr {
 
         /// Bootstrap with ``retargeter`` (per-frame IK), then optimize jointly.
         std::vector<Eigen::VectorXd> retargetBatch(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                  bool offsetToGround = false,
-                                                  const BatchIkBootstrapContext* ikBootstrap = nullptr);
+                                                   bool offsetToGround = false, const BatchIkBootstrapContext* ikBootstrap = nullptr);
 
         const BatchTrajectoryProfile& lastProfile() const { return lastProfile_; }
         int modelNq() const { return nq_; }
@@ -76,11 +75,9 @@ namespace gmr {
             std::string qpBackend        = "daqp";
         };
 
-        std::vector<Eigen::VectorXd> optimizeQpWindow(const std::vector<Eigen::VectorXd>& qInit,
-                                                      const std::vector<FrameTargets>& targets,
-                                                      const Eigen::VectorXd& anchor,
-                                                      const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
-                                                      double anchorWeight, const QpWindowOptions& qpOpts);
+        std::vector<Eigen::VectorXd> optimizeQpWindow(const std::vector<Eigen::VectorXd>& qInit, const std::vector<FrameTargets>& targets,
+                                                      const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef,
+                                                      int frameOffset, double anchorWeight, const QpWindowOptions& qpOpts);
 
         void clearFootContactSchedule();
         void setFootContactFromQRef(const std::vector<Eigen::VectorXd>& qRef);
@@ -102,8 +99,8 @@ namespace gmr {
         void accumulateWindowTorqueLimitGn(const std::vector<Eigen::VectorXd>& qWin, int m) const;
         double windowTorqueCost(const std::vector<Eigen::VectorXd>& qWin) const;
 
-        std::vector<Eigen::VectorXd> bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                bool offsetToGround, const BatchIkBootstrapContext* ikBootstrap);
+        std::vector<Eigen::VectorXd> bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter, bool offsetToGround,
+                                                const BatchIkBootstrapContext* ikBootstrap);
         std::vector<Eigen::VectorXd> loadQInitFromJson(const std::filesystem::path& path, std::size_t expectedFrames) const;
         std::vector<int> windowStarts(int nFrames) const;
         std::vector<std::vector<bool>> batchContactMask(const std::vector<Eigen::VectorXd>& qRef) const;
@@ -111,11 +108,9 @@ namespace gmr {
 
         std::vector<Eigen::VectorXd> optimizeSlidingWindows(const std::vector<Eigen::VectorXd>& qInit,
                                                             const std::vector<FrameTargets>& targets);
-        std::vector<Eigen::VectorXd> optimizeGnWindow(const std::vector<Eigen::VectorXd>& qInit,
-                                                      const std::vector<FrameTargets>& targets,
+        std::vector<Eigen::VectorXd> optimizeGnWindow(const std::vector<Eigen::VectorXd>& qInit, const std::vector<FrameTargets>& targets,
                                                       const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef,
-                                                      int frameOffset, double anchorWeight,
-                                                      const QpWindowOptions* qpOpts = nullptr);
+                                                      int frameOffset, double anchorWeight, const QpWindowOptions* qpOpts = nullptr);
 
         void clipHingeQpos(Eigen::VectorXd& q) const;
 
@@ -133,11 +128,9 @@ namespace gmr {
 
        private:
         void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;
-        double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
-                          const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
-                          double anchorWeight) const;
-        Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared,
-                                     bool offsetToGround);
+        double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets, const Eigen::VectorXd& anchor,
+                          const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight) const;
+        Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared, bool offsetToGround);
 
         BatchTrajectoryConfig config_;
         IkConfig ikConfig_;
@@ -168,7 +161,7 @@ namespace gmr {
         double maxTorquePeakRatio_        = 0.0;
 
         std::vector<TrackEntry> trackEntries_;
-        std::vector<int> optVidx_;
+        std::vector<int> optVidx_;  // 每一帧里参与优化的 MuJoCo velocity dof index。
         std::vector<int> smoothQidx_;
         std::vector<int> smoothV_;
         std::vector<int> smoothQ_;

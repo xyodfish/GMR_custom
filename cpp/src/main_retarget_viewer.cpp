@@ -57,7 +57,7 @@ struct ViewerConfig {
     std::string outJson;
 
     std::string onlineQpPreset = "anti_slip";
-    std::string onlineQpMode   = "causal";  // causal | lookahead (delayed buffer, not full preload)
+    std::string onlineQpMode   = "lookahead";  // arrival-buffer delay; use causal for 0-latency
     double onlineQpJointLimitMarginDeg = 0.0;
 
     int transparentRobot  = 0;
@@ -684,9 +684,9 @@ void printUsage() {
                  "show_human_overlay=true, method=ik.\n"
               << "batch_to: offline batch GN first, then playback (implies precompute; use mujoco_se3).\n"
               << "online_qp: live frame feed → retargetFrame / arrival-buffer MPC (implies realtime).\n"
-              << "  --online_qp_mode causal: one arrived human frame → one solve (true streaming).\n"
-              << "  --online_qp_mode lookahead: short delay buffer (horizon frames) for MPC peek;\n"
-              << "    does NOT preload the whole sequence into the solver.\n"
+              << "  --online_qp_mode lookahead: short arrival-buffer delay (horizon frames, default);\n"
+              << "    never preloads the whole sequence into the solver.\n"
+              << "  --online_qp_mode causal: one arrived human frame → one solve (0-latency streaming).\n"
               << "CLI options override config file values.\n";
 }
 
