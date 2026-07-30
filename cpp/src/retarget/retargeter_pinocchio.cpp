@@ -535,6 +535,10 @@ namespace gmr {
             return retarget_internal::scaleHumanFrameOnly(humanFrame, ikConfig, useOffsetToGround);
         }
 
+        HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround) const {
+            return applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
+        }
+
         HumanFrame applyContactGround(const HumanFrame& prepared) const {
             if (contactGround && contactGround->enabled()) {
                 return contactGround->processHumanFrame(prepared);
@@ -545,16 +549,14 @@ namespace gmr {
         void updateTaskTargets(const HumanFrame& frame) {
             auto fill = [this, &frame](std::vector<PinTaskRuntime>* tasks) {
                 for (auto& task : *tasks) {
-                    auto it = frame.find(task.humanBodyName);
-                    if (it == frame.end()) {
+                    const std::optional<retarget_internal::TaskTargetPose> target =
+                        retarget_internal::taskTargetFromHumanFrame(frame, task.humanBodyName, task.posOffset,
+                                                                    task.rotOffset, ikConfig.groundHeight);
+                    if (!target.has_value()) {
                         continue;
                     }
-                    const Eigen::Vector3d posOff =
-                        retarget_internal::ikTaskPosOffset(task.posOffset, ikConfig.groundHeight);
-                    const auto [targetPos, targetRot] = retarget_internal::applyBodyOffset(
-                        it->second.position, it->second.orientation, posOff, task.rotOffset);
-                    task.targetPos = targetPos;
-                    task.targetRot = targetRot;
+                    task.targetPos = target->pos;
+                    task.targetRot = target->rot;
                 }
             };
 
@@ -695,22 +697,32 @@ namespace gmr {
             }
         }
 
-        Eigen::VectorXd retargetLightIkImpl(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
-            if (maxIterations <= 0) {
-                return qpos;
-            }
-
-            HumanFrame prepared = applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
-            updateTaskTargets(prepared);
-
-            const int savedMaxIter = options.maxIterations;
-            options.maxIterations  = maxIterations;
+        void solveEnabledTaskSets() {
             if (ikConfig.useTable1) {
                 solveTaskSet(tasks1);
             }
             if (ikConfig.useTable2) {
                 solveTaskSet(tasks2);
             }
+        }
+
+        Eigen::VectorXd retargetPrepared(const HumanFrame& prepared, bool finalize) {
+            updateTaskTargets(prepared);
+            solveEnabledTaskSets();
+            if (finalize) {
+                finalizeRobotState();
+            }
+            return qpos;
+        }
+
+        Eigen::VectorXd retargetLightIkImpl(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
+            if (maxIterations <= 0) {
+                return qpos;
+            }
+
+            const int savedMaxIter = options.maxIterations;
+            options.maxIterations  = maxIterations;
+            retargetPrepared(prepareRetargetInput(humanFrame, offsetToGround), /*finalize=*/false);
             options.maxIterations = savedMaxIter;
             return qpos;
         }
@@ -723,16 +735,7 @@ namespace gmr {
     PinocchioRetargetBackend::~PinocchioRetargetBackend() = default;
 
     Eigen::VectorXd PinocchioRetargetBackend::retargetFrame(const HumanFrame& humanFrame, bool offsetToGround) {
-        HumanFrame prepared = impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
-        impl_->updateTaskTargets(prepared);
-        if (impl_->ikConfig.useTable1) {
-            impl_->solveTaskSet(impl_->tasks1);
-        }
-        if (impl_->ikConfig.useTable2) {
-            impl_->solveTaskSet(impl_->tasks2);
-        }
-        impl_->finalizeRobotState();
-        return impl_->qpos;
+        return impl_->retargetPrepared(impl_->prepareRetargetInput(humanFrame, offsetToGround), /*finalize=*/true);
     }
 
     HumanFrame PinocchioRetargetBackend::prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround) const {
@@ -740,7 +743,7 @@ namespace gmr {
     }
 
     HumanFrame PinocchioRetargetBackend::prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround) {
-        return impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
+        return impl_->prepareRetargetInput(humanFrame, offsetToGround);
     }
 
     Eigen::VectorXd PinocchioRetargetBackend::retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {

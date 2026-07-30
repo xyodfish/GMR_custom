@@ -58,6 +58,47 @@ namespace gmr {
         : config_(std::move(config)),
           batch_(std::make_unique<BatchTrajectoryRetargeter>(robotModelPath, std::move(ikConfig), makeBatchConfig())) {}
 
+    BatchTrajectoryRetargeter::QpWindowOptions OnlineQpRetargeter::makeQpWindowOptions(const Eigen::VectorXd* qPrev,
+                                                                                       int pinFrames) const {
+        BatchTrajectoryRetargeter::QpWindowOptions opts;
+        opts.qPrev               = qPrev;
+        opts.pinFrames           = pinFrames;
+        opts.wGmr                = config_.wGmr;
+        opts.dqMax               = config_.dqMax;
+        opts.motionDt            = 1.0 / std::max(motionFps_, 1e-6);
+        opts.useJointLimits      = config_.useJointLimits;
+        opts.useVelocityLimits   = config_.useVelocityLimits;
+        opts.jointLimitMarginDeg = config_.jointLimitMarginDeg;
+        opts.qpBackend           = config_.qpBackend;
+        return opts;
+    }
+
+    void OnlineQpRetargeter::syncBatchConfig() {
+        BatchTrajectoryConfig& bc      = batch_->config();
+        bc.gnSteps                     = config_.sqpIters;
+        bc.gnDamping                   = config_.gnDamping;
+        bc.gnMaxStep                   = config_.gnMaxStep;
+        bc.wVelocity                   = config_.wVelocity;
+        bc.wAcceleration               = config_.wAcceleration;
+        bc.wAnchor                     = config_.wAnchor;
+        bc.enableFootPenalties         = config_.enableFootPenalties;
+        bc.wFootHeight                 = config_.wFootHeight;
+        bc.wFootSlip                   = config_.wFootSlip;
+        bc.wFootIkAnchor               = config_.wFootIkAnchor;
+        bc.wRootXyContact              = config_.wRootXyContact;
+        bc.wContactJointAnchor         = config_.wContactJointAnchor;
+        bc.torqueLimitConstraint       = config_.torqueLimitConstraint;
+        bc.torqueLimitMargin           = config_.torqueLimitMargin;
+        bc.torqueLimitWeight           = config_.torqueLimitWeight;
+        bc.torqueLimitGateMode         = config_.torqueLimitGateMode;
+        bc.torqueLimitGateROn          = config_.torqueLimitGateROn;
+        bc.torqueLimitGateRFull        = config_.torqueLimitGateRFull;
+        bc.torqueLimitGateROff         = config_.torqueLimitGateROff;
+        bc.torqueLimitGateMinOnFrames  = config_.torqueLimitGateMinOnFrames;
+        bc.torqueLimitGateMinOffFrames = config_.torqueLimitGateMinOffFrames;
+        bc.torqueLimitGateFloor        = config_.torqueLimitGateFloor;
+    }
+
     void OnlineQpRetargeter::reset() {
         preparedBuf_.clear();
         targetsBuf_.clear();
@@ -97,9 +138,26 @@ namespace gmr {
         return q;
     }
 
-    Eigen::VectorXd OnlineQpRetargeter::softSeed(const HumanFrame& humanFrame, const HumanFrame& prepared, Retargeter& retargeter,
-                                                 bool offsetToGround) {
-        (void)prepared;
+    OnlineQpRetargeter::PreparedFrameTargets OnlineQpRetargeter::prepareFrameTargets(
+        const HumanFrame& humanFrame, Retargeter& retargeter, bool offsetToGround) {
+        PreparedFrameTargets frame;
+        frame.prepared = retargeter.prepareRetargetInput(humanFrame, offsetToGround);
+        frame.targets  = batch_->targetsForPrepared(frame.prepared);
+        return frame;
+    }
+
+    std::vector<BatchTrajectoryRetargeter::FrameTargets> OnlineQpRetargeter::prepareWindowTargets(
+        const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter, bool offsetToGround) {
+        std::vector<BatchTrajectoryRetargeter::FrameTargets> targets;
+        targets.reserve(humanFrames.size());
+        for (const auto& frame : humanFrames) {
+            targets.push_back(prepareFrameTargets(frame, retargeter, offsetToGround).targets);
+        }
+        return targets;
+    }
+
+    Eigen::VectorXd OnlineQpRetargeter::seedCausalFrame(const HumanFrame& humanFrame, Retargeter& retargeter,
+                                                        bool offsetToGround) {
         if (frameIndex_ <= config_.bootstrapGmrFrames) {
             return retargeter.retargetFrame(humanFrame, offsetToGround);
         }
@@ -112,61 +170,60 @@ namespace gmr {
         return retargeter.currentQpos();
     }
 
+    std::vector<Eigen::VectorXd> OnlineQpRetargeter::seedWindowFromCursor(const std::vector<HumanFrame>& humanFrames,
+                                                                          const Eigen::VectorXd& qStart,
+                                                                          Retargeter& retargeter, bool offsetToGround,
+                                                                          bool fullIkFirst) {
+        std::vector<Eigen::VectorXd> seeds;
+        seeds.reserve(humanFrames.size());
+
+        Eigen::VectorXd qCursor = qStart;
+        for (std::size_t i = 0; i < humanFrames.size(); ++i) {
+            Eigen::VectorXd qSeed;
+            if (fullIkFirst && i == 0) {
+                qSeed = retargeter.retargetFrame(humanFrames[i], offsetToGround);
+            } else if (config_.lightIkIters > 0) {
+                retargeter.setQpos(qCursor);
+                qSeed = retargeter.retargetLightIk(humanFrames[i], offsetToGround, config_.lightIkIters);
+            } else {
+                qSeed = qCursor;
+            }
+            seeds.push_back(qSeed);
+            qCursor = qSeed;
+        }
+        return seeds;
+    }
+
+    void OnlineQpRetargeter::appendCommittedQpos(const Eigen::VectorXd& q) {
+        qBuf_.push_back(q);
+        const std::size_t maxlen = static_cast<std::size_t>(std::max(config_.horizon, 8));
+        while (qBuf_.size() > maxlen) {
+            qBuf_.pop_front();
+        }
+    }
+
     std::vector<Eigen::VectorXd> OnlineQpRetargeter::solveQpWindow(const std::vector<Eigen::VectorXd>& qInit,
                                                                    const std::vector<BatchTrajectoryRetargeter::FrameTargets>& targets,
                                                                    const std::vector<Eigen::VectorXd>& qRef, const Eigen::VectorXd* qPrev,
                                                                    int pinFrames) {
-        BatchTrajectoryRetargeter::QpWindowOptions opts;
-        opts.qPrev               = qPrev;
-        opts.pinFrames           = pinFrames;
-        opts.wGmr                = config_.wGmr;
-        opts.dqMax               = config_.dqMax;
-        opts.motionDt            = 1.0 / std::max(motionFps_, 1e-6);
-        opts.useJointLimits      = config_.useJointLimits;
-        opts.useVelocityLimits   = config_.useVelocityLimits;
-        opts.jointLimitMarginDeg = config_.jointLimitMarginDeg;
-        opts.qpBackend           = config_.qpBackend;
-
         // Sync batch weights in case CLI overrode config after construction.
-        BatchTrajectoryConfig& bc      = batch_->config();
-        bc.gnSteps                     = config_.sqpIters;
-        bc.gnDamping                   = config_.gnDamping;
-        bc.gnMaxStep                   = config_.gnMaxStep;
-        bc.wVelocity                   = config_.wVelocity;
-        bc.wAcceleration               = config_.wAcceleration;
-        bc.wAnchor                     = config_.wAnchor;
-        bc.enableFootPenalties         = config_.enableFootPenalties;
-        bc.wFootHeight                 = config_.wFootHeight;
-        bc.wFootSlip                   = config_.wFootSlip;
-        bc.wFootIkAnchor               = config_.wFootIkAnchor;
-        bc.wRootXyContact              = config_.wRootXyContact;
-        bc.wContactJointAnchor         = config_.wContactJointAnchor;
-        bc.torqueLimitConstraint       = config_.torqueLimitConstraint;
-        bc.torqueLimitMargin           = config_.torqueLimitMargin;
-        bc.torqueLimitWeight           = config_.torqueLimitWeight;
-        bc.torqueLimitGateMode         = config_.torqueLimitGateMode;
-        bc.torqueLimitGateROn          = config_.torqueLimitGateROn;
-        bc.torqueLimitGateRFull        = config_.torqueLimitGateRFull;
-        bc.torqueLimitGateROff         = config_.torqueLimitGateROff;
-        bc.torqueLimitGateMinOnFrames  = config_.torqueLimitGateMinOnFrames;
-        bc.torqueLimitGateMinOffFrames = config_.torqueLimitGateMinOffFrames;
-        bc.torqueLimitGateFloor        = config_.torqueLimitGateFloor;
+        syncBatchConfig();
 
         // Match Python: contact from seed/ref trajectory for this window.
         batch_->setFootContactFromQRef(qRef);
 
+        const BatchTrajectoryRetargeter::QpWindowOptions opts = makeQpWindowOptions(qPrev, pinFrames);
         return batch_->optimizeQpWindow(qInit, targets, qInit.front(), qRef, /*frameOffset=*/0, config_.wAnchor, opts);
     }
 
     Eigen::VectorXd OnlineQpRetargeter::retargetFrame(const HumanFrame& humanFrame, Retargeter& retargeter, bool offsetToGround) {
         const auto t0       = Clock::now();
-        HumanFrame prepared = retargeter.prepareRetargetInput(humanFrame, offsetToGround);
-        auto targets        = batch_->targetsForPrepared(prepared);
+        PreparedFrameTargets prepared = prepareFrameTargets(humanFrame, retargeter, offsetToGround);
         ++frameIndex_;
 
-        Eigen::VectorXd qSeed = softSeed(humanFrame, prepared, retargeter, offsetToGround);
-        preparedBuf_.push_back(prepared);
-        targetsBuf_.push_back(targets);
+        Eigen::VectorXd qSeed = seedCausalFrame(humanFrame, retargeter, offsetToGround);
+        preparedBuf_.push_back(prepared.prepared);
+        targetsBuf_.push_back(prepared.targets);
         qRefBuf_.push_back(qSeed);
 
         const std::size_t maxlen = static_cast<std::size_t>(std::max(config_.horizon, 8));
@@ -174,9 +231,6 @@ namespace gmr {
             preparedBuf_.pop_front();
             targetsBuf_.pop_front();
             qRefBuf_.pop_front();
-        }
-        while (qBuf_.size() > maxlen) {
-            qBuf_.pop_front();
         }
 
         Eigen::VectorXd qOut = qSeed;
@@ -196,27 +250,9 @@ namespace gmr {
 
         qOut = commitOutputQpos(retargeter, std::move(qOut));
 
-        qBuf_.push_back(qOut);
+        appendCommittedQpos(qOut);
         lastFrameMs_ = elapsedMs(t0);
         return qOut;
-    }
-
-    std::vector<Eigen::VectorXd> OnlineQpRetargeter::retargetSequence(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                                      bool offsetToGround) {
-        // Convenience only: same live arrival path as the viewer (no future-frame peek).
-        reset();
-        std::vector<Eigen::VectorXd> out;
-        out.reserve(humanFrames.size());
-        for (const auto& f : humanFrames) {
-            pushArrivedFrame(f);
-            while (canStepArrived(/*flush=*/false)) {
-                out.push_back(stepArrived(retargeter, offsetToGround, /*flush=*/false));
-            }
-        }
-        while (canStepArrived(/*flush=*/true)) {
-            out.push_back(stepArrived(retargeter, offsetToGround, /*flush=*/true));
-        }
-        return out;
     }
 
     void OnlineQpRetargeter::pushArrivedFrame(const HumanFrame& humanFrame) {
@@ -247,40 +283,13 @@ namespace gmr {
         }
         const auto t0 = Clock::now();
         ++frameIndex_;
-        const int Hn = static_cast<int>(windowFrames.size());
+        std::vector<BatchTrajectoryRetargeter::FrameTargets> tgtWin =
+            prepareWindowTargets(windowFrames, retargeter, offsetToGround);
 
-        std::vector<BatchTrajectoryRetargeter::FrameTargets> tgtWin;
-        tgtWin.reserve(static_cast<std::size_t>(Hn));
-        for (const auto& f : windowFrames) {
-            // human frame 预处理 包括 root offset ground 相关处理
-            // targetsForPrepared 则 根据ik config 把human target 映射成 robot body target
-            HumanFrame prepared = retargeter.prepareRetargetInput(f, offsetToGround);
-            tgtWin.push_back(batch_->targetsForPrepared(prepared));
-        }
-
-        // 生成seed
-        std::vector<Eigen::VectorXd> seeds;
-        seeds.reserve(static_cast<std::size_t>(Hn));
-
-        // 当前滚动到的机器人姿态 一个在窗口帧上滚动前进的 qpos 指针
-        Eigen::VectorXd qCursor = arrivalHasPrev_ ? arrivalQPrev_ : retargeter.currentQpos();
-
-        // 每个窗口帧生成一个qSeed
-        for (int i = 0; i < Hn; ++i) {
-            Eigen::VectorXd qSeed;
-            if (frameIndex_ <= config_.bootstrapGmrFrames && i == 0) {
-                qSeed = retargeter.retargetFrame(windowFrames[static_cast<std::size_t>(i)], offsetToGround);
-            } else if (config_.lightIkIters > 0) {
-                // 把 retargeter 内部状态设置成 qCursor
-                // 通过传入 ik iters 来控制 ik的量级  内部调用的是 重定向用的ik接口 只是 迭代次数少了
-                retargeter.setQpos(qCursor);
-                qSeed = retargeter.retargetLightIk(windowFrames[static_cast<std::size_t>(i)], offsetToGround, config_.lightIkIters);
-            } else {
-                qSeed = qCursor;
-            }
-            seeds.push_back(qSeed);
-            qCursor = qSeed;
-        }
+        const Eigen::VectorXd qStart = arrivalHasPrev_ ? arrivalQPrev_ : retargeter.currentQpos();
+        std::vector<Eigen::VectorXd> seeds =
+            seedWindowFromCursor(windowFrames, qStart, retargeter, offsetToGround,
+                                 frameIndex_ <= config_.bootstrapGmrFrames);
 
         Eigen::VectorXd qCmd = seeds.front();
         // Commit-frame targets before optional pin insert (always index 0 of tgtWin here).
@@ -305,10 +314,7 @@ namespace gmr {
         arrivalPrevTargets_ = commitTargets;
         arrivalQPrev_       = qCmd;
         arrivalHasPrev_     = true;
-        qBuf_.push_back(qCmd);
-        while (qBuf_.size() > static_cast<std::size_t>(std::max(config_.horizon, 8))) {
-            qBuf_.pop_front();
-        }
+        appendCommittedQpos(qCmd);
         lastFrameMs_ = elapsedMs(t0);
         return qCmd;
     }
@@ -332,15 +338,11 @@ namespace gmr {
             arrivalFillPending_      = false;
             const HumanFrame& latest = arrivalBuf_.back();
             Eigen::VectorXd qCmd     = retargeter.retargetFrame(latest, offsetToGround);
-            HumanFrame prepared      = retargeter.prepareRetargetInput(latest, offsetToGround);
-            arrivalPrevTargets_      = batch_->targetsForPrepared(prepared);
+            arrivalPrevTargets_      = prepareFrameTargets(latest, retargeter, offsetToGround).targets;
             arrivalQPrev_            = qCmd;
             arrivalHasPrev_          = true;
             ++frameIndex_;
-            qBuf_.push_back(qCmd);
-            while (qBuf_.size() > static_cast<std::size_t>(std::max(config_.horizon, 8))) {
-                qBuf_.pop_front();
-            }
+            appendCommittedQpos(qCmd);
             lastFrameMs_ = elapsedMs(t0);
             return qCmd;
         }

@@ -158,6 +158,10 @@ namespace gmr {
             return retarget_internal::scaleHumanFrameOnly(humanFrame, ikConfig, useOffsetToGround);
         }
 
+        HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround) const {
+            return applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
+        }
+
         HumanFrame applyContactGround(const HumanFrame& prepared) const {
             if (contactGround && contactGround->enabled()) {
                 return contactGround->processHumanFrame(prepared);
@@ -175,16 +179,14 @@ namespace gmr {
         void updateTaskTargets(const HumanFrame& frame) {
             auto fill = [this, &frame](std::vector<MujocoTaskRuntime>* tasks) {
                 for (auto& task : *tasks) {
-                    auto it = frame.find(task.humanBodyName);
-                    if (it == frame.end()) {
+                    const std::optional<retarget_internal::TaskTargetPose> target =
+                        retarget_internal::taskTargetFromHumanFrame(frame, task.humanBodyName, task.posOffset,
+                                                                    task.rotOffset, ikConfig.groundHeight);
+                    if (!target.has_value()) {
                         continue;
                     }
-                    const Eigen::Vector3d posOff =
-                        retarget_internal::ikTaskPosOffset(task.posOffset, ikConfig.groundHeight);
-                    const auto [targetPos, targetRot] = retarget_internal::applyBodyOffset(
-                        it->second.position, it->second.orientation, posOff, task.rotOffset);
-                    task.targetPos = targetPos;
-                    task.targetRot = targetRot;
+                    task.targetPos = target->pos;
+                    task.targetRot = target->rot;
                 }
             };
 
@@ -323,22 +325,32 @@ namespace gmr {
             }
         }
 
-        Eigen::VectorXd retargetLightIkImpl(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
-            if (maxIterations <= 0) {
-                return qpos;
-            }
-
-            HumanFrame prepared = applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
-            updateTaskTargets(prepared);
-
-            const int savedMaxIter = options.maxIterations;
-            options.maxIterations  = maxIterations;
+        void solveEnabledTaskSets() {
             if (ikConfig.useTable1) {
                 solveTaskSet(tasks1);
             }
             if (ikConfig.useTable2) {
                 solveTaskSet(tasks2);
             }
+        }
+
+        Eigen::VectorXd retargetPrepared(const HumanFrame& prepared, bool finalize) {
+            updateTaskTargets(prepared);
+            solveEnabledTaskSets();
+            if (finalize) {
+                finalizeRobotState();
+            }
+            return qpos;
+        }
+
+        Eigen::VectorXd retargetLightIkImpl(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
+            if (maxIterations <= 0) {
+                return qpos;
+            }
+
+            const int savedMaxIter = options.maxIterations;
+            options.maxIterations  = maxIterations;
+            retargetPrepared(prepareRetargetInput(humanFrame, offsetToGround), /*finalize=*/false);
             options.maxIterations = savedMaxIter;
             return qpos;
         }
@@ -350,20 +362,13 @@ namespace gmr {
     MujocoRetargetBackend::~MujocoRetargetBackend() = default;
 
     Eigen::VectorXd MujocoRetargetBackend::retargetFrame(const HumanFrame& humanFrame, bool offsetToGround) {
-        auto t_now          = std::chrono::steady_clock::now();
-        HumanFrame prepared = impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
-        impl_->updateTaskTargets(prepared);
-        if (impl_->ikConfig.useTable1) {
-            impl_->solveTaskSet(impl_->tasks1);
-        }
-        if (impl_->ikConfig.useTable2) {
-            impl_->solveTaskSet(impl_->tasks2);
-        }
-        impl_->finalizeRobotState();
+        auto t_now = std::chrono::steady_clock::now();
+        Eigen::VectorXd q =
+            impl_->retargetPrepared(impl_->prepareRetargetInput(humanFrame, offsetToGround), /*finalize=*/true);
 
         LOG(INFO) << "Retargeting took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t_now).count() << " ms";
-        return impl_->qpos;
+        return q;
     }
 
     HumanFrame MujocoRetargetBackend::prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround) const {
@@ -371,7 +376,7 @@ namespace gmr {
     }
 
     HumanFrame MujocoRetargetBackend::prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround) {
-        return impl_->applyContactGround(impl_->prepareHumanFrame(humanFrame, offsetToGround));
+        return impl_->prepareRetargetInput(humanFrame, offsetToGround);
     }
 
     Eigen::VectorXd MujocoRetargetBackend::retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {

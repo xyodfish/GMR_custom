@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot C++ batch TO / online QP: load motion file → temp human JSON → gmr_retarget_viewer."""
+"""One-shot C++ viewer runner: IK / batch TO / online QP."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _tri_bool(value: str | None, flag: str, cmd: list[str]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="C++ batch TO / online QP viewer from .pt/.npz/.bvh.")
+    parser = argparse.ArgumentParser(description="C++ IK / batch TO / online QP viewer from .pt/.npz/.bvh.")
     parser.add_argument("--input_file", required=True)
     parser.add_argument(
         "--input_type",
@@ -36,7 +36,8 @@ def main() -> None:
         choices=["auto", "gvhmr_pt", "smplx", "bvh_lafan1", "bvh_nokov"],
     )
     parser.add_argument("--robot", default="unitree_g1")
-    parser.add_argument("--method", required=True, choices=["batch_to", "online_qp"])
+    parser.add_argument("--method", required=True,
+                        help="ik | batch_to | online_qp, or compare: ik,online_qp")
     parser.add_argument("--gmr_root", default=str(REPO))
     parser.add_argument("--viewer", default=str(DEFAULT_VIEWER))
     parser.add_argument("--motion_fps", type=int, default=30)
@@ -61,6 +62,8 @@ def main() -> None:
     parser.add_argument("--out_json", default=None, help="batch_to only: save qpos JSON after optimize")
     parser.add_argument("--online_qp_preset", default="anti_slip", choices=["default", "smooth", "anti_slip"])
     parser.add_argument("--online_qp_mode", default="lookahead", choices=["lookahead", "causal"])
+    parser.add_argument("--compare_ghost_alpha", type=float, default=None,
+                        help="Ghost overlay alpha when --method has two entries.")
     args = parser.parse_args()
 
     if args.fast and args.quality:
@@ -118,6 +121,9 @@ def main() -> None:
         if args.max_frames:
             cmd += ["--max_frames", str(args.max_frames)]
 
+        if args.compare_ghost_alpha is not None:
+            cmd += ["--compare_ghost_alpha", str(args.compare_ghost_alpha)]
+
         _tri_bool(args.contact_ground, "contact_ground", cmd)
         _tri_bool(args.fix_robot_penetration, "fix_robot_penetration", cmd)
         _tri_bool(args.foot_ground_limit, "foot_ground_limit", cmd)
@@ -136,7 +142,7 @@ def main() -> None:
                 cmd.append("--fast")
             if args.out_json:
                 cmd += ["--out_json", args.out_json]
-        else:
+        elif args.method == "online_qp":
             cmd += [
                 "--realtime",
                 "--online_qp_preset",
@@ -144,6 +150,17 @@ def main() -> None:
                 "--online_qp_mode",
                 args.online_qp_mode,
             ]
+        elif "," in args.method or "+" in args.method:
+            cmd += [
+                "--realtime",
+                "--online_qp_preset",
+                args.online_qp_preset,
+                "--online_qp_mode",
+                args.online_qp_mode,
+            ]
+        else:
+            # Native GMR IK path in viewer.
+            cmd += ["--realtime"]
 
         if args.loop:
             cmd.append("--loop")

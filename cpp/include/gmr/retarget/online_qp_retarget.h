@@ -30,11 +30,6 @@ namespace gmr {
         /// Streaming causal API (one human frame in → one qpos out).
         Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, Retargeter& retargeter, bool offsetToGround = false);
 
-        /// File/batch helper: feeds frames one-by-one through the arrival API (same as live).
-        /// Does **not** peek unarrived future frames. Lookahead only uses the short arrival buffer.
-        std::vector<Eigen::VectorXd> retargetSequence(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                      bool offsetToGround = false);
-
         /// Live arrival buffer: solver only sees frames that have been pushed.
         /// Lookahead uses a short delay of up to ``horizon-1`` frames. While filling, ``stepArrived``
         /// emits traditional GMR for the newest frame (no pop); once buffered, short-horizon QP pops.
@@ -54,9 +49,24 @@ namespace gmr {
         double maxTorquePeakRatio() const { return batch_ ? batch_->maxTorquePeakRatio() : 0.0; }
 
        private:
+        struct PreparedFrameTargets {
+            HumanFrame prepared;
+            BatchTrajectoryRetargeter::FrameTargets targets;
+        };
+
         BatchTrajectoryConfig makeBatchConfig() const;
-        Eigen::VectorXd softSeed(const HumanFrame& humanFrame, const HumanFrame& prepared, Retargeter& retargeter,
-                                 bool offsetToGround);
+        BatchTrajectoryRetargeter::QpWindowOptions makeQpWindowOptions(const Eigen::VectorXd* qPrev,
+                                                                       int pinFrames) const;
+        void syncBatchConfig();
+        PreparedFrameTargets prepareFrameTargets(const HumanFrame& humanFrame, Retargeter& retargeter,
+                                                 bool offsetToGround);
+        std::vector<BatchTrajectoryRetargeter::FrameTargets> prepareWindowTargets(
+            const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter, bool offsetToGround);
+        Eigen::VectorXd seedCausalFrame(const HumanFrame& humanFrame, Retargeter& retargeter,
+                                        bool offsetToGround);
+        std::vector<Eigen::VectorXd> seedWindowFromCursor(const std::vector<HumanFrame>& humanFrames,
+                                                          const Eigen::VectorXd& qStart, Retargeter& retargeter,
+                                                          bool offsetToGround, bool fullIkFirst);
         std::vector<Eigen::VectorXd> solveQpWindow(const std::vector<Eigen::VectorXd>& qInit,
                                                    const std::vector<BatchTrajectoryRetargeter::FrameTargets>& targets,
                                                    const std::vector<Eigen::VectorXd>& qRef,
@@ -65,6 +75,7 @@ namespace gmr {
                                             bool offsetToGround);
         /// Write qpos and clear ground penetration (even when ``finalizeContact`` preset is false).
         Eigen::VectorXd commitOutputQpos(Retargeter& retargeter, Eigen::VectorXd q);
+        void appendCommittedQpos(const Eigen::VectorXd& q);
 
         OnlineQpConfig config_;
         std::unique_ptr<BatchTrajectoryRetargeter> batch_;

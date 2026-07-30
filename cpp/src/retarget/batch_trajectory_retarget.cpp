@@ -9,6 +9,7 @@
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 #include <mujoco/mujoco.h>
 #include <nlohmann/json.hpp>
@@ -37,10 +38,6 @@ namespace gmr {
             const Eigen::Matrix3d Rt    = target.toRotationMatrix();
             // Match scipy Rotation.inv() * R_body; as_rotvec() used in Python batch TO.
             return pinocchio::log3(Rt.transpose() * Rbody);
-        }
-
-        Eigen::Vector3d taskPosOffset(const IkTaskEntry& task, double groundHeight) {
-            return task.posOffset - Eigen::Vector3d(0.0, 0.0, groundHeight);
         }
 
         Eigen::Matrix3d bodyRotation(const mjData* data, int bodyId) {
@@ -582,21 +579,20 @@ namespace gmr {
 
         auto fillFromTasks = [&](const std::vector<IkTaskEntry>& tasks) {
             for (const auto& task : tasks) {
-                auto bodyIt = prepared.find(task.humanBodyName);
-                if (bodyIt == prepared.end()) {
-                    continue;
-                }
                 const int bodyId = mj_name2id(impl_->model.get(), mjOBJ_BODY, task.robotBodyName.c_str());
                 if (bodyId < 0) {
                     continue;
                 }
-                const auto [targetPos, targetRot] = retarget_internal::applyBodyOffset(
-                    bodyIt->second.position, bodyIt->second.orientation, taskPosOffset(task, ikConfig_.groundHeight), task.rotOffset);
+                const std::optional<retarget_internal::TaskTargetPose> target =
+                    retarget_internal::taskTargetFromHumanFrame(prepared, task.humanBodyName, task.posOffset,
+                                                                task.rotOffset, ikConfig_.groundHeight);
+                if (!target.has_value()) {
+                    continue;
+                }
                 FrameTaskTarget tgt;
                 tgt.bodyId    = bodyId;
-                tgt.targetPos = targetPos;
-                tgt.targetRot = targetRot;
-                tgt.targetRot.normalize();
+                tgt.targetPos = target->pos;
+                tgt.targetRot = target->rot;
                 out[bodyId] = tgt;
             }
         };
@@ -608,6 +604,28 @@ namespace gmr {
             fillFromTasks(ikConfig_.tasksTable2);
         }
         return out;
+    }
+
+    BatchTrajectoryRetargeter::PreparedFrameTargets BatchTrajectoryRetargeter::prepareFrameTargets(
+        const HumanFrame& humanFrame, Retargeter& retargeter, bool offsetToGround) const {
+        PreparedFrameTargets frame;
+        // Match Python batch: same contact-ground state machine as bootstrap IK (one shared pipeline).
+        frame.prepared = retargeter.prepareRetargetInput(humanFrame, offsetToGround);
+        frame.targets  = targetsForPrepared(frame.prepared);
+        return frame;
+    }
+
+    BatchTrajectoryRetargeter::PreparedBatchTargets BatchTrajectoryRetargeter::prepareBatchTargets(
+        const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter, bool offsetToGround) const {
+        PreparedBatchTargets batch;
+        batch.prepared.reserve(humanFrames.size());
+        batch.targets.reserve(humanFrames.size());
+        for (const auto& frame : humanFrames) {
+            PreparedFrameTargets prepared = prepareFrameTargets(frame, retargeter, offsetToGround);
+            batch.prepared.push_back(std::move(prepared.prepared));
+            batch.targets.push_back(std::move(prepared.targets));
+        }
+        return batch;
     }
 
     void BatchTrajectoryRetargeter::clipHingeQpos(Eigen::VectorXd& q) const {
@@ -1498,6 +1516,50 @@ namespace gmr {
         return retargeter.currentQpos();
     }
 
+    std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::finalizeTrajectory(
+        std::vector<Eigen::VectorXd> qOpt, Retargeter& retargeter, const std::vector<HumanFrame>& prepared,
+        bool offsetToGround, const BatchIkBootstrapContext* ikBootstrap) {
+        if (!config_.finalizeContact) {
+            return qOpt;
+        }
+
+        std::vector<Eigen::VectorXd> qOut(qOpt.size());
+#if defined(_OPENMP)
+        const bool canParallelFinalize = config_.parallelFinalize && ikBootstrap != nullptr && static_cast<int>(qOpt.size()) > 1;
+        if (canParallelFinalize) {
+            const int n        = static_cast<int>(qOpt.size());
+            const int nThreads = config_.parallelThreads > 0 ? config_.parallelThreads : omp_get_max_threads();
+            std::vector<std::unique_ptr<Retargeter>> workers(static_cast<std::size_t>(nThreads));
+            for (int t = 0; t < nThreads; ++t) {
+                workers[static_cast<std::size_t>(t)] =
+                    createRetargeter(ikBootstrap->backend, robotModelPath_, ikConfig_, ikBootstrap->options);
+            }
+#pragma omp parallel for schedule(static) num_threads(nThreads)
+            for (int i = 0; i < n; ++i) {
+                const int tid = omp_get_thread_num();
+                workers[static_cast<std::size_t>(tid)]->setQpos(qOpt[static_cast<std::size_t>(i)]);
+                workers[static_cast<std::size_t>(tid)]->finalizeContact();
+                qOut[static_cast<std::size_t>(i)] = workers[static_cast<std::size_t>(tid)]->currentQpos();
+            }
+            return qOut;
+        }
+#endif
+
+        for (std::size_t i = 0; i < qOpt.size(); ++i) {
+            qOut[i] = finalizeQpos(qOpt[i], retargeter, prepared[i], offsetToGround);
+        }
+        return qOut;
+    }
+
+    void BatchTrajectoryRetargeter::applyJointLimitMargin(std::vector<Eigen::VectorXd>& qFrames) const {
+        if (config_.jointLimitMarginDeg <= 0.0) {
+            return;
+        }
+        for (auto& q : qFrames) {
+            clipHingeQposMargin(q, config_.jointLimitMarginDeg);
+        }
+    }
+
     std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::retargetBatch(const std::vector<HumanFrame>& humanFrames,
                                                                           Retargeter& retargeter, bool offsetToGround,
                                                                           const BatchIkBootstrapContext* ikBootstrap) {
@@ -1520,18 +1582,9 @@ namespace gmr {
 
         const auto tTotal = Clock::now();
         resetTorqueLimitGate();
-        std::vector<HumanFrame> prepared;
-        std::vector<FrameTargets> targets;
-        prepared.reserve(humanFrames.size());
-        targets.reserve(humanFrames.size());
 
         auto t0 = Clock::now();
-        for (const auto& frame : humanFrames) {
-            // Match Python batch: same contact-ground state machine as bootstrap IK (one shared pipeline).
-            HumanFrame prep = retargeter.prepareRetargetInput(frame, offsetToGround);
-            prepared.push_back(prep);
-            targets.push_back(targetsForPrepared(prep));
-        }
+        PreparedBatchTargets prepared = prepareBatchTargets(humanFrames, retargeter, offsetToGround);
         lastProfile_.prepareMs = elapsedMs(t0);
 
         t0                                 = Clock::now();
@@ -1546,54 +1599,17 @@ namespace gmr {
         buildGlobalRefFootPos(qInit);
 
         t0                                = Clock::now();
-        std::vector<Eigen::VectorXd> qOpt = optimizeSlidingWindows(qInit, targets);
+        std::vector<Eigen::VectorXd> qOpt = optimizeSlidingWindows(qInit, prepared.targets);
         lastProfile_.optimizeMs           = elapsedMs(t0);
 
         t0 = Clock::now();
-        std::vector<Eigen::VectorXd> qOut;
-        qOut.resize(qOpt.size());
-
-#if defined(_OPENMP)
-        const bool canParallelFinalize = config_.parallelFinalize && ikBootstrap != nullptr && static_cast<int>(qOpt.size()) > 1;
-        if (canParallelFinalize) {
-            const int n        = static_cast<int>(qOpt.size());
-            const int nThreads = config_.parallelThreads > 0 ? config_.parallelThreads : omp_get_max_threads();
-            std::vector<std::unique_ptr<Retargeter>> workers(static_cast<std::size_t>(nThreads));
-            for (int t = 0; t < nThreads; ++t) {
-                workers[static_cast<std::size_t>(t)] =
-                    createRetargeter(ikBootstrap->backend, robotModelPath_, ikConfig_, ikBootstrap->options);
-            }
-#pragma omp parallel for schedule(static) num_threads(nThreads)
-            for (int i = 0; i < n; ++i) {
-                const int tid = omp_get_thread_num();
-                if (config_.finalizeContact) {
-                    workers[static_cast<std::size_t>(tid)]->setQpos(qOpt[static_cast<std::size_t>(i)]);
-                    workers[static_cast<std::size_t>(tid)]->finalizeContact();
-                    qOut[static_cast<std::size_t>(i)] = workers[static_cast<std::size_t>(tid)]->currentQpos();
-                } else {
-                    qOut[static_cast<std::size_t>(i)] = qOpt[static_cast<std::size_t>(i)];
-                }
-            }
-        } else
-#endif
-        {
-            if (config_.finalizeContact) {
-                for (std::size_t i = 0; i < qOpt.size(); ++i) {
-                    qOut[i] = finalizeQpos(qOpt[i], retargeter, prepared[i], offsetToGround);
-                }
-            } else {
-                qOut = std::move(qOpt);
-            }
-        }
+        std::vector<Eigen::VectorXd> qOut =
+            finalizeTrajectory(std::move(qOpt), retargeter, prepared.prepared, offsetToGround, ikBootstrap);
         lastProfile_.finalizeMs = elapsedMs(t0);
 
         // Keep committed hinge joints a safety margin off the hard limits (Python _apply_margin_clip).
         // Applied once on the final pose so it does not disturb the GN optimizer.
-        if (config_.jointLimitMarginDeg > 0.0) {
-            for (auto& q : qOut) {
-                clipHingeQposMargin(q, config_.jointLimitMarginDeg);
-            }
-        }
+        applyJointLimitMargin(qOut);
 
         lastProfile_.nFrames = static_cast<int>(humanFrames.size());
         lastProfile_.totalMs = elapsedMs(tTotal);

@@ -176,10 +176,21 @@ int main(int argc, char** argv) {
                                             sequence.frames.begin() + static_cast<std::ptrdiff_t>(frameCount));
 
         const auto t0 = std::chrono::steady_clock::now();
-        std::vector<Eigen::VectorXd> qFrames = onlineQp.retargetSequence(frames, *retargeter, offsetToGround);
+        std::vector<Eigen::VectorXd> qFrames;
+        qFrames.reserve(frameCount);
+        onlineQp.reset();
+        for (const auto& frame : frames) {
+            onlineQp.pushArrivedFrame(frame);
+            while (onlineQp.canStepArrived(/*flush=*/false)) {
+                qFrames.push_back(onlineQp.stepArrived(*retargeter, offsetToGround, /*flush=*/false));
+            }
+        }
+        while (onlineQp.canStepArrived(/*flush=*/true)) {
+            qFrames.push_back(onlineQp.stepArrived(*retargeter, offsetToGround, /*flush=*/true));
+        }
         const double wallMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        const double msPerFrame = frameCount > 0 ? wallMs / static_cast<double>(frameCount) : 0.0;
+        const double msPerFrame = qFrames.empty() ? 0.0 : wallMs / static_cast<double>(qFrames.size());
 
         nlohmann::json out;
         out["robot"]  = robot;
@@ -190,7 +201,7 @@ int main(int argc, char** argv) {
         out["profile"] = {
             {"total_ms", wallMs},
             {"ms_per_frame", msPerFrame},
-            {"n_frames", static_cast<int>(frameCount)},
+            {"n_frames", static_cast<int>(qFrames.size())},
             {"last_frame_ms", onlineQp.lastFrameMs()},
         };
         out["torque_gate"] = {

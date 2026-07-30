@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -58,12 +59,17 @@ struct ViewerConfig {
 
     std::string onlineQpPreset = "anti_slip";
     std::string onlineQpMode   = "lookahead";  // arrival-buffer delay; use causal for 0-latency
+    int onlineQpHorizon        = -1;
+    int onlineQpSqpIters       = -1;
     double onlineQpJointLimitMarginDeg = 0.0;
 
     int transparentRobot  = 0;
     bool showHumanOverlay = true;
     int windowWidth       = 1280;
     int windowHeight      = 720;
+
+    // Dual-method compare overlay (solid + translucent ghost).
+    float compareGhostAlpha = 0.35f;
 };
 
 struct MjModelDeleter {
@@ -311,6 +317,8 @@ void loadConfigYaml(const std::filesystem::path& configPath, ViewerConfig* confi
     setIfPresent(root, "show_human_overlay", &config->showHumanOverlay);
     setIfPresent(root, "window_width", &config->windowWidth);
     setIfPresent(root, "window_height", &config->windowHeight);
+    setIfPresent(root, "online_qp_horizon", &config->onlineQpHorizon);
+    setIfPresent(root, "online_qp_sqp_iters", &config->onlineQpSqpIters);
 }
 
 void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
@@ -338,9 +346,18 @@ void applyCliOverrides(int argc, char** argv, ViewerConfig* config) {
     if (hasArg(argc, argv, "--online_qp_mode")) {
         config->onlineQpMode = getArg(argc, argv, "--online_qp_mode");
     }
+    if (hasArg(argc, argv, "--online_qp_horizon")) {
+        config->onlineQpHorizon = std::stoi(getArg(argc, argv, "--online_qp_horizon"));
+    }
+    if (hasArg(argc, argv, "--online_qp_sqp_iters")) {
+        config->onlineQpSqpIters = std::stoi(getArg(argc, argv, "--online_qp_sqp_iters"));
+    }
     if (hasArg(argc, argv, "--online_qp_joint_limit_margin_deg")) {
         config->onlineQpJointLimitMarginDeg =
             std::stod(getArg(argc, argv, "--online_qp_joint_limit_margin_deg"));
+    }
+    if (hasArg(argc, argv, "--compare_ghost_alpha")) {
+        config->compareGhostAlpha = static_cast<float>(std::stod(getArg(argc, argv, "--compare_ghost_alpha")));
     }
     if (hasArg(argc, argv, "--actual_human_height")) {
         config->actualHumanHeight = std::stod(getArg(argc, argv, "--actual_human_height"));
@@ -480,15 +497,47 @@ void applyDefaults(ViewerConfig* config) {
     }
 }
 
+void validateMethodName(const std::string& method) {
+    if (method != "ik" && method != "batch_to" && method != "online_qp") {
+        throw std::runtime_error("Unknown method '" + method + "' (use ik, batch_to, or online_qp).");
+    }
+}
+
+std::vector<std::string> parseViewerMethods(const std::string& methodSpec) {
+    std::vector<std::string> methods;
+    std::string token;
+    for (char ch : methodSpec) {
+        if (ch == ',' || ch == '+') {
+            if (!token.empty()) {
+                methods.push_back(token);
+                token.clear();
+            }
+        } else if (!std::isspace(static_cast<unsigned char>(ch))) {
+            token += ch;
+        }
+    }
+    if (!token.empty()) {
+        methods.push_back(token);
+    }
+    if (methods.empty()) {
+        methods.push_back("ik");
+    }
+    for (const auto& method : methods) {
+        validateMethodName(method);
+    }
+    if (methods.size() > 2) {
+        throw std::runtime_error("--method supports at most two entries for compare overlay.");
+    }
+    return methods;
+}
+
 void validateConfig(const ViewerConfig& config) {
     if (config.gmrRoot.empty() || config.robot.empty() || config.humanFrameJson.empty()) {
         throw std::runtime_error(
             "Missing required fields: gmr_root, robot, human_frame_json. "
             "Pass --gmr_root . --robot unitree_g1 --human_frame_json <path>, or use --config.");
     }
-    if (config.method != "ik" && config.method != "batch_to" && config.method != "online_qp") {
-        throw std::runtime_error("Unknown --method (use ik, batch_to, or online_qp).");
-    }
+    (void)parseViewerMethods(config.method);
 }
 
 void drawHumanFrameAxes(const Eigen::Vector3d& pos, const Eigen::Matrix3d& mat, mjvScene* scene, double size,
@@ -649,6 +698,465 @@ void syncRenderDataFromQpos(const Eigen::VectorXd& qpos, const mjModel* model, m
     mj_forward(model, data);
 }
 
+struct MethodPlayer {
+    std::string name;
+    std::unique_ptr<gmr::Retargeter> retargeter;
+    std::unique_ptr<gmr::OnlineQpRetargeter> onlineQp;
+    std::vector<Eigen::VectorXd> precomputed;
+    std::vector<Eigen::VectorXd> qposByHuman;  // compare time-align buffer
+    bool useOnlineQp    = false;
+    bool usePrecomputed = false;
+    std::size_t onlineSrcIdx         = 0;
+    std::size_t playIdx              = 0;
+    std::ptrdiff_t lastCommitHumanIdx = -1;
+    Eigen::VectorXd qpos;
+};
+
+void storePlayerQposAtHuman(MethodPlayer& player, std::size_t humanIdx, const Eigen::VectorXd& qpos) {
+    if (player.qposByHuman.size() <= humanIdx) {
+        player.qposByHuman.resize(humanIdx + 1);
+    }
+    player.qposByHuman[humanIdx] = qpos;
+}
+
+bool tryLoadPlayerQposAtHuman(const MethodPlayer& player, std::size_t humanIdx, Eigen::VectorXd* out) {
+    if (humanIdx >= player.qposByHuman.size() || player.qposByHuman[humanIdx].size() == 0) {
+        return false;
+    }
+    *out = player.qposByHuman[humanIdx];
+    return true;
+}
+
+gmr::OnlineQpConfig makeOnlineQpViewerConfig(const ViewerConfig& config) {
+    gmr::OnlineQpConfig qpCfg = gmr::OnlineQpConfig::fromPresetName(config.onlineQpPreset);
+    qpCfg.useLookahead        = (config.onlineQpMode != "causal");
+    if (config.onlineQpHorizon > 0) {
+        qpCfg.horizon = config.onlineQpHorizon;
+    }
+    if (config.onlineQpSqpIters > 0) {
+        qpCfg.sqpIters = config.onlineQpSqpIters;
+    }
+    qpCfg.jointLimitMarginDeg = config.onlineQpJointLimitMarginDeg;
+    return qpCfg;
+}
+
+void appendGhostRobotGeoms(const mjModel* model, mjData* ghostData, mjvScene* scene, float ghostAlpha) {
+    const int geomStart = scene->ngeom;
+    mjvOption ghostOpt;
+    mjv_defaultOption(&ghostOpt);
+    ghostOpt.flags[mjVIS_TRANSPARENT] = 1;
+    mjv_addGeoms(model, ghostData, &ghostOpt, nullptr, mjCAT_DYNAMIC, scene);
+    for (int gid = geomStart; gid < scene->ngeom; ++gid) {
+        mjvGeom* geom = &scene->geoms[gid];
+        geom->rgba[0] = 0.65f;
+        geom->rgba[1] = 0.25f;
+        geom->rgba[2] = 1.0f;
+        geom->rgba[3] = ghostAlpha;
+    }
+}
+
+MethodPlayer buildMethodPlayer(const std::string& method, const ViewerConfig& config, const std::filesystem::path& xmlPath,
+                               const std::filesystem::path& robotModelPath, gmr::IkConfig ikConfig,
+                               const gmr::RetargetOptions& opts, const gmr::HumanFrameSequence& playSequence,
+                               gmr::RetargetBackend backend) {
+    MethodPlayer player;
+    player.name = method;
+    player.retargeter = gmr::createRetargeter(backend, robotModelPath, ikConfig, opts);
+    if (playSequence.fps > 0.0) {
+        player.retargeter->setMotionFps(playSequence.fps);
+    }
+
+    if (method == "online_qp") {
+        player.useOnlineQp = true;
+        player.onlineQp    = std::make_unique<gmr::OnlineQpRetargeter>(xmlPath, ikConfig, makeOnlineQpViewerConfig(config));
+        player.onlineQp->applyContactGroundConfig(opts.contactGround);
+        if (playSequence.fps > 0.0) {
+            player.onlineQp->setMotionFps(playSequence.fps);
+        }
+        player.onlineQp->reset();
+        // Seed render qpos before the first arrival step (buffer may not be ready yet).
+        player.qpos = player.retargeter->currentQpos();
+        return player;
+    }
+
+    if (method == "batch_to") {
+        player.usePrecomputed = true;
+        gmr::BatchTrajectoryConfig batchCfg;
+        batchCfg.windowSize            = config.batchToWindowSize;
+        batchCfg.windowStride          = config.batchToWindowStride;
+        batchCfg.gnSteps               = config.batchToGnSteps;
+        batchCfg.jointLimitMarginDeg   = config.batchToJointLimitMarginDeg;
+        batchCfg.verbose               = true;
+        if (config.batchToFast) {
+            batchCfg.gnSteps           = 2;
+            batchCfg.gnLineSearchAlphas = {1.0};
+            batchCfg.windowSize        = 16;
+            batchCfg.windowStride      = 8;
+            batchCfg.useBandedSolver   = true;
+        }
+
+        gmr::BatchTrajectoryRetargeter batchTo(xmlPath, ikConfig, batchCfg);
+        std::cout << "[compare-viewer] precomputing batch_to (" << playSequence.frames.size() << " frames)..."
+                  << std::endl;
+        gmr::BatchIkBootstrapContext ikBootstrap{gmr::RetargetBackend::kMujoco, opts, opts.contactGround};
+        player.precomputed =
+            batchTo.retargetBatch(playSequence.frames, *player.retargeter, config.offsetToGround, &ikBootstrap);
+        if (!player.precomputed.empty()) {
+            player.qpos = player.precomputed.front();
+            player.retargeter->setQpos(player.qpos);
+        }
+        return player;
+    }
+
+    player.qpos = player.retargeter->retargetFrame(playSequence.frames.front(), config.offsetToGround);
+    return player;
+}
+
+bool advanceOnlineQpPlayer(MethodPlayer& player, const gmr::HumanFrameSequence& playSequence, bool offsetToGround,
+                           bool flush) {
+    if (!player.useOnlineQp || !player.onlineQp) {
+        return false;
+    }
+    if (!flush) {
+        if (player.onlineSrcIdx >= playSequence.frames.size()) {
+            return false;
+        }
+        player.onlineQp->pushArrivedFrame(playSequence.frames[player.onlineSrcIdx]);
+        ++player.onlineSrcIdx;
+    }
+    if (!player.onlineQp->canStepArrived(flush)) {
+        return false;
+    }
+    // Map output → human-frame index before step pops (QP) or uses latest (fill-GMR).
+    const bool fillGmr     = player.onlineQp->arrivalFillGmrPending();
+    const std::size_t bufN = player.onlineQp->arrivalBufferSize();
+    std::ptrdiff_t commitIdx =
+        fillGmr ? static_cast<std::ptrdiff_t>(player.onlineSrcIdx) - 1
+                : static_cast<std::ptrdiff_t>(player.onlineSrcIdx) - static_cast<std::ptrdiff_t>(bufN);
+    if (commitIdx < 0) {
+        commitIdx = 0;
+    }
+    player.qpos               = player.onlineQp->stepArrived(*player.retargeter, offsetToGround, flush);
+    player.lastCommitHumanIdx = commitIdx;
+    storePlayerQposAtHuman(player, static_cast<std::size_t>(commitIdx), player.qpos);
+    return true;
+}
+
+void advanceIkPlayer(MethodPlayer& player, const gmr::HumanFrame& humanFrame, bool offsetToGround) {
+    player.qpos = player.retargeter->retargetFrame(humanFrame, offsetToGround);
+}
+
+void advancePrecomputedPlayer(MethodPlayer& player) {
+    if (player.playIdx < player.precomputed.size()) {
+        player.qpos = player.precomputed[player.playIdx];
+        player.retargeter->setQpos(player.qpos);
+        ++player.playIdx;
+    }
+}
+
+int runDualMethodCompareViewer(const ViewerConfig& config, const std::vector<std::string>& methods,
+                               const gmr::HumanFrameSequence& playSequence, const std::filesystem::path& xmlPath,
+                               const std::filesystem::path& robotModelPath, gmr::IkConfig ikConfig,
+                               const gmr::RetargetOptions& opts, const std::string& robot,
+                               const gmr::IkConfig& ikConfigCopy) {
+    if (methods.size() != 2) {
+        throw std::runtime_error("Dual compare requires exactly two methods.");
+    }
+    const gmr::RetargetBackend backend = gmr::RetargetBackend::kMujoco;
+    if (config.backend != "mujoco_se3") {
+        throw std::runtime_error("Dual-method compare requires --backend mujoco_se3.");
+    }
+
+    const bool alignLookahead =
+        (config.onlineQpMode != "causal") &&
+        ((methods[0] == "online_qp") || (methods[1] == "online_qp"));
+
+    std::cout << "[compare-viewer] solid=" << methods[0] << " ghost=" << methods[1]
+              << " (purple translucent overlay)" << std::endl;
+    if (alignLookahead) {
+        std::cout << "[compare-viewer] lookahead time-align: overlay by committed human frame"
+                  << std::endl;
+    }
+
+    MethodPlayer solidPlayer =
+        buildMethodPlayer(methods[0], config, xmlPath, robotModelPath, ikConfig, opts, playSequence, backend);
+    MethodPlayer ghostPlayer =
+        buildMethodPlayer(methods[1], config, xmlPath, robotModelPath, ikConfigCopy, opts, playSequence, backend);
+
+    const bool solidRealtime = !solidPlayer.usePrecomputed;
+    const bool ghostRealtime = !ghostPlayer.usePrecomputed;
+
+    auto resetComparePlayers = [&]() {
+        solidPlayer.onlineSrcIdx       = 0;
+        ghostPlayer.onlineSrcIdx       = 0;
+        solidPlayer.playIdx            = 0;
+        ghostPlayer.playIdx            = 0;
+        solidPlayer.lastCommitHumanIdx = -1;
+        ghostPlayer.lastCommitHumanIdx = -1;
+        solidPlayer.qposByHuman.clear();
+        ghostPlayer.qposByHuman.clear();
+        if (solidPlayer.useOnlineQp) {
+            solidPlayer.onlineQp->reset();
+            solidPlayer.qpos = solidPlayer.retargeter->currentQpos();
+        }
+        if (ghostPlayer.useOnlineQp) {
+            ghostPlayer.onlineQp->reset();
+            ghostPlayer.qpos = ghostPlayer.retargeter->currentQpos();
+        }
+    };
+
+    auto applyAlignedDisplay = [&](std::ptrdiff_t commitIdx, gmr::HumanFrame* visualOut) -> bool {
+        if (commitIdx < 0) {
+            return false;
+        }
+        const std::size_t idx = static_cast<std::size_t>(commitIdx);
+        Eigen::VectorXd solidQ;
+        Eigen::VectorXd ghostQ;
+        if (!tryLoadPlayerQposAtHuman(solidPlayer, idx, &solidQ)) {
+            return false;
+        }
+        if (!tryLoadPlayerQposAtHuman(ghostPlayer, idx, &ghostQ)) {
+            return false;
+        }
+        solidPlayer.qpos = solidQ;
+        ghostPlayer.qpos = ghostQ;
+        if (visualOut != nullptr && idx < playSequence.frames.size()) {
+            *visualOut = solidPlayer.retargeter->prepareHumanFrame(playSequence.frames[idx], config.offsetToGround);
+        }
+        return true;
+    };
+
+    auto syncNonQpAtHuman = [&](MethodPlayer& player, std::size_t humanIdx) {
+        if (player.useOnlineQp) {
+            return;
+        }
+        if (player.usePrecomputed) {
+            if (humanIdx < player.precomputed.size()) {
+                player.qpos = player.precomputed[humanIdx];
+                player.retargeter->setQpos(player.qpos);
+                storePlayerQposAtHuman(player, humanIdx, player.qpos);
+            }
+            return;
+        }
+        advanceIkPlayer(player, playSequence.frames[humanIdx], config.offsetToGround);
+        storePlayerQposAtHuman(player, humanIdx, player.qpos);
+    };
+
+    if (glfwInit() == GLFW_FALSE) {
+        throw std::runtime_error("glfwInit failed.");
+    }
+
+    GLFWwindow* window =
+        glfwCreateWindow(config.windowWidth, config.windowHeight, "GMR C++ Retarget Compare Viewer", nullptr, nullptr);
+    if (window == nullptr) {
+        glfwTerminate();
+        throw std::runtime_error("Failed to create GLFW window.");
+    }
+
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+
+    mjvCamera cam;
+    mjvOption opt;
+    mjvScene scn;
+    mjrContext con;
+    mjv_defaultCamera(&cam);
+    mjv_defaultOption(&opt);
+    mjv_defaultScene(&scn);
+    mjr_defaultContext(&con);
+
+    std::array<char, 1024> error{};
+    mjModel* rawRenderModel = mj_loadXML(xmlPath.string().c_str(), nullptr, error.data(), error.size());
+    if (rawRenderModel == nullptr) {
+        throw std::runtime_error("Failed to load MuJoCo XML: " + std::string(error.data()));
+    }
+    std::unique_ptr<mjModel, MjModelDeleter> renderModel(rawRenderModel);
+    std::unique_ptr<mjData, MjDataDeleter> solidData(mj_makeData(renderModel.get()));
+    std::unique_ptr<mjData, MjDataDeleter> ghostData(mj_makeData(renderModel.get()));
+    if (!solidData || !ghostData) {
+        throw std::runtime_error("Failed to allocate MuJoCo render data.");
+    }
+
+    const RenderQposMap qposMap =
+        buildRenderQposMap(*solidPlayer.retargeter, renderModel.get(),
+                           static_cast<int>(solidPlayer.retargeter->currentQpos().size()), true);
+
+    const double humanPointScale         = 0.1;
+    const Eigen::Vector3d humanPosOffset = Eigen::Vector3d::Zero();
+    opt.flags[mjVIS_TRANSPARENT]         = config.transparentRobot;
+
+    mjv_makeScene(renderModel.get(), &scn, 8000);
+    mjr_makeContext(renderModel.get(), &con, mjFONTSCALE_150);
+
+    MouseCameraState mouseCamera;
+    mouseCamera.model = renderModel.get();
+    mouseCamera.scn   = &scn;
+    mouseCamera.cam   = &cam;
+    glfwSetWindowUserPointer(window, &mouseCamera);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    glfwSetCursorPosCallback(window, cursorPosCallback);
+    glfwSetScrollCallback(window, scrollCallback);
+
+    const std::string cameraBodyName = resolveCameraBodyName(robot, ikConfigCopy.robotRootName);
+    int cameraBodyId                 = mj_name2id(renderModel.get(), mjOBJ_BODY, cameraBodyName.c_str());
+    if (cameraBodyId < 0) {
+        cameraBodyId = mj_name2id(renderModel.get(), mjOBJ_BODY, ikConfigCopy.robotRootName.c_str());
+    }
+    const double cameraDistance = resolveCameraDistance(robot, 2.5);
+    cam.distance                = cameraDistance;
+    cam.elevation               = -10.0;
+
+    const double frameDt = 1.0 / static_cast<double>(playSequence.fps);
+    const auto frameDtDuration =
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(frameDt));
+
+    std::size_t frameIdx  = 0;
+    bool playbackFinished = false;
+    gmr::HumanFrame visualHumanFrame =
+        solidPlayer.retargeter->prepareHumanFrame(playSequence.frames.front(), config.offsetToGround);
+
+    auto stepComparePair = [&](std::size_t humanIdx, bool flushOnline) {
+        if (!flushOnline) {
+            if (solidRealtime) {
+                if (solidPlayer.useOnlineQp) {
+                    advanceOnlineQpPlayer(solidPlayer, playSequence, config.offsetToGround, false);
+                } else {
+                    syncNonQpAtHuman(solidPlayer, humanIdx);
+                }
+            } else if (solidPlayer.usePrecomputed) {
+                syncNonQpAtHuman(solidPlayer, humanIdx);
+            }
+
+            if (ghostRealtime) {
+                if (ghostPlayer.useOnlineQp) {
+                    advanceOnlineQpPlayer(ghostPlayer, playSequence, config.offsetToGround, false);
+                } else {
+                    syncNonQpAtHuman(ghostPlayer, humanIdx);
+                }
+            } else if (ghostPlayer.usePrecomputed) {
+                syncNonQpAtHuman(ghostPlayer, humanIdx);
+            }
+        } else {
+            if (solidPlayer.useOnlineQp && solidPlayer.onlineQp->arrivalBufferSize() > 0) {
+                advanceOnlineQpPlayer(solidPlayer, playSequence, config.offsetToGround, true);
+            }
+            if (ghostPlayer.useOnlineQp && ghostPlayer.onlineQp->arrivalBufferSize() > 0) {
+                advanceOnlineQpPlayer(ghostPlayer, playSequence, config.offsetToGround, true);
+            }
+        }
+
+        if (alignLookahead) {
+            std::ptrdiff_t commit = -1;
+            if (solidPlayer.useOnlineQp && ghostPlayer.useOnlineQp) {
+                commit = std::min(solidPlayer.lastCommitHumanIdx, ghostPlayer.lastCommitHumanIdx);
+            } else if (solidPlayer.useOnlineQp) {
+                commit = solidPlayer.lastCommitHumanIdx;
+            } else if (ghostPlayer.useOnlineQp) {
+                commit = ghostPlayer.lastCommitHumanIdx;
+            }
+            if (!applyAlignedDisplay(commit, &visualHumanFrame)) {
+                visualHumanFrame = solidPlayer.retargeter->prepareHumanFrame(playSequence.frames[humanIdx],
+                                                                            config.offsetToGround);
+            }
+        } else {
+            visualHumanFrame =
+                solidPlayer.retargeter->prepareHumanFrame(playSequence.frames[humanIdx], config.offsetToGround);
+        }
+    };
+
+    // Seed first frame(s).
+    if (!playSequence.frames.empty()) {
+        stepComparePair(0, false);
+        if (!alignLookahead && solidRealtime && !solidPlayer.useOnlineQp) {
+            frameIdx = playSequence.frames.size() > 1 ? 1 : 0;
+        } else {
+            frameIdx = 1;
+        }
+    }
+
+    syncRenderDataFromQpos(solidPlayer.qpos, renderModel.get(), solidData.get(), qposMap);
+    syncRenderDataFromQpos(ghostPlayer.qpos, renderModel.get(), ghostData.get(), qposMap);
+
+    auto lastStep      = std::chrono::steady_clock::now();
+    auto playbackStart = std::chrono::steady_clock::now();
+
+    while (!glfwWindowShouldClose(window)) {
+        auto now = std::chrono::steady_clock::now();
+        if (solidRealtime || ghostRealtime) {
+            while (now - lastStep >= frameDtDuration) {
+                const std::size_t humanIdx = frameIdx;
+                if (humanIdx >= playSequence.frames.size()) {
+                    const bool solidFlush =
+                        solidPlayer.useOnlineQp && solidPlayer.onlineQp->arrivalBufferSize() > 0;
+                    const bool ghostFlush =
+                        ghostPlayer.useOnlineQp && ghostPlayer.onlineQp->arrivalBufferSize() > 0;
+                    if (solidFlush || ghostFlush) {
+                        stepComparePair(playSequence.frames.size() - 1, true);
+                        lastStep += frameDtDuration;
+                        continue;
+                    }
+                    if (config.loop) {
+                        frameIdx = 0;
+                        resetComparePlayers();
+                        lastStep += frameDtDuration;
+                        continue;
+                    }
+                    playbackFinished = true;
+                    break;
+                }
+
+                stepComparePair(humanIdx, false);
+                ++frameIdx;
+                lastStep += frameDtDuration;
+            }
+        } else {
+            const double elapsedSec = std::chrono::duration<double>(now - playbackStart).count();
+            std::size_t desiredIdx  = static_cast<std::size_t>(elapsedSec / frameDt);
+            if (config.loop) {
+                desiredIdx %= solidPlayer.precomputed.size();
+            } else if (desiredIdx >= solidPlayer.precomputed.size()) {
+                break;
+            }
+            solidPlayer.qpos = solidPlayer.precomputed[desiredIdx];
+            ghostPlayer.qpos = ghostPlayer.precomputed[desiredIdx];
+            visualHumanFrame =
+                solidPlayer.retargeter->prepareHumanFrame(playSequence.frames[desiredIdx], config.offsetToGround);
+        }
+
+        syncRenderDataFromQpos(solidPlayer.qpos, renderModel.get(), solidData.get(), qposMap);
+        syncRenderDataFromQpos(ghostPlayer.qpos, renderModel.get(), ghostData.get(), qposMap);
+
+        if (cameraBodyId >= 0 && mouseCamera.cameraTracking) {
+            cam.lookat[0] = solidData->xpos[3 * cameraBodyId + 0];
+            cam.lookat[1] = solidData->xpos[3 * cameraBodyId + 1];
+            cam.lookat[2] = solidData->xpos[3 * cameraBodyId + 2];
+        }
+
+        mjrRect viewport = {0, 0, 0, 0};
+        glfwGetFramebufferSize(window, &viewport.width, &viewport.height);
+
+        mjv_updateScene(renderModel.get(), solidData.get(), &opt, nullptr, &cam, mjCAT_ALL, &scn);
+        appendGhostRobotGeoms(renderModel.get(), ghostData.get(), &scn, config.compareGhostAlpha);
+        if (config.showHumanOverlay) {
+            drawHumanOverlay(visualHumanFrame, &scn, humanPointScale, humanPosOffset);
+        }
+        mjr_render(viewport, &scn, &con);
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+
+        if (playbackFinished) {
+            break;
+        }
+    }
+
+    mjr_freeContext(&con);
+    mjv_freeScene(&scn);
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return 0;
+}
+
 void printUsage() {
     std::cout << "Usage:\n"
               << "  gmr_retarget_viewer"
@@ -659,8 +1167,12 @@ void printUsage() {
               << " [--src_human <smplx|bvh_lafan1|bvh_nokov>]"
               << " [--human_frame_json <single_or_multi_frame_json>]"
               << " [--method <ik|batch_to|online_qp>]"
+              << " [--method <method_a,method_b>]"
+              << " [--compare_ghost_alpha 0.35]"
               << " [--online_qp_preset default|smooth|anti_slip]"
               << " [--online_qp_mode lookahead|causal]"
+              << " [--online_qp_horizon 3]"
+              << " [--online_qp_sqp_iters 3]"
               << " [--online_qp_joint_limit_margin_deg 0]"
               << " [--actual_human_height <float>]"
               << " [--damping <float>]"
@@ -684,6 +1196,8 @@ void printUsage() {
                  "show_human_overlay=true, method=ik.\n"
               << "batch_to: offline batch GN first, then playback (implies precompute; use mujoco_se3).\n"
               << "online_qp: live frame feed → retargetFrame / arrival-buffer MPC (implies realtime).\n"
+              << "  Compare: --method ik,online_qp overlays solid + purple ghost (mujoco_se3 only).\n"
+              << "  Lookahead compare time-aligns both robots to the same committed human frame.\n"
               << "  --online_qp_mode lookahead: short arrival-buffer delay (horizon frames, default);\n"
               << "    never preloads the whole sequence into the solver.\n"
               << "  --online_qp_mode causal: one arrived human frame → one solve (0-latency streaming).\n"
@@ -738,8 +1252,15 @@ int main(int argc, char** argv) {
             playSequence.frames.resize(static_cast<std::size_t>(config.maxFrames));
         }
 
-        const bool useBatchTo   = (config.method == "batch_to");
-        const bool useOnlineQp  = (config.method == "online_qp");
+        const std::vector<std::string> methods = parseViewerMethods(config.method);
+        if (methods.size() == 2) {
+            return runDualMethodCompareViewer(config, methods, playSequence, xmlPath, robotModelPath, ikConfig, opts,
+                                              robot, ikConfigCopy);
+        }
+        const std::string method = methods.front();
+
+        const bool useBatchTo   = (method == "batch_to");
+        const bool useOnlineQp  = (method == "online_qp");
         if ((useBatchTo || useOnlineQp) && backend != gmr::RetargetBackend::kMujoco) {
             throw std::runtime_error("batch_to / online_qp viewer requires --backend mujoco_se3.");
         }
@@ -761,6 +1282,12 @@ int main(int argc, char** argv) {
             // "lookahead" here means delayed short-horizon MPC on an arrival buffer, NOT
             // preloading the whole motion into the solver.
             qpCfg.useLookahead        = (config.onlineQpMode != "causal");
+            if (config.onlineQpHorizon > 0) {
+                qpCfg.horizon = config.onlineQpHorizon;
+            }
+            if (config.onlineQpSqpIters > 0) {
+                qpCfg.sqpIters = config.onlineQpSqpIters;
+            }
             qpCfg.jointLimitMarginDeg = config.onlineQpJointLimitMarginDeg;
             onlineQp                  = std::make_unique<gmr::OnlineQpRetargeter>(xmlPath, ikConfigCopy, qpCfg);
             onlineQp->applyContactGroundConfig(opts.contactGround);

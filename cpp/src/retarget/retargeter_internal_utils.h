@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -47,6 +48,30 @@ namespace gmr {
             updatedRot.normalize();
             const Eigen::Vector3d globalPosOffset = updatedRot * posOffset;
             return {pos + globalPosOffset, updatedRot};
+        }
+
+        struct TaskTargetPose {
+            Eigen::Vector3d pos = Eigen::Vector3d::Zero();
+            Eigen::Quaterniond rot = Eigen::Quaterniond::Identity();
+        };
+
+        inline std::optional<TaskTargetPose> taskTargetFromHumanFrame(const HumanFrame& frame,
+                                                                      const std::string& humanBodyName,
+                                                                      const Eigen::Vector3d& posOffset,
+                                                                      const Eigen::Quaterniond& rotOffset,
+                                                                      double groundHeight) {
+            auto bodyIt = frame.find(humanBodyName);
+            if (bodyIt == frame.end()) {
+                return std::nullopt;
+            }
+            const auto [targetPos, targetRot] =
+                applyBodyOffset(bodyIt->second.position, bodyIt->second.orientation,
+                                ikTaskPosOffset(posOffset, groundHeight), rotOffset);
+            TaskTargetPose target;
+            target.pos = targetPos;
+            target.rot = targetRot;
+            target.rot.normalize();
+            return target;
         }
 
         inline HumanFrame scaleHumanFrameOnly(const HumanFrame& frame, const IkConfig& ikConfig, bool offsetToGround) {

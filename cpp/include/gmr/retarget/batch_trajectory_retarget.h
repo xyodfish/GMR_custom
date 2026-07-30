@@ -62,7 +62,7 @@ namespace gmr {
         HumanFrame prepareHumanFrame(const HumanFrame& frame, bool offsetToGround) const;
         FrameTargets targetsForPrepared(const HumanFrame& prepared) const;
 
-        /// Constrained window GN (DAQP) used by Online QP-MPC.
+        /// One constrained GN/SCP window solve used by Online QP-MPC.
         struct QpWindowOptions {
             const Eigen::VectorXd* qPrev = nullptr;
             int pinFrames                = 0;
@@ -83,6 +83,15 @@ namespace gmr {
         void setFootContactFromQRef(const std::vector<Eigen::VectorXd>& qRef);
 
        private:
+        struct PreparedFrameTargets {
+            HumanFrame prepared;
+            FrameTargets targets;
+        };
+        struct PreparedBatchTargets {
+            std::vector<HumanFrame> prepared;
+            std::vector<FrameTargets> targets;
+        };
+
         void buildTrackEntries();
         void buildOptIndices();
         void buildSmoothMappings();
@@ -101,10 +110,15 @@ namespace gmr {
 
         std::vector<Eigen::VectorXd> bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter, bool offsetToGround,
                                                 const BatchIkBootstrapContext* ikBootstrap);
+        PreparedFrameTargets prepareFrameTargets(const HumanFrame& humanFrame, Retargeter& retargeter,
+                                                 bool offsetToGround) const;
+        PreparedBatchTargets prepareBatchTargets(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
+                                                 bool offsetToGround) const;
         std::vector<Eigen::VectorXd> loadQInitFromJson(const std::filesystem::path& path, std::size_t expectedFrames) const;
         std::vector<int> windowStarts(int nFrames) const;
         std::vector<std::vector<bool>> batchContactMask(const std::vector<Eigen::VectorXd>& qRef) const;
         void buildGlobalRefFootPos(const std::vector<Eigen::VectorXd>& qRef);
+        void applyJointLimitMargin(std::vector<Eigen::VectorXd>& qFrames) const;
 
         std::vector<Eigen::VectorXd> optimizeSlidingWindows(const std::vector<Eigen::VectorXd>& qInit,
                                                             const std::vector<FrameTargets>& targets);
@@ -131,6 +145,9 @@ namespace gmr {
         double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets, const Eigen::VectorXd& anchor,
                           const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight) const;
         Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared, bool offsetToGround);
+        std::vector<Eigen::VectorXd> finalizeTrajectory(std::vector<Eigen::VectorXd> qOpt, Retargeter& retargeter,
+                                                        const std::vector<HumanFrame>& prepared, bool offsetToGround,
+                                                        const BatchIkBootstrapContext* ikBootstrap);
 
         BatchTrajectoryConfig config_;
         IkConfig ikConfig_;
