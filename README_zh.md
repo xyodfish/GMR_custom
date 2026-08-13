@@ -11,6 +11,7 @@
 - 基于上游 GMR，在 [`cpp/`](cpp/) 下提供实验性 C++ 重定向流水线。
 - C++ 重定向后端与渲染目标解耦（MuJoCo / ROS / 自定义 viewer）。
 - 复用 `general_motion_retargeting/ik_configs/*.json` 中的 IK 配置，保持 Python/C++ 配置一致。
+- 提供面向不同构型机器人的[新机器人重定向接入方法与验收指南](docs/new_robot_retargeting_guide_zh.md)，覆盖模型审计、语义映射、frame 标定、分层 IK、调参顺序和量化验收。
 - 增加自碰撞约束，以及基于地面接触的脚滑优化。
 - 关节限位安全余量（`joint_limit_margin_deg`）：让提交的旋转关节始终离机械硬限位保持可配置的度数，改善可跟踪性。已接入轨迹优化类重定向器（Python `OnlineBatchRetargeter` / `OnlineQpRetargeter`；C++ `OnlineQpRetargeter` 与离线 `BatchTrajectoryRetargeter`）。详见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
 - Python 侧将 `contact_ground`、实验性 `foot_ground_limit`、`fix_robot_penetration` 解耦，便于独立评估各模式。
@@ -23,6 +24,9 @@
 
 
 # 新闻与更新
+
+- **2026-08-13：** 总结 Galbot 轮式双臂适配中的可复用经验，新增[新机器人重定向接入方法与验收指南](docs/new_robot_retargeting_guide_zh.md)：核心原则是按动作语义和机器人能力设计映射，并以模型、单帧、动作序列、定量指标和视觉对比共同验收。
+- **2026-08-12：** 完成 **Galbot One Golf**（`galbot_one_golf`）轮式双臂 SMPL-X 重定向：底盘复用 G1 根运动语义，五轴腿腰机构跟随受限上身姿态，双臂按人体骨段方向重建目标，并保留 2 度关节限位余量。案例见 [`docs/galbot_one_golf_retargeting.md`](docs/galbot_one_golf_retargeting.md)，可复用方法见[新机器人重定向接入方法与验收指南](docs/new_robot_retargeting_guide_zh.md)。
 - **2026-07-20：** 为轨迹优化类重定向器新增**关节限位安全余量**（`joint_limit_margin_deg`）：让提交的旋转关节离硬限位保持设定度数（0 关闭），可消除限位饱和且跟踪代价极小。Python（`OnlineBatchRetargeter`、`OnlineQpRetargeter`）与 C++（`gmr_online_qp_cli`、`gmr_batch_to_cli`、`gmr_retarget_viewer`）均支持。见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
 - **2026-07-16：** 移除不可用的 Sliding Window / Causal TO 公开算法；在线推荐 Online QP / Online Batch，离线推荐 Batch TO。见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
 - **2026-07-15：** 新增 **Online Batch-Lite** 在线多帧 GN 重定向（`OnlineBatchRetargeter`）：~7.7 ms/帧、30 FPS 实时，jerk 优于 IK。见 [`docs/online_batch_retargeting.md`](docs/online_batch_retargeting.md)。
@@ -74,6 +78,7 @@
 | 9 | ENGINEAI PM01 `engineai_pm01` | TBD | ✅ | ✅ | TBD | TBD |
 | 10 | HighTorque Hi `hightorque_hi` | 头(2)+臂(2\*5)+腰(1)+腿(2\*6)=25 | ✅ | TBD | TBD | TBD |
 | 11 | Galaxea R1 Pro `galaxea_r1pro`（轮式人形） | 底盘(6)+躯干(4)+臂(2\*7)=24 | ✅ | TBD | TBD | TBD |
+| 21 | Galbot One Golf `galbot_one_golf`（轮式双臂） | 底盘(3)+腿腰(5)+臂(2\*7)+头(2)=24 | ✅ | TBD | TBD | TBD |
 | 12 | Kuavo `kuavo_s45` | 头(2)+臂(2\*7)+腿(2\*6)=28 | ✅ | TBD | TBD | TBD |
 | 13 | Berkeley Humanoid Lite `berkeley_humanoid_lite`（需进一步调参） | 腿(2\*6)+臂(2\*5)=22 | ✅ | TBD | TBD | TBD |
 | 14 | PND Adam Lite `pnd_adam_lite` | 腿(2\*6)+腰(3)+臂(2\*5)=25 | ✅ | TBD | TBD | TBD |

@@ -1,0 +1,58 @@
+{
+  "stand": {
+    "frames": 186,
+    "fps": 29.959731543624162,
+    "runtime_ms_mean": 7.760969404999569,
+    "runtime_ms_p95": 10.510438989149405,
+    "upper_direction_mean_deg": 2.7455806957540885,
+    "upper_direction_p95_deg": 4.4762459605673275,
+    "forearm_direction_mean_deg": 0.4417073856045852,
+    "forearm_direction_p95_deg": 0.8519291967191548,
+    "min_joint_limit_clearance_deg": 1.9999999999999996,
+    "max_adjacent_joint_delta_rad": 0.20472299814642325,
+    "p95_adjacent_joint_delta_rad": 0.012394416831968713,
+    "finite": true
+  },
+  "swing": {
+    "frames": 172,
+    "fps": 30.0,
+    "runtime_ms_mean": 7.524711140656125,
+    "runtime_ms_p95": 8.258922505774535,
+    "upper_direction_mean_deg": 2.5729121805551256,
+    "upper_direction_p95_deg": 4.657314249458646,
+    "forearm_direction_mean_deg": 0.5197712136660118,
+    "forearm_direction_p95_deg": 1.4462999231444316,
+    "min_joint_limit_clearance_deg": 2.0000000000000027,
+    "max_adjacent_joint_delta_rad": 0.2183335621848668,
+    "p95_adjacent_joint_delta_rad": 0.028239151304953802,
+    "finite": true
+  },
+  "walk": {
+    "frames": 76,
+    "fps": 29.706840390879478,
+    "runtime_ms_mean": 8.49958554802773,
+    "runtime_ms_p95": 17.045226489426557,
+    "upper_direction_mean_deg": 1.5053565798999775,
+    "upper_direction_p95_deg": 3.2716381774773926,
+    "forearm_direction_mean_deg": 0.7786615652550308,
+    "forearm_direction_p95_deg": 1.5641816389825458,
+    "min_joint_limit_clearance_deg": 1.9999999999999996,
+    "max_adjacent_joint_delta_rad": 0.35686763640050545,
+    "p95_adjacent_joint_delta_rad": 0.1764980714920097,
+    "finite": true
+  },
+  "jab": {
+    "frames": 99,
+    "fps": 29.774436090225564,
+    "runtime_ms_mean": 7.683004426938596,
+    "runtime_ms_p95": 8.961643502698276,
+    "upper_direction_mean_deg": 3.731578294071161,
+    "upper_direction_p95_deg": 6.788324913726299,
+    "forearm_direction_mean_deg": 1.630052522537852,
+    "forearm_direction_p95_deg": 3.8124086295835364,
+    "min_joint_limit_clearance_deg": 1.9999999999999996,
+    "max_adjacent_joint_delta_rad": 0.5265074582626268,
+    "p95_adjacent_joint_delta_rad": 0.030884952944766998,
+    "finite": true
+  }
+}

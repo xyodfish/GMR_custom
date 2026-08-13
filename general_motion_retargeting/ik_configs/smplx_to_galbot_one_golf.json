@@ -8,123 +8,87 @@
         "human_body": "pelvis",
         "ground_z": 0.0,
         "yaw_frame": "g1_pelvis",
-        "position_source": "g1_root"
+        "position_source": "scaled_human_root"
     },
     "use_ik_match_table1": true,
-    "use_ik_match_table2": true,
+    "use_ik_match_table2": false,
     "human_scale_table": {
-        "pelvis": 1.1,
-        "left_foot": 1.1,
-        "left_hip": 1.1,
-        "left_knee": 1.1,
-        "left_shoulder": 0.85,
-        "right_shoulder": 0.85,
-        "left_elbow": 0.85,
-        "right_elbow": 0.85,
-        "left_wrist": 0.85,
-        "right_wrist": 0.85,
-        "head": 0.85
+        "pelvis": 0.9,
+        "spine3": 0.9,
+        "left_shoulder": 0.8,
+        "right_shoulder": 0.8,
+        "left_elbow": 0.8,
+        "right_elbow": 0.8,
+        "left_wrist": 0.8,
+        "right_wrist": 0.8,
+        "head": 0.8
     },
     "ik_match_table1": {
         "base_link": [
             "pelvis",
-            200,
-            100,
+            1,
+            1,
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0, 0.0]
-        ],
-        "leg_link5": [
-            "pelvis",
-            150,
-            80,
-            [0.0, 0.0, 0.0],
-            [0.5, -0.5, -0.5, -0.5]
-        ],
-        "leg_link2": [
-            "left_hip",
-            0,
-            10,
-            [0.0, 0.0, 0.0],
-            [0.5, -0.5, -0.5, -0.5]
-        ],
-        "leg_link3": [
-            "left_knee",
-            0,
-            10,
-            [0.0, 0.0, 0.0],
-            [0.5, -0.5, -0.5, -0.5]
-        ],
-        "head_link2": [
-            "head",
-            0,
-            15,
-            [0.0, 0.0, 0.0],
-            [0.006124, 0.141299, 0.059147, 0.98818]
-        ],
-        "left_arm_link1": [
-            "left_shoulder",
-            0,
-            20,
-            [0.0, 0.0, 0.0],
-            [0.579533, -0.114703, 0.134805, 0.795495]
-        ],
-        "left_arm_link4": [
-            "left_elbow",
-            0,
-            25,
-            [0.0, 0.0, 0.0],
-            [0.464389, 0.07155, -0.735366, -0.488324]
-        ],
-        "right_arm_link1": [
-            "right_shoulder",
-            0,
-            20,
-            [0.0, 0.0, 0.0],
-            [0.019225, 0.898708, -0.437764, -0.017812]
-        ],
-        "right_arm_link4": [
-            "right_elbow",
-            0,
-            25,
-            [0.0, 0.0, 0.0],
-            [-0.588037, -0.511583, -0.337564, -0.527774]
         ]
     },
-    "ik_match_table2": {
-        "left_arm_link1": [
-            "left_shoulder",
-            30,
-            0,
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0]
-        ],
-        "right_arm_link1": [
-            "right_shoulder",
-            30,
-            0,
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0]
-        ],
-        "left_arm_link5": [
-            "left_wrist",
-            220,
-            0,
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0]
-        ],
-        "right_arm_link5": [
-            "right_wrist",
-            220,
-            0,
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0]
-        ],
-        "head_link2": [
-            "head",
-            50,
-            0,
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0]
+    "ik_match_table2": {},
+    "mobile_upper_body": {
+        "torso_frame": "leg_link5",
+        "torso_human_body": "spine3",
+        "torso_rotation_offset": [1.0, 0.0, 0.0, 0.0],
+        "torso_local_xy": [0.107, 0.0],
+        "torso_height_scale": 0.75,
+        "torso_height_range": [0.72, 1.12],
+        "torso_orientation_limit_deg": [20.0, 20.0, 30.0],
+        "torso_position_cost": 120.0,
+        "torso_orientation_cost": 30.0,
+        "torso_iterations": 20,
+        "torso_min_iterations": 4,
+        "head_frame": "head_link2",
+        "head_human_body": "head",
+        "head_orientation_limit_deg": [30.0, 30.0, 60.0],
+        "head_orientation_cost": 2.0,
+        "arm_position_cost": 80.0,
+        "elbow_orientation_cost": 0.2,
+        "wrist_orientation_cost": 0.25,
+        "arm_iterations": 15,
+        "arm_min_iterations": 8,
+        "arm_target_passes": 2,
+        "joint_limit_margin_deg": 2.0,
+        "posture_cost": 0.1,
+        "joint_posture_cost": {
+            "leg_joint1": 0.2,
+            "leg_joint2": 0.2,
+            "leg_joint3": 0.2,
+            "leg_joint4": 0.1,
+            "leg_joint5": 0.5,
+            "head_joint1": 0.02,
+            "head_joint2": 0.02
+        },
+        "arm_chains": [
+            {
+                "shoulder_frame": "left_arm_link1",
+                "elbow_frame": "left_arm_link4",
+                "wrist_frame": "left_arm_link5",
+                "orientation_frame": "left_arm_link7",
+                "shoulder_human_body": "left_shoulder",
+                "elbow_human_body": "left_elbow",
+                "wrist_human_body": "left_wrist",
+                "elbow_rotation_offset": [0.96591973, -0.00000348, -0.25884177, 0.00010011],
+                "wrist_rotation_offset": [-0.35359078, -0.61242906, 0.61233244, 0.35348718]
+            },
+            {
+                "shoulder_frame": "right_arm_link1",
+                "elbow_frame": "right_arm_link4",
+                "wrist_frame": "right_arm_link5",
+                "orientation_frame": "right_arm_link7",
+                "shoulder_human_body": "right_shoulder",
+                "elbow_human_body": "right_elbow",
+                "wrist_human_body": "right_wrist",
+                "elbow_rotation_offset": [-0.00010011, -0.25884177, -0.00000348, -0.96591973],
+                "wrist_rotation_offset": [-0.35348718, 0.61233244, -0.61242906, 0.35359078]
+            }
         ]
     }
 }

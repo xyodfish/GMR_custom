@@ -123,7 +123,9 @@ class GeneralMotionRetargeting:
         self.model = mj.MjModel.from_xml_path(self.xml_file)
         
         # Print DoF names in order
-        print("[GMR] Robot Degrees of Freedom (DoF) names and their order:")
+        if verbose:
+            print("[GMR] Robot Degrees of Freedom (DoF) names and their order:")
+
         self.robot_dof_names = {}
         for i in range(self.model.nv):  # 'nv' is the number of DoFs
             dof_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_JOINT, self.model.dof_jntid[i])
@@ -132,7 +134,9 @@ class GeneralMotionRetargeting:
                 print(f"DoF {i}: {dof_name}")
             
             
-        print("[GMR] Robot Body names and their IDs:")
+        if verbose:
+            print("[GMR] Robot Body names and their IDs:")
+
         self.robot_body_names = {}
         for i in range(self.model.nbody):  # 'nbody' is the number of bodies
             body_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_BODY, i)
@@ -140,7 +144,9 @@ class GeneralMotionRetargeting:
             if verbose:
                 print(f"Body ID {i}: {body_name}")
         
-        print("[GMR] Robot Motor (Actuator) names and their IDs:")
+        if verbose:
+            print("[GMR] Robot Motor (Actuator) names and their IDs:")
+
         self.robot_motor_names = {}
         for i in range(self.model.nu):  # 'nu' is the number of actuators (motors)
             motor_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_ACTUATOR, i)
@@ -176,6 +182,7 @@ class GeneralMotionRetargeting:
         self.human_scale_table = ik_config["human_scale_table"]
         self.ground = ik_config["ground_height"] * np.array([0, 0, 1])
         self.planar_base_cfg = ik_config.get("planar_base")
+        self.mobile_upper_body_cfg = ik_config.get("mobile_upper_body")
         self._g1_reference = None
 
         self.max_iter = 15
@@ -227,6 +234,7 @@ class GeneralMotionRetargeting:
                 print("[GMR] Collision avoidance enabled but no valid geom pairs were found. Skip this limit.")
 
         self.setup_retarget_configuration()
+        self._setup_mobile_upper_body()
         
         self.ground_offset = 0.0
 
@@ -377,6 +385,128 @@ class GeneralMotionRetargeting:
                 self.tasks2.append(task)
                 self.task_errors2[task] = []
 
+    def _setup_mobile_upper_body(self):
+        self.mobile_upper_body_tasks = None
+        if self.mobile_upper_body_cfg is None:
+            return
+
+        if self.tgt_robot not in PLANAR_BASE_ROBOTS or self.planar_base_cfg is None:
+            raise ValueError("mobile_upper_body requires a planar-base robot configuration")
+
+        cfg = self.mobile_upper_body_cfg
+        torso_frame = cfg["torso_frame"]
+        head_frame = cfg["head_frame"]
+        arm_chains = cfg["arm_chains"]
+        required_frames = {torso_frame, head_frame}
+        for chain in arm_chains:
+            required_frames.update(
+                {
+                    chain["shoulder_frame"],
+                    chain["elbow_frame"],
+                    chain["wrist_frame"],
+                    chain["orientation_frame"],
+                }
+            )
+
+        missing_frames = sorted(required_frames - self.robot_body_names.keys())
+        if missing_frames:
+            raise ValueError(f"mobile_upper_body references missing robot frames: {missing_frames}")
+
+        torso_task = mink.FrameTask(
+            frame_name=torso_frame,
+            frame_type="body",
+            position_cost=float(cfg.get("torso_position_cost", 120.0)),
+            orientation_cost=float(cfg.get("torso_orientation_cost", 30.0)),
+            lm_damping=1,
+        )
+        head_task = mink.FrameTask(
+            frame_name=head_frame,
+            frame_type="body",
+            position_cost=0.0,
+            orientation_cost=float(cfg.get("head_orientation_cost", 3.0)),
+            lm_damping=1,
+        )
+
+        neutral_data = mj.MjData(self.model)
+        neutral_data.qpos[:] = self.model.qpos0
+        mj.mj_forward(self.model, neutral_data)
+        arm_tasks = []
+        for chain in arm_chains:
+            shoulder_id = self.robot_body_names[chain["shoulder_frame"]]
+            elbow_id = self.robot_body_names[chain["elbow_frame"]]
+            wrist_id = self.robot_body_names[chain["wrist_frame"]]
+            upper_length = np.linalg.norm(
+                neutral_data.xpos[elbow_id] - neutral_data.xpos[shoulder_id]
+            )
+            forearm_length = np.linalg.norm(
+                neutral_data.xpos[wrist_id] - neutral_data.xpos[elbow_id]
+            )
+            if upper_length <= 0.0 or forearm_length <= 0.0:
+                raise ValueError(
+                    f"mobile_upper_body arm chain has zero-length segment: {chain}"
+                )
+
+            arm_tasks.append(
+                {
+                    **chain,
+                    "upper_length": upper_length,
+                    "forearm_length": forearm_length,
+                    "elbow_task": mink.FrameTask(
+                        frame_name=chain["elbow_frame"],
+                        frame_type="body",
+                        position_cost=float(cfg.get("arm_position_cost", 120.0)),
+                        orientation_cost=float(cfg.get("elbow_orientation_cost", 1.0)),
+                        lm_damping=1,
+                    ),
+                    "wrist_task": mink.FrameTask(
+                        frame_name=chain["wrist_frame"],
+                        frame_type="body",
+                        position_cost=float(cfg.get("arm_position_cost", 120.0)),
+                        orientation_cost=0.0,
+                        lm_damping=1,
+                    ),
+                    "orientation_task": mink.FrameTask(
+                        frame_name=chain["orientation_frame"],
+                        frame_type="body",
+                        position_cost=0.0,
+                        orientation_cost=float(cfg.get("wrist_orientation_cost", 2.0)),
+                        lm_damping=1,
+                    ),
+                }
+            )
+
+        posture_cost = np.full(self.model.nv, float(cfg.get("posture_cost", 0.05)))
+        posture_cost[:3] = 0.0
+        for joint_name, cost in cfg.get("joint_posture_cost", {}).items():
+            if joint_name not in self.robot_dof_names:
+                raise ValueError(
+                    f"mobile_upper_body posture references missing joint: {joint_name}"
+                )
+
+            posture_cost[self.robot_dof_names[joint_name]] = float(cost)
+
+        posture_task = mink.PostureTask(self.model, cost=posture_cost, lm_damping=1)
+        posture_task.set_target(self.model.qpos0)
+        torso_id = self.robot_body_names[torso_frame]
+        torso_neutral_rotation = R.from_matrix(
+            neutral_data.xmat[torso_id].reshape(3, 3)
+        )
+        head_id = self.robot_body_names[head_frame]
+        head_neutral_rotation = R.from_matrix(
+            neutral_data.xmat[head_id].reshape(3, 3)
+        )
+        self.mobile_upper_body_tasks = {
+            "torso": torso_task,
+            "head": head_task,
+            "arms": arm_tasks,
+            "posture": posture_task,
+            "torso_neutral_rotation": torso_neutral_rotation,
+            "head_neutral_relative_rotation": (
+                torso_neutral_rotation.inv() * head_neutral_rotation
+            ),
+        }
+        self._mobile_initialized = False
+
     def _apply_body_offset(self, pos, quat_wxyz, pos_offset, rot_offset):
         pos = np.asarray(pos, dtype=float)
         updated_rot = R.from_quat(self._quat_wxyz_to_xyzw(quat_wxyz)) * rot_offset
@@ -399,7 +529,7 @@ class GeneralMotionRetargeting:
         if cfg.get("yaw_frame") == "g1_pelvis":
             # Match unitree_g1 smplx pelvis heading (same rot_offset as smplx_to_g1.json).
             rot = rot * R.from_quat([-0.5, -0.5, -0.5, 0.5])
-        yaw = rot.as_euler("ZYX")[0]
+        yaw = self._rotation_yaw(rot)
         rot_yaw = R.from_euler("Z", yaw)
         return np.array([pos[0], pos[1], ground_z], dtype=float), self._quat_xyzw_to_wxyz(
             rot_yaw.as_quat()
@@ -446,6 +576,11 @@ class GeneralMotionRetargeting:
     def _quat_xyzw_to_wxyz(quat):
         quat = np.asarray(quat)
         return quat[[3, 0, 1, 2]]
+
+    @staticmethod
+    def _rotation_yaw(rotation):
+        x, y, z, w = rotation.as_quat()
+        return np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
     def _filter_valid_collision_pairs(self, collision_pairs):
         geom_name_set = set()
@@ -521,7 +656,7 @@ class GeneralMotionRetargeting:
         if self.planar_base_cfg.get("position_source") == "g1_root":
             g1_input = raw_human_data if raw_human_data is not None else human_data
             pos[0], pos[1] = self._get_g1_root_xy(g1_input)
-        yaw = R.from_quat(self._quat_wxyz_to_xyzw(rot)).as_euler("ZYX")[0]
+        yaw = self._rotation_yaw(R.from_quat(self._quat_wxyz_to_xyzw(rot)))
         qpos = self.configuration.data.qpos
         qpos[0] = pos[0]
         qpos[1] = pos[1]
@@ -529,7 +664,223 @@ class GeneralMotionRetargeting:
         mj.mj_forward(self.model, self.configuration.data)
         return entry["task"]
 
-    def _run_ik_tasks(self, tasks, max_iter=None, freeze_base=False, base_qpos=None):
+    @staticmethod
+    def _normalized_direction(start, end, label):
+        direction = np.asarray(end, dtype=float) - np.asarray(start, dtype=float)
+        norm = np.linalg.norm(direction)
+        if norm <= 1e-8:
+            raise ValueError(f"Cannot retarget zero-length human segment: {label}")
+
+        return direction / norm
+
+    def _set_frame_task_target(self, task, pos, rotation):
+        quat_wxyz = self._quat_xyzw_to_wxyz(rotation.as_quat())
+        task.set_target(
+            mink.SE3.from_rotation_and_translation(
+                mink.SO3(quat_wxyz), np.asarray(pos, dtype=float)
+            )
+        )
+
+    def _mobile_body_rotation(self, human_data, body_name, offset_wxyz):
+        rotation = R.from_quat(self._quat_wxyz_to_xyzw(human_data[body_name][1]))
+        offset = R.from_quat(self._quat_wxyz_to_xyzw(offset_wxyz))
+        return rotation * offset
+
+    def _set_mobile_torso_targets(self, raw_human_data, base_qpos):
+        cfg = self.mobile_upper_body_cfg
+        tasks = self.mobile_upper_body_tasks
+        required_bodies = {
+            cfg["torso_human_body"],
+            cfg["head_human_body"],
+        }
+        for chain in tasks["arms"]:
+            required_bodies.update(
+                {
+                    chain["shoulder_human_body"],
+                    chain["elbow_human_body"],
+                    chain["wrist_human_body"],
+                }
+            )
+
+        missing_bodies = sorted(required_bodies - raw_human_data.keys())
+        if missing_bodies:
+            raise ValueError(
+                f"mobile_upper_body input is missing human bodies: {missing_bodies}"
+            )
+
+        base_rotation = R.from_euler("Z", base_qpos[2])
+        torso_rotation = self._mobile_body_rotation(
+            raw_human_data,
+            cfg["torso_human_body"],
+            cfg.get("torso_rotation_offset", [1.0, 0.0, 0.0, 0.0]),
+        )
+        neutral_rotation = tasks["torso_neutral_rotation"]
+        relative_rotation = base_rotation.inv() * torso_rotation * neutral_rotation.inv()
+        relative_euler = relative_rotation.as_euler("XYZ")
+        orientation_limit = np.deg2rad(
+            np.asarray(cfg.get("torso_orientation_limit_deg", [20.0, 20.0, 30.0]))
+        )
+        relative_euler = np.clip(relative_euler, -orientation_limit, orientation_limit)
+        torso_rotation = (
+            base_rotation * R.from_euler("XYZ", relative_euler) * neutral_rotation
+        )
+
+        source_height = float(raw_human_data[cfg["torso_human_body"]][0][2])
+        torso_height = source_height * float(cfg.get("torso_height_scale", 0.75))
+        min_height, max_height = cfg.get("torso_height_range", [0.72, 1.12])
+        torso_height = np.clip(torso_height, float(min_height), float(max_height))
+        local_xy = np.asarray(cfg.get("torso_local_xy", [0.107, 0.0]), dtype=float)
+        torso_pos = np.array([base_qpos[0], base_qpos[1], 0.0])
+        torso_pos[:2] += base_rotation.apply([local_xy[0], local_xy[1], 0.0])[:2]
+        torso_pos[2] = torso_height
+        self._set_frame_task_target(tasks["torso"], torso_pos, torso_rotation)
+
+        human_torso_rotation = R.from_quat(
+            self._quat_wxyz_to_xyzw(raw_human_data[cfg["torso_human_body"]][1])
+        )
+        human_head_rotation = R.from_quat(
+            self._quat_wxyz_to_xyzw(raw_human_data[cfg["head_human_body"]][1])
+        )
+        head_relative_euler = (
+            human_torso_rotation.inv() * human_head_rotation
+        ).as_euler("XYZ")
+        head_limit = np.deg2rad(
+            np.asarray(cfg.get("head_orientation_limit_deg", [30.0, 30.0, 60.0]))
+        )
+        head_relative_euler = np.clip(
+            head_relative_euler, -head_limit, head_limit
+        )
+        head_rotation = (
+            torso_rotation
+            * R.from_euler("XYZ", head_relative_euler)
+            * tasks["head_neutral_relative_rotation"]
+        )
+        self._set_frame_task_target(tasks["head"], np.zeros(3), head_rotation)
+
+    def _set_mobile_arm_targets(self, raw_human_data):
+        tasks = self.mobile_upper_body_tasks
+        for chain in tasks["arms"]:
+            shoulder_body = chain["shoulder_human_body"]
+            elbow_body = chain["elbow_human_body"]
+            wrist_body = chain["wrist_human_body"]
+            upper_direction = self._normalized_direction(
+                raw_human_data[shoulder_body][0],
+                raw_human_data[elbow_body][0],
+                f"{shoulder_body}->{elbow_body}",
+            )
+            forearm_direction = self._normalized_direction(
+                raw_human_data[elbow_body][0],
+                raw_human_data[wrist_body][0],
+                f"{elbow_body}->{wrist_body}",
+            )
+            shoulder_id = self.robot_body_names[chain["shoulder_frame"]]
+            shoulder_pos = self.configuration.data.xpos[shoulder_id].copy()
+            elbow_pos = shoulder_pos + chain["upper_length"] * upper_direction
+            wrist_pos = elbow_pos + chain["forearm_length"] * forearm_direction
+            elbow_rotation = self._mobile_body_rotation(
+                raw_human_data, elbow_body, chain["elbow_rotation_offset"]
+            )
+            wrist_rotation = self._mobile_body_rotation(
+                raw_human_data, wrist_body, chain["wrist_rotation_offset"]
+            )
+            self._set_frame_task_target(
+                chain["elbow_task"], elbow_pos, elbow_rotation
+            )
+            self._set_frame_task_target(
+                chain["wrist_task"], wrist_pos, R.identity()
+            )
+            self._set_frame_task_target(
+                chain["orientation_task"], np.zeros(3), wrist_rotation
+            )
+
+    def _run_mobile_upper_body(self, raw_human_data, base_qpos):
+        tasks = self.mobile_upper_body_tasks
+        self._set_mobile_torso_targets(raw_human_data, base_qpos)
+        torso_tasks = [tasks["torso"], tasks["head"], tasks["posture"]]
+        if self._mobile_initialized:
+            torso_max_iterations = int(
+                self.mobile_upper_body_cfg.get("torso_iterations", 20)
+            )
+            torso_min_iterations = int(
+                self.mobile_upper_body_cfg.get("torso_min_iterations", 4)
+            )
+            arm_max_iterations = int(
+                self.mobile_upper_body_cfg.get("arm_iterations", 15)
+            )
+            arm_min_iterations = int(
+                self.mobile_upper_body_cfg.get("arm_min_iterations", 3)
+            )
+        else:
+            torso_max_iterations = int(
+                self.mobile_upper_body_cfg.get("initial_torso_iterations", 60)
+            )
+            torso_min_iterations = int(
+                self.mobile_upper_body_cfg.get("initial_torso_min_iterations", 30)
+            )
+            arm_max_iterations = int(
+                self.mobile_upper_body_cfg.get("initial_arm_iterations", 40)
+            )
+            arm_min_iterations = int(
+                self.mobile_upper_body_cfg.get("initial_arm_min_iterations", 20)
+            )
+
+        self._run_ik_tasks(
+            torso_tasks,
+            max_iter=torso_max_iterations,
+            min_iter=torso_min_iterations,
+            freeze_base=True,
+            base_qpos=base_qpos,
+        )
+
+        all_tasks = [tasks["torso"], tasks["head"]]
+        for chain in tasks["arms"]:
+            all_tasks.extend(
+                [chain["elbow_task"], chain["wrist_task"], chain["orientation_task"]]
+            )
+
+        all_tasks.append(tasks["posture"])
+        for _ in range(int(self.mobile_upper_body_cfg.get("arm_target_passes", 2))):
+            self._set_mobile_arm_targets(raw_human_data)
+            self._run_ik_tasks(
+                all_tasks,
+                max_iter=arm_max_iterations,
+                min_iter=arm_min_iterations,
+                freeze_base=True,
+                base_qpos=base_qpos,
+            )
+
+        self._mobile_initialized = True
+
+    def _apply_mobile_joint_margin(self):
+        if self.mobile_upper_body_cfg is None:
+            return
+
+        margin = np.deg2rad(
+            float(self.mobile_upper_body_cfg.get("joint_limit_margin_deg", 0.0))
+        )
+        if margin <= 0.0:
+            return
+
+        qpos = self.configuration.data.qpos
+        for joint_id in range(self.model.njnt):
+            if not self.model.jnt_limited[joint_id]:
+                continue
+
+            if self.model.jnt_type[joint_id] != mj.mjtJoint.mjJNT_HINGE:
+                continue
+
+            lower, upper = self.model.jnt_range[joint_id]
+            if upper - lower <= 2.0 * margin:
+                continue
+
+            qpos_id = self.model.jnt_qposadr[joint_id]
+            qpos[qpos_id] = np.clip(qpos[qpos_id], lower + margin, upper - margin)
+
+        mj.mj_forward(self.model, self.configuration.data)
+
+    def _run_ik_tasks(
+        self, tasks, max_iter=None, min_iter=0, freeze_base=False, base_qpos=None
+    ):
         if not tasks:
             return
         max_iter = self.max_iter if max_iter is None else max_iter
@@ -551,10 +902,10 @@ class GeneralMotionRetargeting:
             next_error = np.linalg.norm(
                 np.concatenate([task.compute_error(self.configuration) for task in tasks])
             )
-            if curr_error - next_error <= 0.001:
+            num_iter += 1
+            if num_iter >= min_iter and curr_error - next_error <= 0.001:
                 break
             curr_error = next_error
-            num_iter += 1
 
     def update_targets(self, human_data, offset_to_ground=False):
         human_data = self._prepare_scaled_human_data(human_data, offset_to_ground)
@@ -573,27 +924,30 @@ class GeneralMotionRetargeting:
                 entry["task"].set_target(
                     mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos)
                 )
-            
+        return human_data
+
             
     def retarget(self, human_data, offset_to_ground=False):
         # Update the task targets
-        self.update_targets(human_data, offset_to_ground)
+        scaled_human = self.update_targets(human_data, offset_to_ground)
 
         freeze_base = self.tgt_robot in PLANAR_BASE_ROBOTS and bool(self.planar_base_cfg)
         base_qpos = None
         if freeze_base:
-            scaled_human = self._prepare_scaled_human_data(human_data, offset_to_ground)
             self._snap_planar_base_qpos(scaled_human, raw_human_data=human_data)
             base_qpos = self.configuration.data.qpos[:3].copy()
 
-        if self.use_ik_match_table1:
+        if self.mobile_upper_body_tasks is not None:
+            self._run_mobile_upper_body(human_data, base_qpos)
+            self._apply_mobile_joint_margin()
+        elif self.use_ik_match_table1:
             self._run_ik_tasks(
                 self.tasks1,
                 freeze_base=freeze_base,
                 base_qpos=base_qpos,
             )
 
-        if self.use_ik_match_table2:
+        if self.mobile_upper_body_tasks is None and self.use_ik_match_table2:
             self._run_ik_tasks(
                 self.tasks2,
                 freeze_base=freeze_base,
