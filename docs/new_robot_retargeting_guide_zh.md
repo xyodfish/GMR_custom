@@ -353,6 +353,33 @@ angle_error = acos(clamp(dot(u, v), -1, 1))
 
 内部流程建立这些不变量后，不需要在每一层反复静默兜底。错误应在真实输入边界尽早、明确地暴露。
 
+### 11.1 本仓库的轮式双臂配置协议
+
+本仓库目前使用 `planar_base` 与 `mobile_upper_body` 两段配置接入轮式双臂机器人。通用代码不依赖 Galbot 或 R1 Pro 的具体 link 名称：
+
+- `planar_base.frame_name/human_body`：底盘 frame 与人体 root；
+- `yaw_frame`：人体 heading 坐标约定；
+- `torso_frame/torso_human_body`：机器人躯干与人体 spine；
+- `torso_local_xy`：中性状态下，躯干相对底盘的平面锚点；
+- `torso_height_scale/range`：人体高度到机器人可达高度的投影；
+- `torso_orientation_limit_deg`：机器人可表达的相对 roll/pitch/yaw；
+- `arm_chains`：每条手臂的 shoulder/elbow/wrist robot frame 和 human body；
+- `arm_position_cost`：骨段方向所构造位置目标的权重；
+- `elbow_orientation_cost/wrist_orientation_cost`：可选姿态任务；设为零时无需提供末端 orientation frame；
+- `joint_posture_cost`：稳定轮组、冗余手臂或不希望参与补偿的关节；
+- `joint_limit_margin_deg`：输出距硬限位的最小安全角度；
+- `head_frame/head_human_body`：可选；没有独立头部的机器人应省略，而不是填写虚构 frame。
+
+当前协议要求平面机器人的前三个 `qpos` 严格为 `base_x/base_y/base_yaw`。新增模型时需要：
+
+1. 在 `ROBOT_XML_DICT`、`ROBOT_BASE_DICT` 和 `VIEWER_CAM_DISTANCE_DICT` 注册模型；
+2. 在 `PLANAR_BASE_ROBOTS` 声明该模型使用前三维平面底盘约定；
+3. 新建对应人体格式的 IK JSON，并填写以上两段配置；
+4. 从运行时模型 FK 测量上臂和前臂长度，不复制其他机器人的长度；
+5. 为该机器人增加合成不对称姿态、限位、未参与自由度和标准动作序列测试。
+
+Galbot One Golf 和 Galaxea R1 Pro 已共同验证该协议：前者有五轴腿腰和独立头部，后者有四轴躯干、三组舵轮且没有独立头部。R1 Pro 案例见 [Galaxea R1 Pro 轮式双臂重定向](galaxea_r1pro_retargeting.md)。
+
 ## 12. Galbot One Golf 案例带来的具体启示
 
 Galbot 适配前的配置复用了双足映射思路，把人体髋、膝旋转交给五轴腿腰链，并直接使用不匹配的手臂 frame 姿态。求解器能够输出有限关节角，但可视结果中手臂折到头顶、腿腰链承担了错误语义；在站立、摆臂、行走和出拳动作中，上臂/前臂方向误差曾达到约 `60°–84°`。

@@ -25,6 +25,7 @@
 
 # 新闻与更新
 
+- **2026-08-13：** 将 `mobile_upper_body` 扩展为可选 head/wrist 姿态的通用轮式双臂协议，并完成第二台机器人 **Galaxea R1 Pro** 的语义重定向；移除旧配置中左脚/髋/膝到轮式机构的错误映射。详见 [`docs/galaxea_r1pro_retargeting.md`](docs/galaxea_r1pro_retargeting.md)。
 - **2026-08-13：** 总结 Galbot 轮式双臂适配中的可复用经验，新增[新机器人重定向接入方法与验收指南](docs/new_robot_retargeting_guide_zh.md)：核心原则是按动作语义和机器人能力设计映射，并以模型、单帧、动作序列、定量指标和视觉对比共同验收。
 - **2026-08-12：** 完成 **Galbot One Golf**（`galbot_one_golf`）轮式双臂 SMPL-X 重定向：底盘复用 G1 根运动语义，五轴腿腰机构跟随受限上身姿态，双臂按人体骨段方向重建目标，并保留 2 度关节限位余量。案例见 [`docs/galbot_one_golf_retargeting.md`](docs/galbot_one_golf_retargeting.md)，可复用方法见[新机器人重定向接入方法与验收指南](docs/new_robot_retargeting_guide_zh.md)。
 - **2026-07-20：** 为轨迹优化类重定向器新增**关节限位安全余量**（`joint_limit_margin_deg`）：让提交的旋转关节离硬限位保持设定度数（0 关闭），可消除限位饱和且跟踪代价极小。Python（`OnlineBatchRetargeter`、`OnlineQpRetargeter`）与 C++（`gmr_online_qp_cli`、`gmr_batch_to_cli`、`gmr_retarget_viewer`）均支持。见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
@@ -77,7 +78,7 @@
 | 8 | Fourier N1 `fourier_n1` | TBD | ✅ | ✅ | TBD | TBD |
 | 9 | ENGINEAI PM01 `engineai_pm01` | TBD | ✅ | ✅ | TBD | TBD |
 | 10 | HighTorque Hi `hightorque_hi` | 头(2)+臂(2\*5)+腰(1)+腿(2\*6)=25 | ✅ | TBD | TBD | TBD |
-| 11 | Galaxea R1 Pro `galaxea_r1pro`（轮式人形） | 底盘(6)+躯干(4)+臂(2\*7)=24 | ✅ | TBD | TBD | TBD |
+| 11 | Galaxea R1 Pro `galaxea_r1pro`（轮式双臂） | 平面底盘(3)+舵轮(6)+躯干(4)+臂(2\*7)=27 | ✅ | TBD | TBD | TBD |
 | 21 | Galbot One Golf `galbot_one_golf`（轮式双臂） | 底盘(3)+腿腰(5)+臂(2\*7)+头(2)=24 | ✅ | TBD | TBD | TBD |
 | 12 | Kuavo `kuavo_s45` | 头(2)+臂(2\*7)+腿(2\*6)=28 | ✅ | TBD | TBD | TBD |
 | 13 | Berkeley Humanoid Lite `berkeley_humanoid_lite`（需进一步调参） | 腿(2\*6)+臂(2\*5)=22 | ✅ | TBD | TBD | TBD |

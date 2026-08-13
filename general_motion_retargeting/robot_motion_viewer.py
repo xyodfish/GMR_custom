@@ -14,6 +14,27 @@ def quat_wxyz_to_xyzw(quat_wxyz):
     return quat_wxyz[[1, 2, 3, 0]]
 
 
+def hide_collision_duplicate_geoms(model):
+    """Hide group-0 robot geoms only when group 1 provides visual meshes."""
+    has_group1_visual_mesh = any(
+        int(model.geom_group[gid]) == 1
+        and int(model.geom_type[gid]) == int(mj.mjtGeom.mjGEOM_MESH)
+        for gid in range(model.ngeom)
+    )
+    if not has_group1_visual_mesh:
+        return False
+
+    floor_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "floor")
+    for gid in range(model.ngeom):
+        if int(model.geom_group[gid]) != 0:
+            continue
+        if floor_id >= 0 and gid == floor_id:
+            continue
+        model.geom_group[gid] = 3
+
+    return True
+
+
 def draw_frame(
     pos,
     mat,
@@ -84,19 +105,17 @@ class RobotMotionViewer:
             )      
 
         self.viewer.opt.flags[mj.mjtVisFlag.mjVIS_TRANSPARENT] = bool(transparent_robot)
-        # g1_mocap duplicates robot meshes in group 0 (collision) and group 1 (visual).
-        # Hide non-floor group-0 geoms; keep floor + visual group.
-        floor_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, "floor")
-        for gid in range(self.model.ngeom):
-            if int(self.model.geom_group[gid]) != 0:
-                continue
-            if floor_id >= 0 and gid == floor_id:
-                continue
-            self.model.geom_group[gid] = 3
+        # Some models duplicate robot meshes in group 0 (collision) and group 1
+        # (visual). Only hide group 0 when that visual-mesh convention is present;
+        # models such as Galbot keep their only visual meshes in group 0.
+        hide_collision_duplicate_geoms(self.model)
+
         if hasattr(self.viewer.opt, "geomgroup"):
             self.viewer.opt.geomgroup[0] = 1  # floor
             self.viewer.opt.geomgroup[1] = 1  # visual meshes
             self.viewer.opt.geomgroup[3] = 0  # hidden collision duplicates
+
+        self._sync_camera(self.viewer.cam, self.camera_follow, reset_view=True)
 
         if self.record_video:
             assert video_path is not None, "Please provide video path for recording"
@@ -117,12 +136,13 @@ class RobotMotionViewer:
             self.record_cam.distance = self.viewer_cam_distance
             self.record_cam.lookat[:] = self.data.xpos[self.model.body(self.robot_base).id]
         
-    def _sync_camera(self, cam, follow: bool) -> None:
+    def _sync_camera(self, cam, follow: bool, reset_view: bool = False) -> None:
         if follow:
             cam.lookat[:] = self.data.xpos[self.model.body(self.robot_base).id]
-        cam.distance = self.viewer_cam_distance
-        cam.azimuth = self._record_cam_azimuth
-        cam.elevation = self._record_cam_elevation
+        if reset_view:
+            cam.distance = self.viewer_cam_distance
+            cam.azimuth = self._record_cam_azimuth
+            cam.elevation = self._record_cam_elevation
 
     def step(self, 
             # robot data
@@ -181,7 +201,7 @@ class RobotMotionViewer:
 
         if self.record_video:
             # Use a deterministic record camera; do not read interactive viewer.cam.
-            self._sync_camera(self.record_cam, follow_camera)
+            self._sync_camera(self.record_cam, follow_camera, reset_view=True)
             self.renderer.update_scene(self.data, camera=self.record_cam)
             img = self.renderer.render()
             self.mp4_writer.append_data(img)

@@ -395,18 +395,36 @@ class GeneralMotionRetargeting:
 
         cfg = self.mobile_upper_body_cfg
         torso_frame = cfg["torso_frame"]
-        head_frame = cfg["head_frame"]
+        head_frame = cfg.get("head_frame")
         arm_chains = cfg["arm_chains"]
-        required_frames = {torso_frame, head_frame}
+        if not arm_chains:
+            raise ValueError("mobile_upper_body requires at least one arm chain")
+
+        required_frames = {torso_frame}
+        if head_frame is not None:
+            if "head_human_body" not in cfg:
+                raise ValueError(
+                    "mobile_upper_body head_frame requires head_human_body"
+                )
+
+            required_frames.add(head_frame)
+
+        wrist_orientation_cost = float(cfg.get("wrist_orientation_cost", 2.0))
         for chain in arm_chains:
             required_frames.update(
                 {
                     chain["shoulder_frame"],
                     chain["elbow_frame"],
                     chain["wrist_frame"],
-                    chain["orientation_frame"],
                 }
             )
+            if wrist_orientation_cost > 0.0:
+                if "orientation_frame" not in chain:
+                    raise ValueError(
+                        "mobile_upper_body wrist orientation requires orientation_frame"
+                    )
+
+                required_frames.add(chain["orientation_frame"])
 
         missing_frames = sorted(required_frames - self.robot_body_names.keys())
         if missing_frames:
@@ -419,13 +437,15 @@ class GeneralMotionRetargeting:
             orientation_cost=float(cfg.get("torso_orientation_cost", 30.0)),
             lm_damping=1,
         )
-        head_task = mink.FrameTask(
-            frame_name=head_frame,
-            frame_type="body",
-            position_cost=0.0,
-            orientation_cost=float(cfg.get("head_orientation_cost", 3.0)),
-            lm_damping=1,
-        )
+        head_task = None
+        if head_frame is not None:
+            head_task = mink.FrameTask(
+                frame_name=head_frame,
+                frame_type="body",
+                position_cost=0.0,
+                orientation_cost=float(cfg.get("head_orientation_cost", 3.0)),
+                lm_damping=1,
+            )
 
         neutral_data = mj.MjData(self.model)
         neutral_data.qpos[:] = self.model.qpos0
@@ -444,6 +464,16 @@ class GeneralMotionRetargeting:
             if upper_length <= 0.0 or forearm_length <= 0.0:
                 raise ValueError(
                     f"mobile_upper_body arm chain has zero-length segment: {chain}"
+                )
+
+            orientation_task = None
+            if wrist_orientation_cost > 0.0:
+                orientation_task = mink.FrameTask(
+                    frame_name=chain["orientation_frame"],
+                    frame_type="body",
+                    position_cost=0.0,
+                    orientation_cost=wrist_orientation_cost,
+                    lm_damping=1,
                 )
 
             arm_tasks.append(
@@ -465,13 +495,7 @@ class GeneralMotionRetargeting:
                         orientation_cost=0.0,
                         lm_damping=1,
                     ),
-                    "orientation_task": mink.FrameTask(
-                        frame_name=chain["orientation_frame"],
-                        frame_type="body",
-                        position_cost=0.0,
-                        orientation_cost=float(cfg.get("wrist_orientation_cost", 2.0)),
-                        lm_damping=1,
-                    ),
+                    "orientation_task": orientation_task,
                 }
             )
 
@@ -491,19 +515,23 @@ class GeneralMotionRetargeting:
         torso_neutral_rotation = R.from_matrix(
             neutral_data.xmat[torso_id].reshape(3, 3)
         )
-        head_id = self.robot_body_names[head_frame]
-        head_neutral_rotation = R.from_matrix(
-            neutral_data.xmat[head_id].reshape(3, 3)
-        )
+        head_neutral_relative_rotation = None
+        if head_frame is not None:
+            head_id = self.robot_body_names[head_frame]
+            head_neutral_rotation = R.from_matrix(
+                neutral_data.xmat[head_id].reshape(3, 3)
+            )
+            head_neutral_relative_rotation = (
+                torso_neutral_rotation.inv() * head_neutral_rotation
+            )
+
         self.mobile_upper_body_tasks = {
             "torso": torso_task,
             "head": head_task,
             "arms": arm_tasks,
             "posture": posture_task,
             "torso_neutral_rotation": torso_neutral_rotation,
-            "head_neutral_relative_rotation": (
-                torso_neutral_rotation.inv() * head_neutral_rotation
-            ),
+            "head_neutral_relative_rotation": head_neutral_relative_rotation,
         }
         self._mobile_initialized = False
 
@@ -691,8 +719,10 @@ class GeneralMotionRetargeting:
         tasks = self.mobile_upper_body_tasks
         required_bodies = {
             cfg["torso_human_body"],
-            cfg["head_human_body"],
         }
+        if tasks["head"] is not None:
+            required_bodies.add(cfg["head_human_body"])
+
         for chain in tasks["arms"]:
             required_bodies.update(
                 {
@@ -735,27 +765,36 @@ class GeneralMotionRetargeting:
         torso_pos[2] = torso_height
         self._set_frame_task_target(tasks["torso"], torso_pos, torso_rotation)
 
-        human_torso_rotation = R.from_quat(
-            self._quat_wxyz_to_xyzw(raw_human_data[cfg["torso_human_body"]][1])
-        )
-        human_head_rotation = R.from_quat(
-            self._quat_wxyz_to_xyzw(raw_human_data[cfg["head_human_body"]][1])
-        )
-        head_relative_euler = (
-            human_torso_rotation.inv() * human_head_rotation
-        ).as_euler("XYZ")
-        head_limit = np.deg2rad(
-            np.asarray(cfg.get("head_orientation_limit_deg", [30.0, 30.0, 60.0]))
-        )
-        head_relative_euler = np.clip(
-            head_relative_euler, -head_limit, head_limit
-        )
-        head_rotation = (
-            torso_rotation
-            * R.from_euler("XYZ", head_relative_euler)
-            * tasks["head_neutral_relative_rotation"]
-        )
-        self._set_frame_task_target(tasks["head"], np.zeros(3), head_rotation)
+        if tasks["head"] is not None:
+            human_torso_rotation = R.from_quat(
+                self._quat_wxyz_to_xyzw(
+                    raw_human_data[cfg["torso_human_body"]][1]
+                )
+            )
+            human_head_rotation = R.from_quat(
+                self._quat_wxyz_to_xyzw(
+                    raw_human_data[cfg["head_human_body"]][1]
+                )
+            )
+            head_relative_euler = (
+                human_torso_rotation.inv() * human_head_rotation
+            ).as_euler("XYZ")
+            head_limit = np.deg2rad(
+                np.asarray(
+                    cfg.get("head_orientation_limit_deg", [30.0, 30.0, 60.0])
+                )
+            )
+            head_relative_euler = np.clip(
+                head_relative_euler, -head_limit, head_limit
+            )
+            head_rotation = (
+                torso_rotation
+                * R.from_euler("XYZ", head_relative_euler)
+                * tasks["head_neutral_relative_rotation"]
+            )
+            self._set_frame_task_target(
+                tasks["head"], np.zeros(3), head_rotation
+            )
 
     def _set_mobile_arm_targets(self, raw_human_data):
         tasks = self.mobile_upper_body_tasks
@@ -778,10 +817,9 @@ class GeneralMotionRetargeting:
             elbow_pos = shoulder_pos + chain["upper_length"] * upper_direction
             wrist_pos = elbow_pos + chain["forearm_length"] * forearm_direction
             elbow_rotation = self._mobile_body_rotation(
-                raw_human_data, elbow_body, chain["elbow_rotation_offset"]
-            )
-            wrist_rotation = self._mobile_body_rotation(
-                raw_human_data, wrist_body, chain["wrist_rotation_offset"]
+                raw_human_data,
+                elbow_body,
+                chain.get("elbow_rotation_offset", [1.0, 0.0, 0.0, 0.0]),
             )
             self._set_frame_task_target(
                 chain["elbow_task"], elbow_pos, elbow_rotation
@@ -789,14 +827,25 @@ class GeneralMotionRetargeting:
             self._set_frame_task_target(
                 chain["wrist_task"], wrist_pos, R.identity()
             )
-            self._set_frame_task_target(
-                chain["orientation_task"], np.zeros(3), wrist_rotation
-            )
+            if chain["orientation_task"] is not None:
+                wrist_rotation = self._mobile_body_rotation(
+                    raw_human_data,
+                    wrist_body,
+                    chain.get(
+                        "wrist_rotation_offset", [1.0, 0.0, 0.0, 0.0]
+                    ),
+                )
+                self._set_frame_task_target(
+                    chain["orientation_task"], np.zeros(3), wrist_rotation
+                )
 
     def _run_mobile_upper_body(self, raw_human_data, base_qpos):
         tasks = self.mobile_upper_body_tasks
         self._set_mobile_torso_targets(raw_human_data, base_qpos)
-        torso_tasks = [tasks["torso"], tasks["head"], tasks["posture"]]
+        torso_tasks = [tasks["torso"], tasks["posture"]]
+        if tasks["head"] is not None:
+            torso_tasks.insert(1, tasks["head"])
+
         if self._mobile_initialized:
             torso_max_iterations = int(
                 self.mobile_upper_body_cfg.get("torso_iterations", 20)
@@ -832,11 +881,14 @@ class GeneralMotionRetargeting:
             base_qpos=base_qpos,
         )
 
-        all_tasks = [tasks["torso"], tasks["head"]]
+        all_tasks = [tasks["torso"]]
+        if tasks["head"] is not None:
+            all_tasks.append(tasks["head"])
+
         for chain in tasks["arms"]:
-            all_tasks.extend(
-                [chain["elbow_task"], chain["wrist_task"], chain["orientation_task"]]
-            )
+            all_tasks.extend([chain["elbow_task"], chain["wrist_task"]])
+            if chain["orientation_task"] is not None:
+                all_tasks.append(chain["orientation_task"])
 
         all_tasks.append(tasks["posture"])
         for _ in range(int(self.mobile_upper_body_cfg.get("arm_target_passes", 2))):
