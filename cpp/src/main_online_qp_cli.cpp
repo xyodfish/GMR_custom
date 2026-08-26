@@ -203,6 +203,8 @@ int main(int argc, char** argv) {
             {"ms_per_frame", msPerFrame},
             {"n_frames", static_cast<int>(qFrames.size())},
             {"last_frame_ms", onlineQp.lastFrameMs()},
+            {"qp_fallback_count", onlineQp.qpFallbackCount()},
+            {"last_qp_error", onlineQp.lastQpError()},
         };
         out["torque_gate"] = {
             {"last_gate", onlineQp.lastTorqueGate()},

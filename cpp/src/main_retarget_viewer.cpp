@@ -827,12 +827,10 @@ bool advanceOnlineQpPlayer(MethodPlayer& player, const gmr::HumanFrameSequence& 
     if (!player.onlineQp->canStepArrived(flush)) {
         return false;
     }
-    // Map output → human-frame index before step pops (QP) or uses latest (fill-GMR).
-    const bool fillGmr     = player.onlineQp->arrivalFillGmrPending();
+    // Lookahead always commits the oldest buffered human frame.
     const std::size_t bufN = player.onlineQp->arrivalBufferSize();
     std::ptrdiff_t commitIdx =
-        fillGmr ? static_cast<std::ptrdiff_t>(player.onlineSrcIdx) - 1
-                : static_cast<std::ptrdiff_t>(player.onlineSrcIdx) - static_cast<std::ptrdiff_t>(bufN);
+        static_cast<std::ptrdiff_t>(player.onlineSrcIdx) - static_cast<std::ptrdiff_t>(bufN);
     if (commitIdx < 0) {
         commitIdx = 0;
     }
@@ -1441,7 +1439,6 @@ int main(int argc, char** argv) {
 
         auto feedOnlineQpArrival = [&](bool flush) -> bool {
             // Returns true if a robot command was produced this call.
-            // Lookahead fill: while buffer < horizon, stepArrived emits traditional GMR (no blank).
             if (!useOnlineQp || !onlineQp) {
                 return false;
             }
@@ -1469,7 +1466,7 @@ int main(int argc, char** argv) {
                 frameIdx = 1;
             }
         } else if (config.realtime && useOnlineQp) {
-            // First tick: push one arrived frame; causal / lookahead-fill both produce a pose.
+            // Lookahead intentionally produces no pose until its arrival window is full.
             feedOnlineQpArrival(/*flush=*/false);
         }
 

@@ -72,7 +72,7 @@ Online QP 窗口优化（主循环内不再依赖 mink 收敛）
 | Online QP **算法** | 因果短窗，可 `retargetFrame` 一帧一帧解 | — |
 | Viewer `online_qp` | **人体帧按到达喂入求解器**（文件只作数据源） | ~~整段预载再播~~（已删除） |
 | `causal` | 来一帧解一帧 | — |
-| `lookahead` | 到达缓冲；未满时用 **GMR 顶空窗**，满 `horizon` 后延迟 QP（\(H-1\) 帧） | 预读整段 motion 做前瞻 |
+| `lookahead` | 到达缓冲；满 `horizon` 后提交最老帧，严格延迟 \(H-1\) 帧 | 预读整段 motion 做前瞻 |
 
 文件仍可能一次性读进内存（JSON 回放源），但 **求解器状态机只看见已 push 的到达帧**。真 live（相机/mocap）调 `pushArrivedFrame` / `retargetFrame`。CLI 的 `retargetSequence` 也只是按帧 push 的便捷封装，**不再 peek 未到达帧**。
 
@@ -103,9 +103,9 @@ Frame t > bootstrap:
 `use_lookahead=True` 且走 **arrival API** 时：
 
 - 源（文件/传感器）每到一帧 → `pushArrivedFrame`  
-- **缓冲未满**（`< horizon`）：`stepArrived` 对**最新到达帧**跑传统 GMR（满 IK），**不 pop**，避免起播/延迟空窗  
+- **缓冲未满**（`< horizon`）：`canStepArrived()` 返回 false，不输出新的关节命令
 - **缓冲满**约 \(H\) 帧后 → `stepArrived` 用缓冲内未来帧做短窗 MPC，提交**最老一帧**的 `q`，再 pop  
-- 代价：QP 路径仍约 \(H-1\) 帧延迟；填充阶段用 GMR 顶上。切换瞬间可能有一次「从当前 GMR 跳到延迟 QP 提交」的位姿不连续（起播约几十毫秒）  
+- 代价：从启动开始始终承受约 \(H-1\) 帧延迟，但不会先输出未来帧、再回头提交旧帧
 - 前提：求解足够快，缓冲跟得上源速率  
 
 **已删除**：`beginSequence` / `stepSequence` 以及按整段 peek 未来帧的旧 lookahead。唯一实时入口是 `retargetFrame` 与 `pushArrivedFrame` / `stepArrived`。
@@ -123,6 +123,8 @@ lb \le \Delta q \le ub,\;\; G\Delta q \le h
 \]
 
 其中 \(P \approx H + \lambda I\)，\(H,g\) 由下列 Gauss-Newton 项累加（与 Batch TO 同源实现，见 `BatchTrajectoryRetargeter`）：
+
+C++ 实现会先把 seed 投影到关节/速度可行区间；固定历史帧不重复施加速度约束。QP 成功后使用受约束 primal solution，并转换成 `applyGnStepToWindow()` 的下降方向符号。求解失败时不再退回无约束 LDLT：已有安全命令则保持上一帧，并累计 `qp_fallback_count`；没有历史命令时错误继续上抛。
 
 | 项 | 作用 |
 |----|------|

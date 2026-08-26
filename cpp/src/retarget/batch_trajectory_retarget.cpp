@@ -199,10 +199,21 @@ namespace gmr {
         mjModel* model = impl_->model.get();
         const int m    = static_cast<int>(optVidx_.size());
         for (int i = 0; i < m; ++i) {
-            const int v                     = optVidx_[i];
-            const int j                     = model->dof_jntid[v];
-            qToOptV_[model->jnt_qposadr[j]] = i;
-            auto it                         = std::find(smoothQidx_.begin(), smoothQidx_.end(), model->jnt_qposadr[j]);
+            const int v     = optVidx_[i];
+            const int j     = model->dof_jntid[v];
+            const int jtype = model->jnt_type[j];
+            int qadr        = model->jnt_qposadr[j];
+            if (jtype == mjJNT_FREE) {
+                const int localV = v - model->jnt_dofadr[j];
+                if (localV >= 3) {
+                    continue;
+                }
+
+                qadr += localV;
+            }
+
+            qToOptV_[qadr] = i;
+            auto it        = std::find(smoothQidx_.begin(), smoothQidx_.end(), qadr);
             if (it != smoothQidx_.end()) {
                 smoothQ_.push_back(*it);
                 smoothV_.push_back(i);
@@ -682,7 +693,7 @@ namespace gmr {
 
     double BatchTrajectoryRetargeter::windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
                                                  const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
-                                                 double anchorWeight) const {
+                                                 double anchorWeight, double wGmr) const {
         const int nFrames = static_cast<int>(qWin.size());
         double cost       = 0.0;
         double fkCost     = 0.0;
@@ -690,6 +701,7 @@ namespace gmr {
         double accCost    = 0.0;
         double anchorCost = 0.0;
         double footCost   = 0.0;
+        double gmrCost    = 0.0;
 
         mjModel* model = impl_->model.get();
         mjData* data   = impl_->data.get();
@@ -760,13 +772,33 @@ namespace gmr {
             anchorCost                  = anchorWeight * delta.squaredNorm();
         }
 
-        cost += velCost + accCost + anchorCost;
+        if (wGmr > 0.0 && !qRef.empty()) {
+            for (int t = 0; t < nFrames; ++t) {
+                for (int v : optVidx_) {
+                    const int j = model->dof_jntid[v];
+                    int qadr = model->jnt_qposadr[j];
+                    if (model->jnt_type[j] == mjJNT_FREE) {
+                        const int localV = v - model->jnt_dofadr[j];
+                        if (localV >= 3) {
+                            continue;
+                        }
+
+                        qadr += localV;
+                    }
+
+                    const double error = qWin[t][qadr] - qRef[t][qadr];
+                    gmrCost += wGmr * error * error;
+                }
+            }
+        }
+
+        cost += velCost + accCost + anchorCost + gmrCost;
         cost += windowTorqueCost(qWin);
 
         if (!footActive) {
             if (config_.verbose && frameOffset == 0) {
                 std::cerr << "[batch-to-cpp] windowCost breakdown fk=" << fkCost << " vel=" << velCost << " acc=" << accCost
-                          << " foot=" << footCost << " total=" << cost << "\n";
+                          << " gmr=" << gmrCost << " foot=" << footCost << " total=" << cost << "\n";
             }
             return cost;
         }
@@ -840,7 +872,7 @@ namespace gmr {
         cost += footCost;
         if (config_.verbose && frameOffset == 0) {
             std::cerr << "[batch-to-cpp] windowCost breakdown fk=" << fkCost << " vel=" << velCost << " acc=" << accCost
-                      << " foot=" << footCost << " total=" << cost << "\n";
+                      << " gmr=" << gmrCost << " foot=" << footCost << " total=" << cost << "\n";
         }
 
         return cost;
@@ -1018,6 +1050,7 @@ namespace gmr {
         const int nFrames                 = static_cast<int>(qWin.size());
         const int m                       = static_cast<int>(optVidx_.size());  // 每帧参与优化的速度自由度数量
         const int nvar = nFrames * m;  // QP 总变量数 QP 变量不是完整 qpos，而是窗口内每帧的优化 dof 增量：
+        const double wGmr = qpOpts != nullptr ? qpOpts->wGmr : 0.0;
 
         // 确保这些 buffer 的尺寸够当前窗口 nFrames用 可以复用内存
         ensureGnWorkspace(nFrames);
@@ -1028,6 +1061,46 @@ namespace gmr {
 
         motionDtForTorque_ = qpOpts != nullptr ? qpOpts->motionDt : config_.motionDt;  // 设置 torque limit 相关计算用的时间步长 dt。
 
+        if (qpOpts != nullptr && (qpOpts->useJointLimits || qpOpts->useVelocityLimits)) {
+            const int pinFrames = std::max(0, std::min(qpOpts->pinFrames, nFrames - 1));
+            const double dqLimit = qpOpts->useVelocityLimits
+                                       ? qpOpts->dqMax * std::max(qpOpts->motionDt, 1e-6)
+                                       : std::numeric_limits<double>::infinity();
+            const double margin = std::max(0.0, qpOpts->jointLimitMarginDeg) * 0.017453292519943295;
+
+            for (int t = pinFrames; t < nFrames; ++t) {
+                const Eigen::VectorXd* qPrev = qpOpts->useVelocityLimits ? (t > 0 ? &qWin[t - 1] : qpOpts->qPrev) : nullptr;
+
+                for (int j = 0; j < model->njnt; ++j) {
+                    const int jointType = model->jnt_type[j];
+                    if (jointType != mjJNT_HINGE && jointType != mjJNT_SLIDE) {
+                        continue;
+                    }
+
+                    const int qadr = model->jnt_qposadr[j];
+                    double lower = qPrev != nullptr ? (*qPrev)[qadr] - dqLimit : -std::numeric_limits<double>::infinity();
+                    double upper = qPrev != nullptr ? (*qPrev)[qadr] + dqLimit : std::numeric_limits<double>::infinity();
+                    if (qpOpts->useJointLimits && model->jnt_limited[j] > 0) {
+                        double qmin = model->jnt_range[2 * j];
+                        double qmax = model->jnt_range[2 * j + 1];
+                        if (jointType == mjJNT_HINGE && qmax - qmin > 2.0 * margin) {
+                            qmin += margin;
+                            qmax -= margin;
+                        }
+
+                        lower = std::max(lower, qmin);
+                        upper = std::min(upper, qmax);
+                    }
+
+                    if (lower > upper) {
+                        throw QpSolveError("Online QP seed has no feasible joint/velocity interval");
+                    }
+
+                    qWin[t][qadr] = std::clamp(qWin[t][qadr], lower, upper);
+                }
+            }
+        }
+
         const bool footActive = config_.enableFootPenalties && !footBodyIds_.empty() &&
                                 (config_.wFootHeight > 0.0 || config_.wFootSlip > 0.0 || config_.wFootIkAnchor > 0.0 ||
                                  config_.wRootXyContact > 0.0 || config_.wContactJointAnchor > 0.0);
@@ -1037,7 +1110,7 @@ namespace gmr {
         const bool logCost = config_.verbose;
         double costBefore  = 0.0;
         if (logCost) {
-            costBefore = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
+            costBefore = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
         }
 
         // 这里更准确是 constrained Gauss-Newton / SCP 外循环，而不是严格标准 SQP：
@@ -1281,11 +1354,16 @@ namespace gmr {
                 for (int t = 0; t < nFrames; ++t) {
                     const int off = t * m;
                     for (int vi = 0; vi < m; ++vi) {
-                        const int v    = optVidx_[vi];
-                        const int j    = model->dof_jntid[v];
-                        const int qadr = model->jnt_qposadr[j];
-                        if (model->jnt_type[j] == mjJNT_FREE && qadr >= 3) {
-                            continue;
+                        const int v = optVidx_[vi];
+                        const int j = model->dof_jntid[v];
+                        int qadr = model->jnt_qposadr[j];
+                        if (model->jnt_type[j] == mjJNT_FREE) {
+                            const int localV = v - model->jnt_dofadr[j];
+                            if (localV >= 3) {
+                                continue;
+                            }
+
+                            qadr += localV;
                         }
                         const double err = qWin[t][qadr] - qRef[t][qadr];
                         ws.Hdense(off + vi, off + vi) += qpOpts->wGmr;
@@ -1352,7 +1430,7 @@ namespace gmr {
                 const double dt    = std::max(qpOpts->motionDt, 1e-6);
                 const double dqLim = qpOpts->dqMax * dt;
                 if (qpOpts->useVelocityLimits && !hingePairs.empty()) {
-                    for (int t = 0; t < nFrames; ++t) {
+                    for (int t = pinFrames; t < nFrames; ++t) {
                         const int off = t * m;
                         for (const auto& hp : hingePairs) {
                             if (t == 0) {
@@ -1404,20 +1482,18 @@ namespace gmr {
                     qp.ciUb[nBox + r]   = hVals[static_cast<std::size_t>(r)];
                 }
 
-                bool qpOk = false;
-                try {
-                    gmr::solver::QPSolver solver(qpOpts->qpBackend);
-                    const gmr::solver::QPOutput& out = solver.solve(qp);
-                    if (out.status == gmr::solver::QPStatus::kOptimal || out.status == gmr::solver::QPStatus::kMaxIterReached) {
-                        ws.dqFlat = out.x;
-                        qpOk      = true;
-                    }
-                } catch (...) {
-                    qpOk = false;
+                gmr::solver::QPSolver solver(qpOpts->qpBackend);
+                const gmr::solver::QPOutput& out = solver.solve(qp);
+                if (out.status != gmr::solver::QPStatus::kOptimal &&
+                    out.status != gmr::solver::QPStatus::kMaxIterReached) {
+                    throw QpSolveError("Online QP solve failed with status=" +
+                                       std::to_string(static_cast<int>(out.status)));
                 }
-                if (!qpOk) {
-                    ws.dqFlat = Hreg.ldlt().solve(ws.g);
-                }
+
+                // QP backends return the constrained increment. applyGnStepToWindow()
+                // subtracts its input because unconstrained paths store H^-1 g.
+                ws.dqFlat = -out.x;
+
                 if (pinFrames > 0) {
                     ws.dqFlat.head(pinFrames * m).setZero();
                 }
@@ -1443,12 +1519,12 @@ namespace gmr {
             if (alphas.size() == 1) {
                 applyGnStepToWindow(qWin, ws.dqFlat, alphas.front());
             } else if (config_.gnLineSearchMode == GnLineSearchMode::kArmijo) {
-                const double cost0 = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
+                const double cost0 = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
                 bool improved      = false;
                 for (double alpha : alphas) {
                     std::vector<Eigen::VectorXd> trial = qWin;
                     applyGnStepToWindow(trial, ws.dqFlat, alpha);
-                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight);
+                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
                     if (trialCost < cost0) {
                         qWin     = trial;
                         improved = true;
@@ -1460,11 +1536,11 @@ namespace gmr {
                 }
             } else {
                 std::vector<Eigen::VectorXd> bestQ = qWin;
-                double bestCost                    = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
+                double bestCost = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
                 for (double alpha : alphas) {
                     std::vector<Eigen::VectorXd> trial = qWin;
                     applyGnStepToWindow(trial, ws.dqFlat, alpha);
-                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight);
+                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
                     if (trialCost < bestCost) {
                         bestCost = trialCost;
                         bestQ    = trial;
@@ -1475,7 +1551,7 @@ namespace gmr {
         }
 
         if (logCost) {
-            const double costAfter = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight);
+            const double costAfter = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
             std::cerr << "[batch-to-cpp] GN window offset=" << frameOffset << " frames=" << nFrames << " cost " << costBefore << " -> "
                       << costAfter << " track=" << trackEntries_.size() << " targets0=" << (targets.empty() ? 0 : targets.front().size())
                       << " smoothV=" << smoothV_.size() << " smoothQ=" << smoothQ_.size() << " footBodies=" << footBodyIds_.size()

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -15,6 +16,11 @@
 #include "gmr/retarget/retargeter.h"
 
 namespace gmr {
+
+    class QpSolveError : public std::runtime_error {
+       public:
+        using std::runtime_error::runtime_error;
+    };
 
     /// IK factory context for optional parallel bootstrap / finalize in batch TO.
     struct BatchIkBootstrapContext {
@@ -143,7 +149,7 @@ namespace gmr {
        private:
         void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;
         double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets, const Eigen::VectorXd& anchor,
-                          const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight) const;
+                          const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight, double wGmr) const;
         Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared, bool offsetToGround);
         std::vector<Eigen::VectorXd> finalizeTrajectory(std::vector<Eigen::VectorXd> qOpt, Retargeter& retargeter,
                                                         const std::vector<HumanFrame>& prepared, bool offsetToGround,

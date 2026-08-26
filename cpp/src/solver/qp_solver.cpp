@@ -77,15 +77,16 @@ const QPOutput& QPSolver::solveQpoases(const QPData& qpData) {
   const qpOASES::returnValue ret = qpoasesSolver_->init(qpData.H.data(), qpData.g.data(), qpData.CI.data(), nullptr,
                                                         nullptr, qpData.ciLb.data(), qpData.ciUb.data(), nWSR);
 
-  if (ret == qpOASES::SUCCESSFUL_RETURN) {
-    output_.status = QPStatus::kOptimal;
-    qpoasesSolver_->getPrimalSolution(output_.x.data());
-    output_.iterations = 100 - nWSR;
+  if (ret == qpOASES::SUCCESSFUL_RETURN || ret == qpOASES::RET_MAX_NWSR_REACHED) {
+    output_.status = ret == qpOASES::SUCCESSFUL_RETURN ? QPStatus::kOptimal : QPStatus::kMaxIterReached;
+    if (qpoasesSolver_->getPrimalSolution(output_.x.data()) != qpOASES::SUCCESSFUL_RETURN) {
+      output_.status = QPStatus::kError;
+      return output_;
+    }
+
+    output_.iterations = nWSR;
   } else {
     output_.status = QPStatus::kError;
-    if (ret == qpOASES::RET_MAX_NWSR_REACHED) {
-      output_.status = QPStatus::kMaxIterReached;
-    }
     if (ret == qpOASES::RET_INIT_FAILED_INFEASIBILITY) {
       output_.status = QPStatus::kInfeasible;
     }

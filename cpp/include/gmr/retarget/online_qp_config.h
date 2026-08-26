@@ -45,7 +45,7 @@ namespace gmr {
         int torqueLimitGateMinOnFrames  = 5;
         int torqueLimitGateMinOffFrames = 10;
         double torqueLimitGateFloor     = 0.0;
-        // Default causal = true one-frame streaming. lookahead = short arrival-buffer delay only.
+        // Lookahead is a short arrival-buffer delay, not a full-sequence peek.
         bool useLookahead      = true;  // arrival-buffer lookahead (not full-sequence peek)
         std::string qpBackend  = "daqp";
         bool finalizeContact   = true;
