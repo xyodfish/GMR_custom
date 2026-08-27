@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Online QP-MPC retarget + viz.
+"""MPC-like short-horizon Online QP retargeting + visualization.
 
 Interactive default: **C++ streaming** via ``gmr_retarget_viewer --method online_qp``
 (compute one frame → render immediately, ~8 ms/f).

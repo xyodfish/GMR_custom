@@ -1193,7 +1193,7 @@ void printUsage() {
               << "Defaults: realtime=true (no precompute), loop=false, "
                  "show_human_overlay=true, method=ik.\n"
               << "batch_to: offline batch GN first, then playback (implies precompute; use mujoco_se3).\n"
-              << "online_qp: live frame feed → retargetFrame / arrival-buffer MPC (implies realtime).\n"
+              << "online_qp: live frame feed → causal / arrival-buffer short-horizon QP (implies realtime).\n"
               << "  Compare: --method ik,online_qp overlays solid + purple ghost (mujoco_se3 only).\n"
               << "  Lookahead compare time-aligns both robots to the same committed human frame.\n"
               << "  --online_qp_mode lookahead: short arrival-buffer delay (horizon frames, default);\n"
@@ -1277,7 +1277,7 @@ int main(int argc, char** argv) {
         std::unique_ptr<gmr::OnlineQpRetargeter> onlineQp;
         if (useOnlineQp) {
             gmr::OnlineQpConfig qpCfg = gmr::OnlineQpConfig::fromPresetName(config.onlineQpPreset);
-            // "lookahead" here means delayed short-horizon MPC on an arrival buffer, NOT
+            // "lookahead" here means delayed MPC-like short-horizon optimization on an arrival buffer, NOT
             // preloading the whole motion into the solver.
             qpCfg.useLookahead        = (config.onlineQpMode != "causal");
             if (config.onlineQpHorizon > 0) {

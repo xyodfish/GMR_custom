@@ -30,6 +30,7 @@
     <mesh name="right_wrist_roll_link" file="right_wrist_roll_link.stl"/>
     <mesh name="right_wrist_pitch_link" file="right_wrist_pitch_link.stl"/>
     <mesh name="right_wrist_yaw_link" file="right_wrist_yaw_link.stl"/>
+    <mesh name="right_hand_link" file="right_hand_link.stl"/>
     <mesh name="left_shoulder_pitch_link" file="left_shoulder_pitch_link.stl"/>
     <mesh name="left_shoulder_roll_link" file="left_shoulder_roll_link.stl"/>
     <mesh name="left_shoulder_yaw_link" file="left_shoulder_yaw_link.stl"/>
@@ -37,6 +38,7 @@
     <mesh name="left_wrist_roll_link" file="left_wrist_roll_link.stl"/>
     <mesh name="left_wrist_pitch_link" file="left_wrist_pitch_link.stl"/>
     <mesh name="left_wrist_yaw_link" file="left_wrist_yaw_link.stl"/>
+    <mesh name="left_hand_link" file="left_hand_link.stl"/>
     <mesh name="left_hip_pitch_link" file="left_hip_pitch_link.stl"/>
     <mesh name="left_hip_roll_link" file="left_hip_roll_link.stl"/>
     <mesh name="left_hip_yaw_link" file="left_hip_yaw_link.stl"/>
@@ -196,21 +198,25 @@
                     <joint name="left_elbow_joint" pos="0 0 0" axis="0 1 0" range="-0.986111 3.07178"/>
                     <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="left_elbow_link"/>
                     <geom name="left_elbow_yaw_collision" class="collision" size="0.035" fromto="0 -0.025 -0.01 0.1 -0.025 -0.01"/>
-                    <body name="left_wrist_roll_link" pos="0.13119 -0.021207 -0.013343">
+                    <body name="left_wrist_roll_link" pos="0.13119 -0.021497 -0.013769">
                       <inertial pos="0.0337195 0.00237482 0.00031544" quat="-0.242945 0.638599 0.286806 0.671499" mass="0.969837" diaginertia="0.000926999 0.000903832 0.000852829"/>
-                      <joint name="left_wrist_roll_joint" pos="0 0 0" axis="1 0 0" range="-2.61799 2.61799"/>
+                      <joint name="left_wrist_roll_joint" pos="0 0 0" axis="1 0 0" range="-2.618 2.618"/>
                       <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="left_wrist_roll_link"/>
-                      <body name="left_wrist_pitch_link" pos="0.080589 3.0398e-05 -0.0013317">
+                      <body name="left_wrist_pitch_link" pos="0.037994 0.031144 0.00045104">
                         <inertial pos="0.01821 0.0314035 0.0115687" quat="0.977698 -0.037912 -0.203807 0.033629" mass="0.946953" diaginertia="0.000918192 0.00082104 0.000648419"/>
-                        <joint name="left_wrist_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.436332 0.436332"/>
+                        <joint name="left_wrist_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.576 0.576"/>
                         <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="left_wrist_pitch_link"/>
                         <geom name="left_wrist_collision" class="collision" size="0.035" fromto="-0.03 0.0 0 0.05 0.0 0"/>
-                        <body name="left_wrist_yaw_link" pos="0.028225 0.00048901 0.00058318">
+                        <body name="left_wrist_yaw_link" pos="0.069283 -0.031045 -0.0006247">
                           <inertial pos="-0.0101173 0.00400457 -0.0173071" quat="0.554707 0.450933 0.585065 0.382961" mass="0.605752" diaginertia="0.000778685 0.00067164 0.000238076"/>
-                          <joint name="left_wrist_yaw_joint" pos="0 0 0" axis="0 0 1" range="-1.22173 1.22173"/>
+                          <joint name="left_wrist_yaw_joint" pos="0 0 0" axis="0 0 1" range="-1.22 1.22"/>
                           <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="left_wrist_yaw_link"/>
                           <site name="left_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="left_hand_collision" class="collision" size="0.035" rgba="0.2 0.6 0.2 0.2" fromto="0.1 -0.01 0.0 0.18 -0.01 0.0"/>
+                          <!-- Fixed hand visual (same as H2.urdf / PIVOT viewer); mesh was present but unused. -->
+                          <body name="left_hand_link" pos="0.05771524 0 -0.00014865">
+                            <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="left_hand_link"/>
+                          </body>
                         </body>
                       </body>
                     </body>
@@ -236,21 +242,25 @@
                     <joint name="right_elbow_joint" pos="0 0 0" axis="0 1 0" range="-0.986111 3.07178"/>
                     <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="right_elbow_link"/>
                     <geom name="right_elbow_yaw_collision" class="collision" size="0.035" fromto="0 0.025 -0.01 0.1 0.025 -0.01"/>
-                    <body name="right_wrist_roll_link" pos="0.13177 0.021197 -0.013782">
+                    <body name="right_wrist_roll_link" pos="0.13119 0.021497 -0.013769">
                       <inertial pos="0.0337195 -0.00237482 0.00031544" quat="0.242945 0.638599 -0.286806 0.671499" mass="0.969837" diaginertia="0.000926999 0.000903832 0.000852829"/>
-                      <joint name="right_wrist_roll_joint" pos="0 0 0" axis="1 0 0" range="-2.61799 2.61799"/>
+                      <joint name="right_wrist_roll_joint" pos="0 0 0" axis="1 0 0" range="-2.618 2.618"/>
                       <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="right_wrist_roll_link"/>
-                      <body name="right_wrist_pitch_link" pos="0.076351 -0.00015864 0.0011464">
+                      <body name="right_wrist_pitch_link" pos="0.037994 -0.031144 0.00045104">
                         <inertial pos="0.01821 -0.0314035 0.0115687" quat="0.977698 0.037912 -0.203807 -0.033629" mass="0.946953" diaginertia="0.000918192 0.00082104 0.000648419"/>
-                        <joint name="right_wrist_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.436332 0.436332"/>
+                        <joint name="right_wrist_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.576 0.576"/>
                         <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="right_wrist_pitch_link"/>
                         <geom name="right_wrist_collision" class="collision" size="0.035" fromto="-0.03 0.0 0 0.05 0.0 0"/>
-                        <body name="right_wrist_yaw_link" pos="0.028195 5.8414e-05 -0.0012184">
+                        <body name="right_wrist_yaw_link" pos="0.069283 0.031045 -0.0006247">
                           <inertial pos="-0.0101173 -0.00400457 -0.0173071" quat="0.382961 0.585065 0.450933 0.554707" mass="0.605752" diaginertia="0.000778685 0.00067164 0.000238076"/>
-                          <joint name="right_wrist_yaw_joint" pos="0 0 0" axis="0 0 1" range="-1.22173 1.22173"/>
+                          <joint name="right_wrist_yaw_joint" pos="0 0 0" axis="0 0 1" range="-1.22 1.22"/>
                           <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="right_wrist_yaw_link"/>
                           <site name="right_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="right_hand_collision" class="collision" size="0.035" rgba="0.2 0.6 0.2 0.2" fromto="0.1 0.01 0.0 0.18 0.01 0.0"/>
+                          <!-- Fixed hand visual (same as H2.urdf / PIVOT viewer); mesh was present but unused. -->
+                          <body name="right_hand_link" pos="0.05824125 0 -0.00017221">
+                            <geom class="visual" rgba="0.7 0.7 0.7 1" mesh="right_hand_link"/>
+                          </body>
                         </body>
                       </body>
                     </body>

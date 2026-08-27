@@ -49,11 +49,13 @@ windows: [0, H), [S, S+H), [2S, 2S+H), …
 
 ```text
 J(Q) = Σ_t  FK_tracking(q_t, human_target_t)     # pos + rot，权重来自 ik_match_table
-     + w_v   Σ_t || q_{t+1} - q_t ||²              # 速度平滑（默认不含 root XYZ）
-     + w_a   Σ_t || q_{t+2} - 2q_{t+1} + q_t ||²  # 加速度平滑
+     + w_v   Σ_t || s (q_{t+1} - q_t) ||²              # 速度平滑（默认不含 root XYZ）
+     + w_a   Σ_t || s²(q_{t+2} - 2q_{t+1} + q_t) ||²  # 加速度平滑
      + w_anchor || q_0 - q_0^prev ||²              # 窗间连续
      + foot_penalties(Q)                           # 见下节
 ```
+
+其中 `s = (1/30) / dt = motion_fps / 30`。速度、加速度和 foot-slip 帧间位移均按该尺度归一化，因此 30 FPS 下保持已有权重语义，不同输入帧率下仍对应相同物理时间导数。窗口大小和 stride 仍以帧数计。
 
 - **FK_tracking**：MuJoCo `xpos / xmat` vs IK config 解析的人体目标
 - **smooth_root_xyz**：默认 `False`，walking 时不平滑 floating-base 平移，避免拖慢 root

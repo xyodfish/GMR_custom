@@ -68,7 +68,7 @@ namespace gmr {
         HumanFrame prepareHumanFrame(const HumanFrame& frame, bool offsetToGround) const;
         FrameTargets targetsForPrepared(const HumanFrame& prepared) const;
 
-        /// One constrained GN/SCP window solve used by Online QP-MPC.
+        /// One constrained GN/SCP window solve used by MPC-like Online QP retargeting.
         struct QpWindowOptions {
             const Eigen::VectorXd* qPrev = nullptr;
             int pinFrames                = 0;

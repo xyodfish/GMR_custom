@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run C++ online QP-MPC from GVHMR .pt / SMPL-X / BVH."""
+"""Run C++ MPC-like short-horizon Online QP retargeting from GVHMR .pt / SMPL-X / BVH."""
 
 from __future__ import annotations
 

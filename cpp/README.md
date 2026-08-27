@@ -107,7 +107,7 @@ cpp/build/gmr_retarget_viewer \
   --realtime --loop
 ```
 
-**Online QP（在线）** — 每帧流式 QP-MPC，实时播放：
+**Online QP（在线）** — MPC-like 短时域联合重定向，实时播放：
 
 ```bash
 cpp/build/gmr_retarget_viewer \

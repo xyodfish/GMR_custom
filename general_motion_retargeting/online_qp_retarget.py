@@ -1,4 +1,4 @@
-"""Online QP-MPC retargeting.
+"""MPC-like short-horizon Online QP retargeting.
 
 Goal (product):
   - Keep absolute FK close to GMR (small loss OK)
@@ -10,7 +10,10 @@ Method:
   - Soft warmstart: light IK (guide, not hard blend)
   - Linearize FK (+ foot + temporal) → convex QP in tangent space
   - Box + velocity constraints via DAQP (qpsolvers)
-  - Receding horizon (default H=3 ≈ N=2); sequence mode uses lookahead
+  - Receding horizon (default H=3 ≈ N=2); sequence mode uses preview
+
+This is kinematic trajectory retargeting, not dynamics/control MPC: it has no
+plant dynamics, control input, or feedback from the robot's executed state.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from .motion_retarget import GeneralMotionRetargeting
 
 @dataclass
 class OnlineQpConfig:
-    """Online QP-MPC knobs."""
+    """MPC-like short-horizon Online QP retargeting knobs."""
 
     preset: Literal["default", "smooth", "anti_slip"] = "default"
     horizon: int = 3
@@ -576,7 +579,7 @@ class OnlineQpRetargeter(BatchTrajectoryRetargeter):
         human_frames: Sequence[dict],
         offset_to_ground: bool = False,
     ) -> np.ndarray:
-        """Full sequence; uses lookahead MPC when enabled."""
+        """Full sequence; uses delayed short-horizon preview when enabled."""
         return np.stack(
             list(self.iter_retarget_sequence(human_frames, offset_to_ground)), axis=0
         )

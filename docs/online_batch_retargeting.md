@@ -5,9 +5,9 @@
 在 **Batch TO**（离线多帧 GN，效果好、~30ms/帧 Python）与 **逐帧 IK**（~2ms/帧、实时但滑脚/抖动）之间，新增两类在线方法：
 
 1. **Online Batch-Lite**（GN）：见下文历史结果  
-2. **Online QP-MPC**（推荐实验）：线性化 FK → 带约束 QP（DAQP），目标是 **小幅 FK 损失 + 更平滑 + 明显减滑脚**
+2. **Online QP（MPC-like）**（推荐实验）：线性化 FK → 带约束 QP（DAQP），目标是 **小幅 FK 损失 + 更平滑 + 明显减滑脚**
 
-## Online QP-MPC（新）
+## Online QP（MPC-like 短时域重定向）
 
 > 完整算法文档见 [`online_qp_retargeting.md`](online_qp_retargeting.md)。
 
@@ -16,7 +16,7 @@
 - **C++（推荐实时）**：`cpp/` → `gmr_online_qp_cli`，封装 `scripts/tools/run_cpp_online_qp.py`
 
 - 保留 GMR 人点缩放 / link 目标；light IK 仅作 **软初值**（弱 `w_gmr`，无 `ik_blend`）
-- 滚动窗 H=3，lookahead MPC；钉住上一帧以耦合滑脚
+- 滚动窗 H=3，使用短时域 preview；钉住上一帧以耦合滑脚
 - 目标：FK + 时序平滑 + **强 foot slip** + 关节/速度盒约束
 - 求解：DAQP 约束 QP，多步 SQP + line search
 

@@ -16,7 +16,7 @@
 
 namespace gmr {
 
-    /// Online QP-MPC retargeting (true streaming only — no full-sequence preload).
+    /// MPC-like short-horizon Online QP retargeting (no dynamics/control feedback or full-sequence preload).
     class OnlineQpRetargeter {
        public:
         OnlineQpRetargeter(const std::filesystem::path& robotModelPath, IkConfig ikConfig, OnlineQpConfig config = {});

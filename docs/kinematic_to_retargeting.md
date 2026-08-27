@@ -6,7 +6,7 @@
 |------|--------|------|
 | **离线 batch 多帧 GN（推荐离线质量）** | `batch_trajectory_retarget.py` | [`batch_trajectory_retargeting.md`](batch_trajectory_retargeting.md) |
 | **在线 batch-lite（推荐在线）** | `online_batch_retarget.py` | [`online_batch_retargeting.md`](online_batch_retargeting.md) |
-| **在线 QP-MPC** | `online_qp_retarget.py` | [`online_batch_retargeting.md`](online_batch_retargeting.md)（Online QP 节） |
+| **在线 QP（MPC-like）** | `online_qp_retarget.py` | [`online_batch_retargeting.md`](online_batch_retargeting.md)（Online QP 节） |
 | 共享 FK / 边界工具（非独立算法） | `trajectory_optimization_retarget.py` | Batch TO 内部基类 |
 
 CLI 入口：

@@ -32,5 +32,5 @@ python scripts/analysis/benchmark_gvhmr_retarget_methods.py --pt_glob 'data/gvhm
 ```
 
 接地参数：`--contact_ground --foot_ground_limit`。详见 [`docs/contact_ground.md`](../docs/contact_ground.md)。
-Online QP-MPC 算法说明：[`docs/online_qp_retargeting.md`](../docs/online_qp_retargeting.md)。
+Online QP（MPC-like 短时域重定向）算法说明：[`docs/online_qp_retargeting.md`](../docs/online_qp_retargeting.md)。
 方法对比：[`docs/retarget_methods_comparison.md`](../docs/retarget_methods_comparison.md)。

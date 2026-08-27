@@ -186,3 +186,196 @@ class DualRobotMotionViewer:
         if self.record_video:
             self.mp4_writer.close()
             print(f"Video saved to {self.video_path}")
+
+
+def _delete_named_geom(spec: mj.MjSpec, name: str) -> None:
+    geom = spec.geom(name)
+    if geom is not None:
+        spec.delete(geom)
+
+
+def build_two_robot_model(
+    xml_a: str | os.PathLike,
+    xml_b: str | os.PathLike,
+    *,
+    prefix_b: str = "b_",
+    tint_b: tuple[float, float, float, float] | None = (0.35, 0.55, 0.95, 1.0),
+) -> tuple[mj.MjModel, int, int]:
+    """Attach two (possibly different) robots into one model.
+
+    Returns ``(model, nq_a, nq_b)``. Robot-B bodies/joints are prefixed with ``prefix_b``.
+    Robot-B floor geom is removed so only robot-A's ground plane remains.
+    """
+    xml_a = str(xml_a)
+    xml_b = str(xml_b)
+    spec_a = mj.MjSpec.from_file(xml_a)
+    spec_b = mj.MjSpec.from_file(xml_b)
+    _delete_named_geom(spec_b, "floor")
+    frame = spec_a.worldbody.add_frame(name="robot_b_frame")
+    spec_a.attach(spec_b, prefix=prefix_b, frame=frame)
+    model = spec_a.compile()
+
+    # Free-joint qpos blocks: first free joint is A, second (prefixed) is B.
+    free_adrs: list[int] = []
+    for j in range(model.njnt):
+        if model.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
+            free_adrs.append(int(model.jnt_qposadr[j]))
+
+    if len(free_adrs) != 2:
+        raise RuntimeError(f"Expected 2 free joints, found {len(free_adrs)}")
+
+    nq_a = free_adrs[1] - free_adrs[0]
+    nq_b = model.nq - free_adrs[1]
+    if free_adrs[0] != 0:
+        raise RuntimeError(f"Unexpected free-joint layout: {free_adrs}, nq={model.nq}")
+
+    if tint_b is not None:
+        rgba = np.asarray(tint_b, dtype=np.float32)
+        for gid in range(model.ngeom):
+            body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, model.geom_bodyid[gid])
+            if body_name and body_name.startswith(prefix_b):
+                # Keep alpha from tint; preserve near-zero alpha collision-only geoms.
+                if float(model.geom_rgba[gid][3]) > 1e-3:
+                    model.geom_rgba[gid] = rgba
+
+    return model, nq_a, nq_b
+
+
+class TwoRobotMotionViewer:
+    """Playback two different robots side-by-side in one MuJoCo window."""
+
+    def __init__(
+        self,
+        robot_a: str,
+        robot_b: str,
+        *,
+        motion_fps: float = 30.0,
+        offset_b: tuple[float, float, float] = (0.0, 1.2, 0.0),
+        tint_b: tuple[float, float, float, float] | None = (0.35, 0.55, 0.95, 1.0),
+        prefix_b: str = "b_",
+        record_video: bool = False,
+        video_path: str | None = None,
+        video_width: int = 1280,
+        video_height: int = 720,
+        keyboard_callback=None,
+    ):
+        self.robot_a = robot_a
+        self.robot_b = robot_b
+        self.prefix_b = prefix_b
+        self.offset_b = np.asarray(offset_b, dtype=float)
+        self.motion_fps = float(motion_fps)
+        self.rate_limiter = RateLimiter(frequency=self.motion_fps, warn=False)
+        self.record_video = record_video
+        self._record_cam_azimuth = 135.0
+        self._record_cam_elevation = -15.0
+
+        xml_a = ROBOT_XML_DICT[robot_a]
+        xml_b = ROBOT_XML_DICT[robot_b]
+        self.model, self.nq_a, self.nq_b = build_two_robot_model(
+            xml_a, xml_b, prefix_b=prefix_b, tint_b=tint_b
+        )
+        self.data = mj.MjData(self.model)
+        self.base_a = ROBOT_BASE_DICT[robot_a]
+        self.base_b = f"{prefix_b}{ROBOT_BASE_DICT[robot_b]}"
+        cam_a = VIEWER_CAM_DISTANCE_DICT.get(robot_a, 3.0)
+        cam_b = VIEWER_CAM_DISTANCE_DICT.get(robot_b, 3.0)
+        self.viewer_cam_distance = max(float(cam_a), float(cam_b)) + 1.0
+
+        mj.mj_forward(self.model, self.data)
+        self.viewer = mjv.launch_passive(
+            model=self.model,
+            data=self.data,
+            show_left_ui=False,
+            show_right_ui=False,
+            key_callback=keyboard_callback,
+        )
+
+        # Hide collision-group duplicates when visual meshes exist (G1-style).
+        floor_gid = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, "floor")
+        has_group1 = any(int(self.model.geom_group[g]) == 1 for g in range(self.model.ngeom))
+        if has_group1:
+            for gid in range(self.model.ngeom):
+                if int(self.model.geom_group[gid]) != 0:
+                    continue
+
+                if floor_gid >= 0 and gid == floor_gid:
+                    continue
+
+                self.model.geom_group[gid] = 3
+
+        if hasattr(self.viewer.opt, "geomgroup"):
+            self.viewer.opt.geomgroup[0] = 1
+            self.viewer.opt.geomgroup[1] = 1
+            self.viewer.opt.geomgroup[2] = 1  # H2 visual class uses group 2
+            self.viewer.opt.geomgroup[3] = 0
+
+        self.viewer.cam.distance = self.viewer_cam_distance
+        self.viewer.cam.azimuth = self._record_cam_azimuth
+        self.viewer.cam.elevation = self._record_cam_elevation
+
+        if self.record_video:
+            assert video_path is not None, "Provide video_path when record_video=True"
+            self.video_path = video_path
+            video_dir = os.path.dirname(self.video_path)
+            if video_dir and not os.path.exists(video_dir):
+                os.makedirs(video_dir)
+
+            self.mp4_writer = imageio.get_writer(self.video_path, fps=self.motion_fps)
+            print(f"Recording video to {self.video_path}")
+            self.renderer = mj.Renderer(self.model, height=video_height, width=video_width)
+            self.record_cam = mj.MjvCamera()
+            self.record_cam.type = mj.mjtCamera.mjCAMERA_FREE
+            self.record_cam.azimuth = self._record_cam_azimuth
+            self.record_cam.elevation = self._record_cam_elevation
+            self.record_cam.distance = self.viewer_cam_distance
+
+    def _lookat_midpoint(self) -> np.ndarray:
+        pa = self.data.xpos[self.model.body(self.base_a).id]
+        pb = self.data.xpos[self.model.body(self.base_b).id]
+        return 0.5 * (pa + pb)
+
+    def step(
+        self,
+        qpos_a: np.ndarray,
+        qpos_b: np.ndarray,
+        *,
+        rate_limit: bool = True,
+        follow_camera: bool = True,
+    ) -> None:
+        qa = np.asarray(qpos_a, dtype=float).reshape(-1)
+        qb = np.asarray(qpos_b, dtype=float).reshape(-1)
+        if qa.shape[0] != self.nq_a or qb.shape[0] != self.nq_b:
+            raise ValueError(
+                f"Expected qpos lengths ({self.nq_a}, {self.nq_b}), "
+                f"got ({qa.shape[0]}, {qb.shape[0]})"
+            )
+
+        self.data.qpos[: self.nq_a] = qa
+        self.data.qpos[self.nq_a : self.nq_a + self.nq_b] = qb
+        self.data.qpos[self.nq_a : self.nq_a + 3] += self.offset_b
+        self.data.qvel[:] = 0.0
+        mj.mj_forward(self.model, self.data)
+
+        if follow_camera:
+            self.viewer.cam.lookat[:] = self._lookat_midpoint()
+
+        self.viewer.sync()
+        if rate_limit:
+            self.rate_limiter.sleep()
+
+        if self.record_video:
+            if follow_camera:
+                self.record_cam.lookat[:] = self._lookat_midpoint()
+
+            self.record_cam.distance = self.viewer_cam_distance
+            self.record_cam.azimuth = self._record_cam_azimuth
+            self.record_cam.elevation = self._record_cam_elevation
+            self.renderer.update_scene(self.data, camera=self.record_cam)
+            self.mp4_writer.append_data(self.renderer.render())
+
+    def close(self) -> None:
+        self.viewer.close()
+        time.sleep(0.3)
+        if self.record_video:
+            self.mp4_writer.close()
+            print(f"Video saved to {self.video_path}")

@@ -15,7 +15,7 @@
 | 0 | **GMR 逐帧 IK（基线）** | `GeneralMotionRetargeting` / C++ `Retargeter` | Py + C++ | 在线 | 每帧任务空间 IK + 可选 contact/ground | `scripts/gvhmr/to_robot.py`，`gmr_retarget_cli` |
 | 1 | **Batch TO** | `BatchTrajectoryRetargeter` | Py + C++ | **离线** | 整段滑动窗多帧 GN，质量最好之一 | `to_robot_batch.py`，`gmr_batch_to_cli` |
 | 2 | **Online Batch-Lite** | `OnlineBatchRetargeter` | Python | 在线 | 因果递推窗 GN（Batch TO 的在线版） | `to_robot_online_batch.py` |
-| 3 | **Online QP-MPC** | `OnlineQpRetargeter` | Py + C++ | 在线 | 线性化 FK → DAQP 约束 QP，强脚滑惩罚 | `to_robot_online_qp.py`，`gmr_online_qp_cli`，viewer `--method online_qp` |
+| 3 | **Online QP（MPC-like）** | `OnlineQpRetargeter` | Py + C++ | 在线 | preview 短窗内线性化 FK → DAQP 约束 QP，强脚滑惩罚 | `to_robot_online_qp.py`，`gmr_online_qp_cli`，viewer `--method online_qp` |
 
 已弃用 / 非算法：
 
@@ -109,7 +109,7 @@
 | 方法 | Python | C++ | 参数 / CLI |
 |------|:------:|:---:|------------|
 | Online Batch-Lite (`OnlineBatchRetargeter`) | ✅ | — | `OnlineBatchConfig.joint_limit_margin_deg`；`to_robot_online_batch.py --joint_limit_margin_deg` |
-| Online QP-MPC (`OnlineQpRetargeter`) | ✅ | ✅ | `OnlineQpConfig.joint_limit_margin_deg`；`gmr_online_qp_cli --joint_limit_margin_deg`；viewer `--online_qp_joint_limit_margin_deg` |
+| Online QP（MPC-like，`OnlineQpRetargeter`） | ✅ | ✅ | `OnlineQpConfig.joint_limit_margin_deg`；`gmr_online_qp_cli --joint_limit_margin_deg`；viewer `--online_qp_joint_limit_margin_deg` |
 | Batch TO (`BatchTrajectoryRetargeter`) | — | ✅ | `BatchTrajectoryConfig.jointLimitMarginDeg`；`gmr_batch_to_cli --joint_limit_margin_deg`；viewer `--batch_to_joint_limit_margin_deg` |
 | 逐帧 IK（基线） | — | — | 未接入 |
 
@@ -181,7 +181,7 @@ cpp/build/gmr_batch_to_cli --gmr_root . --robot unitree_g1 \
                     └──────┬──────┘
            ┌───────────────┼───────────────┐
            ▼               ▼               ▼
-   Online Batch      Online QP-MPC    Batch TO
+   Online Batch      Online QP       Batch TO
    (online, Py)      (online, Py/C++) (offline, Py/C++)
            │               │               │
            └───────────────┴───────────────┘

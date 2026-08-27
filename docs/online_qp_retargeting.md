@@ -1,8 +1,10 @@
-# Online QP-MPC 重定向（OnlineQpRetargeter）
+# Online QP：MPC-like 短时域重定向（OnlineQpRetargeter）
 
-本文描述仓库中的 **Online QP-MPC + GMR** 基线算法：在保留 GMR 人体缩放与 link 跟踪目标的前提下，用滚动时域约束 QP 改善平滑度与足滑，供在线 / 近实时部署。
+本文描述仓库中的 **Online QP + GMR** 基线算法：在保留 GMR 人体缩放与 link 跟踪目标的前提下，用滚动时域约束 QP 改善平滑度与足滑，供在线 / 近实时部署。
 
-| | 逐帧 GMR IK | Online Batch-Lite | **Online QP-MPC（本文）** | Batch TO |
+这里的 “MPC-like” 只表示有限 preview、滑动时间窗、多帧联合优化和逐帧提交。它是运动学轨迹重定向，不包含机器人动力学状态转移、控制量优化或真实执行状态反馈，因此不宣称是控制意义上的 MPC。
+
+| | 逐帧 GMR IK | Online Batch-Lite | **Online QP（MPC-like，本文）** | Batch TO |
 |--|-------------|-------------------|---------------------------|----------|
 | 类 | `GeneralMotionRetargeting` | `OnlineBatchRetargeter` | **`OnlineQpRetargeter`** | `BatchTrajectoryRetargeter` |
 | 时域 | 单帧 | 因果短窗 GN | **因果 / lookahead 短窗 QP** | 离线长窗 GN |
@@ -104,7 +106,7 @@ Frame t > bootstrap:
 
 - 源（文件/传感器）每到一帧 → `pushArrivedFrame`  
 - **缓冲未满**（`< horizon`）：`canStepArrived()` 返回 false，不输出新的关节命令
-- **缓冲满**约 \(H\) 帧后 → `stepArrived` 用缓冲内未来帧做短窗 MPC，提交**最老一帧**的 `q`，再 pop  
+- **缓冲满**约 \(H\) 帧后 → `stepArrived` 用缓冲内未来帧做 MPC-like 短窗联合优化，提交**最老一帧**的 `q`，再 pop
 - 代价：从启动开始始终承受约 \(H-1\) 帧延迟，但不会先输出未来帧、再回头提交旧帧
 - 前提：求解足够快，缓冲跟得上源速率  
 
@@ -134,6 +136,8 @@ C++ 实现会先把 seed 投影到关节/速度可行区间；固定历史帧不
 | foot penalties | 接触相脚高、脚滑、脚 IK 锚、可选 root/关节锚 |
 | GMR prior | 弱拉向 light-IK seed（`w_gmr`） |
 | （可选）torque-limit | 默认关；见第 7 节 |
+
+时间项使用 `s = (1/30) / dt = motion_fps / 30` 做帧率归一化：速度残差乘 `s`，加速度残差乘 `s²`，foot-slip 帧间位移也乘 `s`。这保留了 30 FPS 下已有 preset 的权重语义，同时避免同一动作仅因采样帧率变化而改变时间正则强度。
 
 求解器：`qpsolvers` + **DAQP**（`qp_solver="daqp"`）。  
 多步 SQP + 简单 line search（`gn_max_step` 限制单步）。
