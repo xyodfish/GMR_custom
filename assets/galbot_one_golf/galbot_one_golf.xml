@@ -60,7 +60,8 @@
       <joint name="base_y" type="slide" axis="0 1 0" class="galbot_base"/>
       <joint name="base_yaw" type="hinge" axis="0 0 1" class="galbot_base"/>
       <inertial pos="0.02644 -0.00449 0.07524" mass="8.04" diaginertia="0.331314 0.295737 0.195089"/>
-      <geom type="mesh" mesh="base_link" class="galbot_visual"/>
+      <geom name="chassis_inner_core" type="ellipsoid" size="0.22 0.22 0.09" pos="0 0 0.105" rgba="0.12 0.14 0.18 1" contype="0" conaffinity="0"/>
+      <geom name="chassis_visual" type="mesh" mesh="base_link" rgba="0.95 0.97 1 1" contype="0" conaffinity="0"/>
       <body name="leg_link1" pos="0.134 0 0.1325" quat="-0.135279 0.135279 0.694046 0.694046">
             <inertial pos="0.21883 0.00219 -0.0046" quat="0.505152 0.498924 0.496342 0.499541" mass="5.28" diaginertia="0.464407 0.460835 0.0244475"/>
             <joint name="leg_joint1" pos="0 0 0" axis="0 0 1" range="0 0.9374" actuatorfrcrange="-169 169"/>
@@ -89,6 +90,7 @@
                         <inertial pos="0 0.09558 0.01015" quat="0.711079 0.703112 -9.72025e-05 0.000106239" mass="1.43" diaginertia="0.0193788 0.018954 0.00157693"/>
                         <joint name="left_arm_joint2" pos="0 0 0" axis="0 0 1" range="-1.60806 1.60806" actuatorfrcrange="-60 60"/>
                         <geom type="mesh" mesh="left_arm_link2" class="galbot_visual"/>
+                        <geom name="left_upper_arm_connector" type="capsule" fromto="0 0 0 0 0.35 0" size="0.032" class="galbot_visual"/>
                         <body name="left_arm_link3" pos="0 0.35 0" quat="-0.353553 0.353553 -0.612372 -0.612372">
                           <inertial pos="0 0.00088 -0.04936" quat="0.999988 0.00482265 -4.48243e-05 0.000919392" mass="1.43" diaginertia="0.0118746 0.0117886 0.00137053"/>
                           <joint name="left_arm_joint3" pos="0 0 0" axis="0 0 1" range="-2.91697 2.91697" actuatorfrcrange="-30 30"/>
@@ -96,6 +98,7 @@
                           <body name="left_arm_link4" quat="0 0 -0.707107 -0.707107">
                             <inertial pos="0 0.05614 0.01917" quat="0.731102 0.682267 -0.000806243 0.000896297" mass="1.1" diaginertia="0.00701388 0.00652468 0.00159506"/>
                             <joint name="left_arm_joint4" pos="0 0 0" axis="0 0 1" range="-2.56799 1.86986" actuatorfrcrange="-30 30"/>
+                            <geom name="left_forearm_connector" type="capsule" fromto="0 0 0 0 0.36 0" size="0.03" class="galbot_visual"/>
                             <body name="left_arm_link5" pos="0 0.36 0" quat="0.707107 -0.707107 0 0">
                               <inertial pos="0.00044 0.00169 -0.13306" quat="0.999789 0.00430973 -0.00121985 0.0200303" mass="1.15" diaginertia="0.0258109 0.0253041 0.00115654"/>
                               <joint name="left_arm_joint5" pos="0 0 0" axis="0 0 1" range="-2.91697 2.91697" actuatorfrcrange="-10 10"/>
@@ -124,6 +127,7 @@
                         <inertial pos="0 -0.09558 0.01015" quat="0.711079 0.703112 -9.72025e-05 0.000106239" mass="1.43" diaginertia="0.0193788 0.018954 0.00157693"/>
                         <joint name="right_arm_joint2" pos="0 0 0" axis="0 0 1" range="-1.60806 1.60806" actuatorfrcrange="-60 60"/>
                         <geom type="mesh" mesh="right_arm_link2" class="galbot_visual"/>
+                        <geom name="right_upper_arm_connector" type="capsule" fromto="0 0 0 0 -0.35 0" size="0.032" class="galbot_visual"/>
                         <body name="right_arm_link3" pos="0 -0.35 0" quat="0.353553 0.353553 0.612372 -0.612372">
                           <inertial pos="0 -0.00088 -0.04936" quat="0.999988 0.00482265 -4.48243e-05 0.000919392" mass="1.43" diaginertia="0.0118746 0.0117886 0.00137053"/>
                           <joint name="right_arm_joint3" pos="0 0 0" axis="0 0 1" range="-2.91697 2.91697" actuatorfrcrange="-30 30"/>
@@ -131,6 +135,7 @@
                           <body name="right_arm_link4" quat="0 0 -0.707107 0.707107">
                             <inertial pos="0 -0.05614 0.01917" quat="0.731102 0.682267 -0.000806243 0.000896297" mass="1.1" diaginertia="0.00701388 0.00652468 0.00159506"/>
                             <joint name="right_arm_joint4" pos="0 0 0" axis="0 0 1" range="-1.86986 2.56799" actuatorfrcrange="-30 30"/>
+                            <geom name="right_forearm_connector" type="capsule" fromto="0 0 0 0 -0.36 0" size="0.03" class="galbot_visual"/>
                             <body name="right_arm_link5" pos="0 -0.36 0" quat="0 0 -0.707107 0.707107">
                               <inertial pos="0.00044 0.00169 -0.13306" quat="0.999789 0.00430973 -0.00121985 0.0200303" mass="1.15" diaginertia="0.0258109 0.0253041 0.00115654"/>
                               <joint name="right_arm_joint5" pos="0 0 0" axis="0 0 1" range="-2.91697 2.91697" actuatorfrcrange="-10 10"/>
@@ -154,11 +159,11 @@
                     <body name="head_link1" pos="0 0.37711 0" quat="0.5 -0.5 -0.5 -0.5">
                       <inertial pos="-2e-05 0.00709 -0.0559" quat="0.999935 0.00088794 -0.000283206 0.0113452" mass="1.5695" diaginertia="0.00690033 0.00683299 0.00116966"/>
                       <joint name="head_joint1" pos="0 0 0" axis="0 0 1" range="-1.5208 1.5208" actuatorfrcrange="-4 4"/>
-                      <geom type="mesh" mesh="head_link1" class="galbot_visual"/>
+                      <geom name="head_neck_visual" type="mesh" mesh="head_link1" rgba="0.16 0.18 0.22 1" contype="0" conaffinity="0"/>
                       <body name="head_link2" quat="0.707107 -0.707107 0 0">
                         <inertial pos="0.01835 -0.03348 0.00642" quat="0.294427 0.648964 -0.27986 0.643302" mass="0.81" diaginertia="5.5308e-06 5.16366e-06 2.55379e-06"/>
                         <joint name="head_joint2" pos="0 0 0" axis="0 0 1" range="-0.214346 0.493599" actuatorfrcrange="-4 4"/>
-                        <geom type="mesh" mesh="head_link2" class="galbot_visual"/>
+                        <geom name="head_shell_visual" type="mesh" mesh="head_link2" rgba="0.95 0.97 1 1" contype="0" conaffinity="0"/>
                       </body>
                     </body>
                   </body>

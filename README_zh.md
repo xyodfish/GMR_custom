@@ -16,6 +16,7 @@
 - 关节限位安全余量（`joint_limit_margin_deg`）：让提交的旋转关节始终离机械硬限位保持可配置的度数，改善可跟踪性。已接入轨迹优化类重定向器（Python `OnlineBatchRetargeter` / `OnlineQpRetargeter`；C++ `OnlineQpRetargeter` 与离线 `BatchTrajectoryRetargeter`）。详见 [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md)。
 - Python 侧将 `contact_ground`、实验性 `foot_ground_limit`、`fix_robot_penetration` 解耦，便于独立评估各模式。
 - 提供 BVH 重定向的离线接触模式分析工具，输出穿透、root 抬升、脚滑、IK 跟踪误差等 CSV/JSON 汇总。
+- 提供纯 C++ 的[机器人关节轨迹到机器人关节轨迹](docs/robot_joint_trajectory_retargeting.md)入口：Unitree G1 qpos 经 canonical SMPL-X 代理、Batch TO 和接触感知后处理转换到 H2 等目标机器人；运行时不依赖 Python 或 Puppet。
 
 > [!NOTE]
 > 如需支持新机器人或新人体动作格式，请将机器人文件（`.xml`、`.urdf` 及 mesh）/ 人体动作数据发送至 <a href="mailto:lastyanjieze@gmail.com">Yanjie Ze</a> 或提交 issue，我们会尽快支持。请确保所提供机器人文件可在本仓库开源。

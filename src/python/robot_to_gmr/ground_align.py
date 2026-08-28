@@ -234,12 +234,12 @@ def flatten_stance_feet_ik(
     *,
     iterations: int = 10,
     step: float = 0.7,
-    ground_z: float = 0.0,
+    smooth_window: int = 9,
 ) -> np.ndarray:
-    """For contacting feet: ankle IK so sole is level (+Z up) and near ``ground_z``.
+    """Level contacting feet with ankle orientation IK.
 
-    Fixes robots whose foot IK EE is proximal to ankle pitch (pitch stuck at 0), and
-    reduces one-foot float after a root-only ground snap.
+    The correction is smoothed through contact transitions; root-Z ground snapping
+    remains responsible for sole height.
     """
     import mujoco
 
@@ -249,29 +249,26 @@ def flatten_stance_feet_ik(
     if qpos.ndim != 2 or qpos.shape[1] != model.nq:
         raise ValueError(f"Expected qpos [T,{model.nq}], got {qpos.shape}")
 
+    if len(contacts) != qpos.shape[0]:
+        raise ValueError(
+            f"Expected one contact entry per frame ({qpos.shape[0]}), got {len(contacts)}"
+        )
+
+    if smooth_window < 1 or smooth_window % 2 == 0:
+        raise ValueError(f"smooth_window must be a positive odd integer, got {smooth_window}")
+
     body_ids = _resolve_foot_body_ids(model)
     side_of = {"left_foot": "left", "right_foot": "right"}
     joint_ids = {name: _resolve_ankle_hinge_ids(model, side_of[name]) for name in body_ids}
     if not any(joint_ids.values()):
         return qpos
 
-    # Prefer foot collision geoms when present; else mesh sole on foot body.
-    try:
-        all_foot_geoms = _foot_collision_geom_ids(model)
-    except ValueError:
-        all_foot_geoms = []
-
-    geoms_by_side = {
-        "left_foot": [i for i in all_foot_geoms if _geom_side_label(model, i) == "left"],
-        "right_foot": [i for i in all_foot_geoms if _geom_side_label(model, i) == "right"],
-    }
-
-    jacp = np.zeros((3, model.nv))
     jacr = np.zeros((3, model.nv))
     up = np.array([0.0, 0.0, 1.0])
+    desired = qpos.copy()
 
     for t in range(qpos.shape[0]):
-        data.qpos[:] = qpos[t]
+        data.qpos[:] = desired[t]
         for _ in range(iterations):
             mujoco.mj_forward(model, data)
             moved = False
@@ -287,28 +284,13 @@ def flatten_stance_feet_ik(
                 R = data.xmat[body_id].reshape(3, 3)
                 foot_z = np.asarray(R[:, 2], dtype=np.float64)
                 ori_err = np.cross(foot_z, up)
-
-                # Height: sole to ground.
-                if geoms_by_side[name]:
-                    sole = _sole_z(model, data, geoms_by_side[name])
-                else:
-                    sole = _mesh_sole_z_for_body(model, data, body_id)
-
-                height_err = float(ground_z - sole)
-                if float(np.linalg.norm(ori_err)) < 1e-3 and abs(height_err) < 1e-4:
+                if float(np.linalg.norm(ori_err)) < 1e-4:
                     continue
 
-                mujoco.mj_jacBody(model, data, jacp, jacr, body_id)
+                mujoco.mj_jacBody(model, data, None, jacr, body_id)
                 cols = [int(model.jnt_dofadr[j]) for j in j_ids]
                 j_ori = jacr[:, cols]
-                j_z = jacp[2:3, cols]
-                # Height dominates: floating stance feet are the visual bug; ori is soft.
-                A = np.vstack([10.0 * j_z, 0.25 * j_ori])
-                b = np.array(
-                    [10.0 * height_err, 0.25 * ori_err[0], 0.25 * ori_err[1], 0.25 * ori_err[2]],
-                    dtype=np.float64,
-                )
-                dq, *_ = np.linalg.lstsq(A, b, rcond=None)
+                dq, *_ = np.linalg.lstsq(j_ori, ori_err, rcond=None)
                 for j_id, delta in zip(j_ids, dq):
                     qadr = int(model.jnt_qposadr[j_id])
                     data.qpos[qadr] = float(data.qpos[qadr] + step * delta)
@@ -321,7 +303,29 @@ def flatten_stance_feet_ik(
             if not moved:
                 break
 
-        qpos[t] = data.qpos
+        desired[t] = data.qpos
+
+    half = smooth_window // 2
+    kernel = np.full(smooth_window, 1.0 / smooth_window)
+    correction = desired - qpos
+    frame_indices = np.arange(qpos.shape[0])
+    for name, ids in joint_ids.items():
+        contact_frames = np.flatnonzero([frame.get(name, False) for frame in contacts])
+        if not contact_frames.size:
+            continue
+
+        for joint_id in ids:
+            qadr = int(model.jnt_qposadr[joint_id])
+            continuous = np.interp(
+                frame_indices,
+                contact_frames,
+                correction[contact_frames, qadr],
+            )
+            padded = np.pad(continuous, (half, half), mode="edge")
+            qpos[:, qadr] += np.convolve(padded, kernel, mode="valid")
+            if model.jnt_limited[joint_id]:
+                lo, hi = model.jnt_range[joint_id]
+                qpos[:, qadr] = np.clip(qpos[:, qadr], lo, hi)
 
     return qpos
 
@@ -413,7 +417,10 @@ def snap_robot_qpos_to_ground(
 
     ``per_frame``: each frame's lowest sole is placed on the ground (best for walk viz).
     ``global_min``: one offset from the clip-wide minimum sole height.
-    If ``contacts`` is provided with ``per_frame``, only contacting feet are used when available.
+    If ``contacts`` is provided with ``per_frame``, frames with either foot in
+    contact are grounded using the lower sole. The root-Z correction is
+    interpolated through airborne intervals, preserving jump height. Airborne
+    frames are lifted only when the interpolated correction would penetrate the floor.
     """
     import mujoco
 
@@ -423,55 +430,48 @@ def snap_robot_qpos_to_ground(
     if qpos.ndim != 2 or qpos.shape[1] != model.nq:
         raise ValueError(f"Expected qpos [T,{model.nq}], got {qpos.shape}")
 
+    if contacts is not None and len(contacts) != qpos.shape[0]:
+        raise ValueError(
+            f"Expected one contact entry per frame ({qpos.shape[0]}), got {len(contacts)}"
+        )
+
     try:
         geom_ids = _foot_collision_geom_ids(model, foot_geom_substr)
-        left_geoms = [i for i in geom_ids if _geom_side_label(model, i) == "left"]
-        right_geoms = [i for i in geom_ids if _geom_side_label(model, i) == "right"]
         use_mesh = False
     except ValueError:
         body_ids = _resolve_foot_body_ids(model)
         use_mesh = True
-        left_geoms = []
-        right_geoms = []
         geom_ids = []
 
+    contact_aware = contacts is not None and mode == "per_frame"
     sole_z = np.zeros(qpos.shape[0], dtype=np.float64)
     for t in range(qpos.shape[0]):
         data.qpos[:] = qpos[t]
         mujoco.mj_forward(model, data)
         if use_mesh:
             use_bodies = list(body_ids.values())
-            if contacts is not None and t < len(contacts) and mode == "per_frame":
-                use_bodies = []
-                if contacts[t].get("left_foot", False):
-                    use_bodies.append(body_ids["left_foot"])
-
-                if contacts[t].get("right_foot", False):
-                    use_bodies.append(body_ids["right_foot"])
-
-                if not use_bodies:
-                    use_bodies = list(body_ids.values())
-
             sole_z[t] = min(_mesh_sole_z_for_body(model, data, bid) for bid in use_bodies)
         else:
-            use_ids = geom_ids
-            if contacts is not None and t < len(contacts) and mode == "per_frame":
-                ids: list[int] = []
-                if contacts[t].get("left_foot", False):
-                    ids.extend(left_geoms)
-
-                if contacts[t].get("right_foot", False):
-                    ids.extend(right_geoms)
-
-                if ids:
-                    use_ids = ids
-
-            sole_z[t] = _sole_z(model, data, use_ids)
+            sole_z[t] = _sole_z(model, data, geom_ids)
 
     if mode == "global_min":
         qpos[:, 2] -= float(np.min(sole_z))
     elif mode == "per_frame":
-        qpos[:, 2] -= sole_z
+        if contact_aware:
+            contact_frames = np.flatnonzero(
+                [
+                    frame.get("left_foot", False) or frame.get("right_foot", False)
+                    for frame in contacts
+                ]
+            )
+            if contact_frames.size:
+                correction = np.interp(
+                    np.arange(qpos.shape[0]), contact_frames, sole_z[contact_frames]
+                )
+                correction = np.minimum(correction, sole_z)
+                qpos[:, 2] -= correction
+        else:
+            qpos[:, 2] -= sole_z
     else:
         raise ValueError(f"Unsupported snap mode: {mode}")
 

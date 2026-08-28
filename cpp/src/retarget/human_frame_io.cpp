@@ -65,6 +65,19 @@ namespace gmr {
             return frame;
         }
 
+        std::unordered_map<std::string, bool> parseFootContacts(const nlohmann::json& contactJson) {
+            if (!contactJson.is_object() || !contactJson.contains("left_foot") || !contactJson.contains("right_foot")) {
+                throw std::runtime_error("Each contact frame must contain boolean left_foot and right_foot fields.");
+            }
+
+            if (!contactJson.at("left_foot").is_boolean() || !contactJson.at("right_foot").is_boolean()) {
+                throw std::runtime_error("Foot contact values must be boolean.");
+            }
+
+            return {{"left_foot", contactJson.at("left_foot").get<bool>()},
+                    {"right_foot", contactJson.at("right_foot").get<bool>()}};
+        }
+
     }  // namespace
 
     HumanFrameSequence loadHumanFrameSequence(const std::filesystem::path& filePath) {
@@ -134,6 +147,19 @@ namespace gmr {
         if (sequence.frames.empty()) {
             throw std::runtime_error("No frames parsed from JSON.");
         }
+
+        if (root.is_object() && root.contains("contacts")) {
+            const auto& contactsNode = root.at("contacts");
+            if (!contactsNode.is_array() || contactsNode.size() != sequence.frames.size()) {
+                throw std::runtime_error("contacts must be an array with one entry per human frame.");
+            }
+
+            sequence.footContacts.reserve(contactsNode.size());
+            for (const auto& contactJson : contactsNode) {
+                sequence.footContacts.push_back(parseFootContacts(contactJson));
+            }
+        }
+
         if (sequence.fps <= 0) {
             sequence.fps = 30;
         }

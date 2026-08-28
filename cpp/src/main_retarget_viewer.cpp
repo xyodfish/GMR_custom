@@ -800,7 +800,8 @@ MethodPlayer buildMethodPlayer(const std::string& method, const ViewerConfig& co
                   << std::endl;
         gmr::BatchIkBootstrapContext ikBootstrap{gmr::RetargetBackend::kMujoco, opts, opts.contactGround};
         player.precomputed =
-            batchTo.retargetBatch(playSequence.frames, *player.retargeter, config.offsetToGround, &ikBootstrap);
+            batchTo.retargetBatch(playSequence.frames, *player.retargeter, config.offsetToGround, &ikBootstrap,
+                                  playSequence.footContacts.empty() ? nullptr : &playSequence.footContacts);
         if (!player.precomputed.empty()) {
             player.qpos = player.precomputed.front();
             player.retargeter->setQpos(player.qpos);
@@ -1248,6 +1249,9 @@ int main(int argc, char** argv) {
         if (config.maxFrames > 0 &&
             playSequence.frames.size() > static_cast<std::size_t>(config.maxFrames)) {
             playSequence.frames.resize(static_cast<std::size_t>(config.maxFrames));
+            if (!playSequence.footContacts.empty()) {
+                playSequence.footContacts.resize(static_cast<std::size_t>(config.maxFrames));
+            }
         }
 
         const std::vector<std::string> methods = parseViewerMethods(config.method);
@@ -1322,7 +1326,8 @@ int main(int argc, char** argv) {
             const auto tBatch = std::chrono::steady_clock::now();
             gmr::BatchIkBootstrapContext ikBootstrap{gmr::RetargetBackend::kMujoco, opts, opts.contactGround};
             precomputedQpos =
-                batchTo.retargetBatch(playSequence.frames, *retargeter, config.offsetToGround, &ikBootstrap);
+                batchTo.retargetBatch(playSequence.frames, *retargeter, config.offsetToGround, &ikBootstrap,
+                                      playSequence.footContacts.empty() ? nullptr : &playSequence.footContacts);
             const double batchMs =
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tBatch).count();
             const gmr::BatchTrajectoryProfile prof = batchTo.lastProfile();

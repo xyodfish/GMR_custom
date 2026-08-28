@@ -199,46 +199,57 @@ def build_two_robot_model(
     xml_b: str | os.PathLike,
     *,
     prefix_b: str = "b_",
+    offset_b: tuple[float, float, float] = (0.0, 1.2, 0.0),
     tint_b: tuple[float, float, float, float] | None = (0.35, 0.55, 0.95, 1.0),
-) -> tuple[mj.MjModel, int, int]:
+) -> tuple[mj.MjModel, int, int, int | None]:
     """Attach two (possibly different) robots into one model.
 
-    Returns ``(model, nq_a, nq_b)``. Robot-B bodies/joints are prefixed with ``prefix_b``.
-    Robot-B floor geom is removed so only robot-A's ground plane remains.
+    Returns ``(model, nq_a, nq_b, free_root_qadr_b)``. Robot-B bodies/joints are
+    prefixed with ``prefix_b``. Robot-B floor geom is removed so only robot-A's
+    ground plane remains.
     """
     xml_a = str(xml_a)
     xml_b = str(xml_b)
+    model_a = mj.MjModel.from_xml_path(xml_a)
+    model_b = mj.MjModel.from_xml_path(xml_b)
+    nq_a = int(model_a.nq)
+    nq_b = int(model_b.nq)
+    free_roots_b = [
+        int(model_b.jnt_qposadr[j])
+        for j in range(model_b.njnt)
+        if model_b.jnt_type[j] == mj.mjtJoint.mjJNT_FREE
+    ]
+    if len(free_roots_b) > 1:
+        raise RuntimeError(f"Robot B has multiple free joints: {free_roots_b}")
+
+    free_root_qadr_b = free_roots_b[0] if free_roots_b else None
     spec_a = mj.MjSpec.from_file(xml_a)
     spec_b = mj.MjSpec.from_file(xml_b)
     _delete_named_geom(spec_b, "floor")
     frame = spec_a.worldbody.add_frame(name="robot_b_frame")
+    if free_root_qadr_b is None:
+        frame.pos = np.asarray(offset_b, dtype=float)
+
     spec_a.attach(spec_b, prefix=prefix_b, frame=frame)
     model = spec_a.compile()
 
-    # Free-joint qpos blocks: first free joint is A, second (prefixed) is B.
-    free_adrs: list[int] = []
-    for j in range(model.njnt):
-        if model.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
-            free_adrs.append(int(model.jnt_qposadr[j]))
-
-    if len(free_adrs) != 2:
-        raise RuntimeError(f"Expected 2 free joints, found {len(free_adrs)}")
-
-    nq_a = free_adrs[1] - free_adrs[0]
-    nq_b = model.nq - free_adrs[1]
-    if free_adrs[0] != 0:
-        raise RuntimeError(f"Unexpected free-joint layout: {free_adrs}, nq={model.nq}")
+    if model.nq != nq_a + nq_b:
+        raise RuntimeError(
+            f"Unexpected attached qpos layout: A={nq_a}, B={nq_b}, combined={model.nq}"
+        )
 
     if tint_b is not None:
-        rgba = np.asarray(tint_b, dtype=np.float32)
+        tint = np.asarray(tint_b, dtype=np.float32)
         for gid in range(model.ngeom):
             body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, model.geom_bodyid[gid])
             if body_name and body_name.startswith(prefix_b):
-                # Keep alpha from tint; preserve near-zero alpha collision-only geoms.
-                if float(model.geom_rgba[gid][3]) > 1e-3:
-                    model.geom_rgba[gid] = rgba
+                source = model.geom_rgba[gid].copy()
+                if float(source[3]) > 1e-3:
+                    shade = np.clip(float(np.mean(source[:3])) / 0.84, 0.16, 1.15)
+                    model.geom_rgba[gid, :3] = np.minimum(tint[:3] * shade, 1.0)
+                    model.geom_rgba[gid, 3] = tint[3] * source[3]
 
-    return model, nq_a, nq_b
+    return model, nq_a, nq_b, free_root_qadr_b
 
 
 class TwoRobotMotionViewer:
@@ -271,8 +282,12 @@ class TwoRobotMotionViewer:
 
         xml_a = ROBOT_XML_DICT[robot_a]
         xml_b = ROBOT_XML_DICT[robot_b]
-        self.model, self.nq_a, self.nq_b = build_two_robot_model(
-            xml_a, xml_b, prefix_b=prefix_b, tint_b=tint_b
+        self.model, self.nq_a, self.nq_b, self.free_root_qadr_b = build_two_robot_model(
+            xml_a,
+            xml_b,
+            prefix_b=prefix_b,
+            offset_b=offset_b,
+            tint_b=tint_b,
         )
         self.data = mj.MjData(self.model)
         self.base_a = ROBOT_BASE_DICT[robot_a]
@@ -290,17 +305,30 @@ class TwoRobotMotionViewer:
             key_callback=keyboard_callback,
         )
 
-        # Hide collision-group duplicates when visual meshes exist (G1-style).
+        # Hide each robot's group-0 collision geoms only when that same robot has
+        # dedicated visual geoms. Some robots, including Galbot, render from group 0.
         floor_gid = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, "floor")
-        has_group1 = any(int(self.model.geom_group[g]) == 1 for g in range(self.model.ngeom))
-        if has_group1:
-            for gid in range(self.model.ngeom):
-                if int(self.model.geom_group[gid]) != 0:
-                    continue
+        geom_is_b = []
+        has_visual_group = {False: False, True: False}
+        for gid in range(self.model.ngeom):
+            body_name = mj.mj_id2name(
+                self.model,
+                mj.mjtObj.mjOBJ_BODY,
+                self.model.geom_bodyid[gid],
+            ) or ""
+            is_b = body_name.startswith(prefix_b)
+            geom_is_b.append(is_b)
+            if int(self.model.geom_group[gid]) in (1, 2):
+                has_visual_group[is_b] = True
 
-                if floor_gid >= 0 and gid == floor_gid:
-                    continue
+        for gid in range(self.model.ngeom):
+            if int(self.model.geom_group[gid]) != 0:
+                continue
 
+            if floor_gid >= 0 and gid == floor_gid:
+                continue
+
+            if has_visual_group[geom_is_b[gid]]:
                 self.model.geom_group[gid] = 3
 
         if hasattr(self.viewer.opt, "geomgroup"):
@@ -352,7 +380,10 @@ class TwoRobotMotionViewer:
 
         self.data.qpos[: self.nq_a] = qa
         self.data.qpos[self.nq_a : self.nq_a + self.nq_b] = qb
-        self.data.qpos[self.nq_a : self.nq_a + 3] += self.offset_b
+        if self.free_root_qadr_b is not None:
+            begin = self.nq_a + self.free_root_qadr_b
+            self.data.qpos[begin : begin + 3] += self.offset_b
+
         self.data.qvel[:] = 0.0
         mj.mj_forward(self.model, self.data)
 

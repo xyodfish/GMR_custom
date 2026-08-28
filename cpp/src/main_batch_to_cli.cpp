@@ -220,9 +220,15 @@ int main(int argc, char** argv) {
             frameCount = std::min(frameCount, static_cast<std::size_t>(maxFramesInput));
         }
         std::vector<gmr::HumanFrame> frames(sequence.frames.begin(), sequence.frames.begin() + frameCount);
+        gmr::BatchTrajectoryRetargeter::FootContactSchedule footContacts;
+        if (!sequence.footContacts.empty()) {
+            footContacts.assign(sequence.footContacts.begin(), sequence.footContacts.begin() + frameCount);
+        }
 
         const auto t0 = std::chrono::steady_clock::now();
-        std::vector<Eigen::VectorXd> qBatch = batchTo.retargetBatch(frames, *ikRetargeter, offsetToGround, &ikBootstrap);
+        const auto* footContactSchedule = footContacts.empty() ? nullptr : &footContacts;
+        std::vector<Eigen::VectorXd> qBatch =
+            batchTo.retargetBatch(frames, *ikRetargeter, offsetToGround, &ikBootstrap, footContactSchedule);
         const double wallMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 

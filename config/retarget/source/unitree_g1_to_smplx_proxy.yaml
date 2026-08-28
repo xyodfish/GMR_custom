@@ -1,0 +1,182 @@
+# Unitree G1 joint trajectory -> SMPL-X-compatible semantic proxy.
+schema_version: unitree_g1_to_smplx_v1
+source_robot: unitree_g1
+canonical_model: smplx_neutral_1p8m
+canonical_height_m: 1.8
+source_robot_reference_height_m: 1.22
+robot_model: assets/unitree_g1/g1_mocap_29dof.xml
+fps_default: 30
+root_type: free
+scale_root_xy: false
+
+coordinate_convention:
+  units: m
+  up_axis: z
+  handedness: right
+  quaternion_order: wxyz
+  lafan1_csv_root_quat: xyzw
+
+joint_order_lafan1_csv:
+  - root_x
+  - root_y
+  - root_z
+  - root_qx
+  - root_qy
+  - root_qz
+  - root_qw
+  - left_hip_pitch_joint
+  - left_hip_roll_joint
+  - left_hip_yaw_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_hip_pitch_joint
+  - right_hip_roll_joint
+  - right_hip_yaw_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - waist_yaw_joint
+  - waist_roll_joint
+  - waist_pitch_joint
+  - left_shoulder_pitch_joint
+  - left_shoulder_roll_joint
+  - left_shoulder_yaw_joint
+  - left_elbow_joint
+  - left_wrist_roll_joint
+  - left_wrist_pitch_joint
+  - left_wrist_yaw_joint
+  - right_shoulder_pitch_joint
+  - right_shoulder_roll_joint
+  - right_shoulder_yaw_joint
+  - right_elbow_joint
+  - right_wrist_roll_joint
+  - right_wrist_pitch_joint
+  - right_wrist_yaw_joint
+
+sites:
+  pelvis:
+    source_body: pelvis
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.5, 0.5, 0.5, 0.5]
+    position_weight: 100.0
+    orientation_weight: 20.0
+
+  spine3:
+    source_body: torso_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.5, 0.5, 0.5, 0.5]
+    position_weight: 10.0
+    orientation_weight: 10.0
+
+  head:
+    source_body: head_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.5, 0.5, 0.5, 0.5]
+    position_weight: 5.0
+    orientation_weight: 5.0
+
+  left_hip:
+    source_body: left_hip_roll_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.4267755048530407, 0.5637931078484661, 0.5637931078484661, 0.4267755048530407]
+    position_weight: 5.0
+    orientation_weight: 5.0
+
+  right_hip:
+    source_body: right_hip_roll_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.4267755048530407, 0.5637931078484661, 0.5637931078484661, 0.4267755048530407]
+    position_weight: 5.0
+    orientation_weight: 5.0
+
+  left_knee:
+    source_body: left_knee_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.5, 0.5, 0.5, 0.5]
+    position_weight: 10.0
+    orientation_weight: 5.0
+
+  right_knee:
+    source_body: right_knee_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.5, 0.5, 0.5, 0.5]
+    position_weight: 10.0
+    orientation_weight: 5.0
+
+  left_foot:
+    source_body: left_toe_link
+    position_offset_local: [0.0, -0.02, 0.0]
+    orientation_offset_wxyz: [0.5, 0.5, 0.5, 0.5]
+    position_weight: 100.0
+    orientation_weight: 10.0
+
+  right_foot:
+    source_body: right_toe_link
+    position_offset_local: [0.0, 0.02, 0.0]
+    orientation_offset_wxyz: [0.5, 0.5, 0.5, 0.5]
+    position_weight: 100.0
+    orientation_weight: 10.0
+
+  left_shoulder:
+    source_body: left_shoulder_yaw_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.70710678, 0.0, 0.70710678, 0.0]
+    position_weight: 10.0
+    orientation_weight: 5.0
+
+  right_shoulder:
+    source_body: right_shoulder_yaw_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.0, -0.70710678, 0.0, -0.70710678]
+    position_weight: 10.0
+    orientation_weight: 5.0
+
+  left_elbow:
+    source_body: left_elbow_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [1.0, 0.0, 0.0, 0.0]
+    position_weight: 10.0
+    orientation_weight: 5.0
+
+  right_elbow:
+    source_body: right_elbow_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.0, 0.0, 0.0, 1.0]
+    position_weight: 10.0
+    orientation_weight: 5.0
+
+  left_wrist:
+    source_body: left_wrist_yaw_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [1.0, 0.0, 0.0, 0.0]
+    position_weight: 100.0
+    orientation_weight: 5.0
+
+  right_wrist:
+    source_body: right_wrist_yaw_link
+    position_offset_local: [0.0, 0.0, 0.0]
+    orientation_offset_wxyz: [0.0, 0.0, 0.0, 1.0]
+    position_weight: 100.0
+    orientation_weight: 5.0
+
+canonical_bones_m:
+  pelvis_to_spine3: [0.0, 0.0, 0.30]
+  pelvis_to_left_hip: [0.0, 0.10, -0.06]
+  pelvis_to_right_hip: [0.0, -0.10, -0.06]
+  thigh: 0.55
+  shank: 0.52
+  pelvis_to_left_shoulder: [0.0, 0.20, 0.42]
+  pelvis_to_right_shoulder: [0.0, -0.20, 0.42]
+  upper_arm: 0.30
+  forearm: 0.28
+
+contact:
+  foot_bodies: [left_foot, right_foot]
+  height_threshold_m: 0.06
+  speed_threshold_mps: 0.45
+  min_contact_frames: 3
+  lock_contact_z_to_ground: false
+
+smoothing:
+  window: 5

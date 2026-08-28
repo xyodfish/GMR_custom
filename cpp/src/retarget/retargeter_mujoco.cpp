@@ -33,6 +33,16 @@ namespace gmr {
         Eigen::Quaterniond targetRot = Eigen::Quaterniond::Identity();
     };
 
+    struct MobileArmRuntime {
+        MobileArmChainConfig config;
+        int shoulderBodyId = -1;
+        double upperLength = 0.0;
+        double forearmLength = 0.0;
+        MujocoTaskRuntime elbowTask;
+        MujocoTaskRuntime wristTask;
+        std::optional<MujocoTaskRuntime> orientationTask;
+    };
+
     struct MujocoRetargetBackend::Impl {
         struct ModelDeleter {
             void operator()(mjModel* p) const {
@@ -58,6 +68,13 @@ namespace gmr {
 
         std::vector<MujocoTaskRuntime> tasks1;
         std::vector<MujocoTaskRuntime> tasks2;
+        std::optional<MujocoTaskRuntime> mobileTorsoTask;
+        std::optional<MujocoTaskRuntime> mobileHeadTask;
+        std::vector<MobileArmRuntime> mobileArms;
+        Eigen::Quaterniond mobileTorsoNeutralRot = Eigen::Quaterniond::Identity();
+        Eigen::Quaterniond mobileHeadNeutralRelativeRot = Eigen::Quaterniond::Identity();
+        Eigen::VectorXd mobilePostureCost;
+        bool mobileInitialized = false;
 
         bool hasRootFreeFlyer = false;
         std::vector<ScalarJointCoordinate> scalarJointCoordinates;
@@ -147,8 +164,116 @@ namespace gmr {
             mju_zero(data->qvel, model->nv);
             mj_forward(model.get(), data.get());
 
+            if (ikConfig.mobileUpperBody.enabled) {
+                setupMobileUpperBody();
+            }
+
             qpos = Eigen::Map<Eigen::VectorXd>(data->qpos, model->nq);
             qvel = Eigen::VectorXd::Zero(model->nv);
+        }
+
+        int requireBody(const std::string& name) const {
+            const int bodyId = mj_name2id(model.get(), mjOBJ_BODY, name.c_str());
+            if (bodyId < 0) {
+                throw std::runtime_error("mobile_upper_body references missing robot body: " + name);
+            }
+
+            return bodyId;
+        }
+
+        Eigen::Vector3d bodyPosition(int bodyId) const {
+            return Eigen::Map<const Eigen::Vector3d>(&data->xpos[3 * bodyId]);
+        }
+
+        Eigen::Quaterniond bodyOrientation(int bodyId) const {
+            const double* quat = &data->xquat[4 * bodyId];
+            return Eigen::Quaterniond(quat[0], quat[1], quat[2], quat[3]).normalized();
+        }
+
+        MujocoTaskRuntime makeMobileTask(
+            const std::string& bodyName,
+            const std::string& humanBodyName,
+            double posWeight,
+            double rotWeight) const {
+            MujocoTaskRuntime task;
+            task.bodyId = requireBody(bodyName);
+            task.humanBodyName = humanBodyName;
+            task.posWeight = posWeight;
+            task.rotWeight = rotWeight;
+            return task;
+        }
+
+        void setupMobileUpperBody() {
+            if (!ikConfig.planarBase.enabled || model->nq < 3 || model->nv < 3) {
+                throw std::runtime_error("mobile_upper_body requires a three-DoF planar base.");
+            }
+
+            const MobileUpperBodyConfig& cfg = ikConfig.mobileUpperBody;
+            mobileTorsoTask = makeMobileTask(
+                cfg.torsoFrame,
+                cfg.torsoHumanBody,
+                cfg.torsoPositionCost,
+                cfg.torsoOrientationCost);
+            mobileTorsoNeutralRot = bodyOrientation(mobileTorsoTask->bodyId);
+
+            if (!cfg.headFrame.empty()) {
+                if (cfg.headHumanBody.empty()) {
+                    throw std::runtime_error("mobile_upper_body head_frame requires head_human_body.");
+                }
+
+                mobileHeadTask = makeMobileTask(cfg.headFrame, cfg.headHumanBody, 0.0, cfg.headOrientationCost);
+                mobileHeadNeutralRelativeRot =
+                    mobileTorsoNeutralRot.conjugate() * bodyOrientation(mobileHeadTask->bodyId);
+            }
+
+            mobileArms.reserve(cfg.armChains.size());
+            for (const MobileArmChainConfig& chainConfig : cfg.armChains) {
+                MobileArmRuntime arm;
+                arm.config = chainConfig;
+                arm.shoulderBodyId = requireBody(chainConfig.shoulderFrame);
+                arm.elbowTask = makeMobileTask(
+                    chainConfig.elbowFrame,
+                    chainConfig.elbowHumanBody,
+                    cfg.armPositionCost,
+                    cfg.elbowOrientationCost);
+                arm.wristTask = makeMobileTask(
+                    chainConfig.wristFrame,
+                    chainConfig.wristHumanBody,
+                    cfg.armPositionCost,
+                    0.0);
+                arm.upperLength = (bodyPosition(arm.elbowTask.bodyId) - bodyPosition(arm.shoulderBodyId)).norm();
+                arm.forearmLength = (bodyPosition(arm.wristTask.bodyId) - bodyPosition(arm.elbowTask.bodyId)).norm();
+                if (arm.upperLength <= 1e-8 || arm.forearmLength <= 1e-8) {
+                    throw std::runtime_error("mobile_upper_body arm chain has a zero-length segment.");
+                }
+
+                if (cfg.wristOrientationCost > 0.0) {
+                    if (chainConfig.orientationFrame.empty()) {
+                        throw std::runtime_error(
+                            "mobile_upper_body wrist orientation requires orientation_frame.");
+                    }
+
+                    arm.orientationTask = makeMobileTask(
+                        chainConfig.orientationFrame,
+                        chainConfig.wristHumanBody,
+                        0.0,
+                        cfg.wristOrientationCost);
+                }
+
+                mobileArms.push_back(std::move(arm));
+            }
+
+            mobilePostureCost = Eigen::VectorXd::Constant(model->nv, cfg.postureCost);
+            mobilePostureCost.head(std::min<mjtSize>(3, model->nv)).setZero();
+            for (const auto& [jointName, cost] : cfg.jointPostureCost) {
+                const int jointId = mj_name2id(model.get(), mjOBJ_JOINT, jointName.c_str());
+                if (jointId < 0) {
+                    throw std::runtime_error(
+                        "mobile_upper_body posture references missing joint: " + jointName);
+                }
+
+                mobilePostureCost[model->jnt_dofadr[jointId]] = cost;
+            }
         }
 
         void syncQposFromData() { qpos = Eigen::Map<Eigen::VectorXd>(data->qpos, model->nq); }
@@ -214,7 +339,12 @@ namespace gmr {
             return std::sqrt(sqErr);
         }
 
-        void solveTaskSet(const std::vector<MujocoTaskRuntime>& tasks) {
+        void solveTaskSet(
+            const std::vector<MujocoTaskRuntime>& tasks,
+            int maxIterations = -1,
+            int minIterations = 0,
+            int frozenDofs = 0,
+            bool useMobilePosture = false) {
             if (tasks.empty()) {
                 return;
             }
@@ -234,7 +364,8 @@ namespace gmr {
 
             const int nCollisionRows = (collisionLimit != nullptr) ? collisionLimit->maxRows() : 0;
 
-            for (int iter = 0; iter < options.maxIterations; ++iter) {
+            const int iterationLimit = maxIterations > 0 ? maxIterations : options.maxIterations;
+            for (int iter = 0; iter < iterationLimit; ++iter) {
                 mj_forward(model.get(), data.get());
 
                 solver::QPData qp;
@@ -298,6 +429,22 @@ namespace gmr {
                     qp.g.noalias() += -(weightedError.transpose() * weightedJ).transpose();
                 }
 
+                if (useMobilePosture) {
+                    Eigen::VectorXd postureError(model->nv);
+                    mj_differentiatePos(
+                        model.get(),
+                        postureError.data(),
+                        1.0,
+                        model->qpos0,
+                        data->qpos);
+                    const Eigen::VectorXd weightedError =
+                        -mobilePostureCost.cwiseProduct(postureError);
+                    const Eigen::VectorXd squaredCost = mobilePostureCost.array().square();
+                    qp.H.diagonal() += squaredCost;
+                    qp.H.diagonal().array() += weightedError.squaredNorm();
+                    qp.g.noalias() -= mobilePostureCost.cwiseProduct(weightedError);
+                }
+
                 qp.H.diagonal().array() += options.damping;
 
                 if (nCollisionRows > 0 && collisionLimit != nullptr) {
@@ -309,7 +456,8 @@ namespace gmr {
                     throw std::runtime_error("QP solver failed while retargeting.");
                 }
 
-                const Eigen::VectorXd deltaQ = out.x;
+                Eigen::VectorXd deltaQ = out.x;
+                deltaQ.head(std::min(frozenDofs, nv)).setZero();
                 qvel                         = deltaQ / dt;
 
                 mj_integratePos(model.get(), data->qpos, qvel.data(), dt);
@@ -318,7 +466,7 @@ namespace gmr {
                 syncQposFromData();
 
                 const double nextError = computeTaskError(tasks);
-                if (currError - nextError <= options.progressThreshold) {
+                if (iter + 1 >= minIterations && currError - nextError <= options.progressThreshold) {
                     break;
                 }
                 currError = nextError;
@@ -334,7 +482,219 @@ namespace gmr {
             }
         }
 
-        Eigen::VectorXd retargetPrepared(const HumanFrame& prepared, bool finalize) {
+        const HumanBodyState& requireHumanBody(const HumanFrame& frame, const std::string& name) const {
+            const auto it = frame.find(name);
+            if (it == frame.end()) {
+                throw std::runtime_error("mobile_upper_body input is missing human body: " + name);
+            }
+
+            return it->second;
+        }
+
+        static Eigen::Vector3d normalizedDirection(
+            const Eigen::Vector3d& start,
+            const Eigen::Vector3d& end,
+            const std::string& label) {
+            const Eigen::Vector3d direction = end - start;
+            const double norm = direction.norm();
+            if (norm <= 1e-8) {
+                throw std::runtime_error("Cannot retarget zero-length human segment: " + label);
+            }
+
+            return direction / norm;
+        }
+
+        static Eigen::Quaterniond quatFromEulerXyz(const Eigen::Vector3d& angles) {
+            return Eigen::Quaterniond(Eigen::AngleAxisd(angles.x(), Eigen::Vector3d::UnitX())) *
+                Eigen::Quaterniond(Eigen::AngleAxisd(angles.y(), Eigen::Vector3d::UnitY())) *
+                Eigen::Quaterniond(Eigen::AngleAxisd(angles.z(), Eigen::Vector3d::UnitZ()));
+        }
+
+        static Eigen::Vector3d eulerXyz(const Eigen::Quaterniond& orientation) {
+            const Eigen::Matrix3d rotation = orientation.normalized().toRotationMatrix();
+            const double y = std::asin(std::clamp(rotation(0, 2), -1.0, 1.0));
+            const double cosY = std::cos(y);
+            if (std::abs(cosY) < 1e-8) {
+                return Eigen::Vector3d(std::atan2(rotation(2, 1), rotation(1, 1)), y, 0.0);
+            }
+
+            return Eigen::Vector3d(
+                std::atan2(-rotation(1, 2), rotation(2, 2)),
+                y,
+                std::atan2(-rotation(0, 1), rotation(0, 0)));
+        }
+
+        static Eigen::Vector3d clampEuler(
+            const Eigen::Quaterniond& orientation,
+            const Eigen::Vector3d& limitDeg) {
+            constexpr double kDegToRad = 0.017453292519943295;
+            const Eigen::Vector3d limit = limitDeg * kDegToRad;
+            return eulerXyz(orientation).cwiseMax(-limit).cwiseMin(limit);
+        }
+
+        void snapPlanarBase(const HumanFrame& prepared) {
+            const PlanarBaseConfig& cfg = ikConfig.planarBase;
+            const HumanBodyState& root = requireHumanBody(prepared, cfg.humanBody);
+            Eigen::Quaterniond orientation = root.orientation.normalized();
+            if (cfg.yawFrame == "g1_pelvis") {
+                orientation = orientation * Eigen::Quaterniond(0.5, -0.5, -0.5, -0.5);
+            }
+
+            const Eigen::Matrix3d rotation = orientation.toRotationMatrix();
+            data->qpos[0] = root.position.x();
+            data->qpos[1] = root.position.y();
+            data->qpos[2] = std::atan2(rotation(1, 0), rotation(0, 0));
+            mj_forward(model.get(), data.get());
+        }
+
+        void setMobileTorsoTargets(const HumanFrame& raw) {
+            const MobileUpperBodyConfig& cfg = ikConfig.mobileUpperBody;
+            const HumanBodyState& torso = requireHumanBody(raw, cfg.torsoHumanBody);
+            const Eigen::Quaterniond baseRotation(Eigen::AngleAxisd(data->qpos[2], Eigen::Vector3d::UnitZ()));
+            const Eigen::Quaterniond humanTorsoRotation =
+                (torso.orientation.normalized() * cfg.torsoRotationOffset).normalized();
+            const Eigen::Quaterniond relative =
+                baseRotation.conjugate() * humanTorsoRotation * mobileTorsoNeutralRot.conjugate();
+            const Eigen::Quaterniond targetRotation =
+                baseRotation * quatFromEulerXyz(clampEuler(relative, cfg.torsoOrientationLimitDeg)) *
+                mobileTorsoNeutralRot;
+
+            const Eigen::Vector3d localOffset(cfg.torsoLocalXy.x(), cfg.torsoLocalXy.y(), 0.0);
+            Eigen::Vector3d targetPosition(data->qpos[0], data->qpos[1], 0.0);
+            targetPosition.head<2>() += (baseRotation * localOffset).head<2>();
+            targetPosition.z() = std::clamp(
+                torso.position.z() * cfg.torsoHeightScale,
+                cfg.torsoHeightRange.x(),
+                cfg.torsoHeightRange.y());
+            mobileTorsoTask->targetPos = targetPosition;
+            mobileTorsoTask->targetRot = targetRotation.normalized();
+
+            if (mobileHeadTask.has_value()) {
+                const HumanBodyState& head = requireHumanBody(raw, cfg.headHumanBody);
+                const Eigen::Quaterniond headRelative = torso.orientation.normalized().conjugate() *
+                    head.orientation.normalized();
+                mobileHeadTask->targetPos.setZero();
+                mobileHeadTask->targetRot = targetRotation *
+                    quatFromEulerXyz(clampEuler(headRelative, cfg.headOrientationLimitDeg)) *
+                    mobileHeadNeutralRelativeRot;
+            }
+        }
+
+        void setMobileArmTargets(const HumanFrame& raw) {
+            for (MobileArmRuntime& arm : mobileArms) {
+                const HumanBodyState& shoulder = requireHumanBody(raw, arm.config.shoulderHumanBody);
+                const HumanBodyState& elbow = requireHumanBody(raw, arm.config.elbowHumanBody);
+                const HumanBodyState& wrist = requireHumanBody(raw, arm.config.wristHumanBody);
+                const Eigen::Vector3d upperDirection = normalizedDirection(
+                    shoulder.position,
+                    elbow.position,
+                    arm.config.shoulderHumanBody + "->" + arm.config.elbowHumanBody);
+                const Eigen::Vector3d forearmDirection = normalizedDirection(
+                    elbow.position,
+                    wrist.position,
+                    arm.config.elbowHumanBody + "->" + arm.config.wristHumanBody);
+                const Eigen::Vector3d elbowPosition =
+                    bodyPosition(arm.shoulderBodyId) + arm.upperLength * upperDirection;
+
+                arm.elbowTask.targetPos = elbowPosition;
+                arm.elbowTask.targetRot =
+                    (elbow.orientation.normalized() * arm.config.elbowRotationOffset).normalized();
+                arm.wristTask.targetPos = elbowPosition + arm.forearmLength * forearmDirection;
+                arm.wristTask.targetRot = Eigen::Quaterniond::Identity();
+                if (arm.orientationTask.has_value()) {
+                    arm.orientationTask->targetPos.setZero();
+                    arm.orientationTask->targetRot =
+                        (wrist.orientation.normalized() * arm.config.wristRotationOffset).normalized();
+                }
+            }
+        }
+
+        void applyMobileJointMargin() {
+            constexpr double kDegToRad = 0.017453292519943295;
+            const double margin = ikConfig.mobileUpperBody.jointLimitMarginDeg * kDegToRad;
+            if (margin <= 0.0) {
+                return;
+            }
+
+            for (int joint = 0; joint < model->njnt; ++joint) {
+                if (!model->jnt_limited[joint] || model->jnt_type[joint] != mjJNT_HINGE) {
+                    continue;
+                }
+
+                const double lower = model->jnt_range[2 * joint];
+                const double upper = model->jnt_range[2 * joint + 1];
+                if (upper - lower <= 2.0 * margin) {
+                    continue;
+                }
+
+                const int qadr = model->jnt_qposadr[joint];
+                data->qpos[qadr] = std::clamp(data->qpos[qadr], lower + margin, upper - margin);
+            }
+
+            mj_forward(model.get(), data.get());
+            syncQposFromData();
+        }
+
+        void solveMobileUpperBody(const HumanFrame& raw, const HumanFrame& prepared) {
+            const MobileUpperBodyConfig& cfg = ikConfig.mobileUpperBody;
+            snapPlanarBase(prepared);
+            const Eigen::Vector3d baseQpos(data->qpos[0], data->qpos[1], data->qpos[2]);
+            setMobileTorsoTargets(raw);
+
+            std::vector<MujocoTaskRuntime> torsoTasks = {*mobileTorsoTask};
+            if (mobileHeadTask.has_value()) {
+                torsoTasks.push_back(*mobileHeadTask);
+            }
+
+            solveTaskSet(
+                torsoTasks,
+                mobileInitialized ? cfg.torsoIterations : cfg.initialTorsoIterations,
+                mobileInitialized ? cfg.torsoMinIterations : cfg.initialTorsoMinIterations,
+                3,
+                true);
+
+            for (int pass = 0; pass < cfg.armTargetPasses; ++pass) {
+                setMobileArmTargets(raw);
+                std::vector<MujocoTaskRuntime> tasks = {*mobileTorsoTask};
+                if (mobileHeadTask.has_value()) {
+                    tasks.push_back(*mobileHeadTask);
+                }
+
+                for (const MobileArmRuntime& arm : mobileArms) {
+                    tasks.push_back(arm.elbowTask);
+                    tasks.push_back(arm.wristTask);
+                    if (arm.orientationTask.has_value()) {
+                        tasks.push_back(*arm.orientationTask);
+                    }
+                }
+
+                solveTaskSet(
+                    tasks,
+                    mobileInitialized ? cfg.armIterations : cfg.initialArmIterations,
+                    mobileInitialized ? cfg.armMinIterations : cfg.initialArmMinIterations,
+                    3,
+                    true);
+            }
+
+            data->qpos[0] = baseQpos.x();
+            data->qpos[1] = baseQpos.y();
+            data->qpos[2] = baseQpos.z();
+            mj_forward(model.get(), data.get());
+            applyMobileJointMargin();
+            mobileInitialized = true;
+            syncQposFromData();
+        }
+
+        Eigen::VectorXd retargetPrepared(const HumanFrame& raw, const HumanFrame& prepared, bool finalize) {
+            if (ikConfig.mobileUpperBody.enabled) {
+                solveMobileUpperBody(raw, prepared);
+                if (finalize) {
+                    finalizeRobotState();
+                }
+
+                return qpos;
+            }
+
             updateTaskTargets(prepared);
             solveEnabledTaskSets();
             if (finalize) {
@@ -350,7 +710,7 @@ namespace gmr {
 
             const int savedMaxIter = options.maxIterations;
             options.maxIterations  = maxIterations;
-            retargetPrepared(prepareRetargetInput(humanFrame, offsetToGround), /*finalize=*/false);
+            retargetPrepared(humanFrame, prepareRetargetInput(humanFrame, offsetToGround), /*finalize=*/false);
             options.maxIterations = savedMaxIter;
             return qpos;
         }
@@ -363,8 +723,10 @@ namespace gmr {
 
     Eigen::VectorXd MujocoRetargetBackend::retargetFrame(const HumanFrame& humanFrame, bool offsetToGround) {
         auto t_now = std::chrono::steady_clock::now();
-        Eigen::VectorXd q =
-            impl_->retargetPrepared(impl_->prepareRetargetInput(humanFrame, offsetToGround), /*finalize=*/true);
+        Eigen::VectorXd q = impl_->retargetPrepared(
+            humanFrame,
+            impl_->prepareRetargetInput(humanFrame, offsetToGround),
+            /*finalize=*/true);
 
         LOG(INFO) << "Retargeting took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t_now).count() << " ms";

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -24,7 +25,9 @@ from urllib.parse import parse_qs, urlparse
 
 REPO = Path(__file__).resolve().parents[2]
 VIZ_SCRIPT = Path(__file__).resolve().parent / "vis_g1_robot_compare.py"
+CPP_CONVERTER = REPO / "cpp" / "build" / "gmr_robot_to_robot_cli"
 DEFAULT_REFS = Path.home() / "Workspace" / "puppet" / "output" / "gmr_references"
+GUI_REFS = REPO / "output" / "robot_to_robot_gui"
 HOST = "127.0.0.1"
 PORT = 8777
 
@@ -37,7 +40,9 @@ _QPOS_SUFFIXES = (
 )
 
 _PLAY_PROC: subprocess.Popen | None = None
+_CONVERT_LOCK = threading.Lock()
 _REFS = DEFAULT_REFS
+_ROBOT_REFS = [DEFAULT_REFS]
 
 
 def _split_clip_name(path: Path) -> tuple[str, str]:
@@ -69,38 +74,67 @@ def _motion_meta(path: Path, refs: Path, robot: str) -> dict:
 
     kind = _kind_label(suffix)
     return {
-        "id": f"{dataset}/{clip}:{kind}",
+        "id": f"{refs.name}/{dataset}/{clip}:{kind}",
         "path": str(path),
         "clip": clip,
         "dataset": dataset,
+        "collection": refs.name,
         "kind": kind,
-        "label": f"{dataset} · {clip} · {kind}",
+        "label": f"{refs.name} · {dataset} · {clip} · {kind}",
     }
 
 
-def discover_robots(refs: Path) -> list[str]:
-    root = refs / "robot_b"
-    if not root.is_dir():
-        return []
+def discover_robots(refs_roots: list[Path]) -> list[str]:
+    names: set[str] = set()
+    for refs in refs_roots:
+        root = refs / "robot_b"
+        if not root.is_dir():
+            continue
 
-    names: list[str] = []
-    for p in sorted(root.iterdir()):
-        if p.is_dir() and any(p.rglob("*.qpos.json")):
-            names.append(p.name)
+        for path in root.iterdir():
+            if path.is_dir() and any(path.rglob("*.qpos.json")):
+                names.add(path.name)
 
-    return names
+    return sorted(names)
 
 
-def discover_motions(refs: Path, robot: str, *, main_only: bool = True) -> list[dict]:
+def supported_target_robots() -> list[str]:
+    header = REPO / "cpp" / "include" / "gmr" / "retarget" / "repo_paths.h"
+    text = header.read_text(encoding="utf-8")
+    xml_names = set(re.findall(r'\{"([a-z0-9_]+)", "assets/', text))
+    smplx_names = set(re.findall(r'\{"([a-z0-9_]+)", "general_motion_retargeting/ik_configs/smplx_', text))
+    return sorted(xml_names & smplx_names)
+
+
+def discover_source_inputs(refs_roots: list[Path]) -> list[dict]:
+    candidates: list[Path] = []
+    for refs in refs_roots:
+        source = refs / "source" / "unitree_g1"
+        if source.is_dir():
+            candidates.extend(source.rglob("*.qpos.json"))
+
+    csv_root = REPO / "output" / "csv"
+    if csv_root.is_dir():
+        candidates.extend(csv_root.glob("*.csv"))
+
+    unique = sorted({path.resolve() for path in candidates if path.is_file()})
+    return [
+        {
+            "path": str(path),
+            "clip": _split_clip_name(path)[0],
+            "kind": "CSV" if path.suffix.lower() == ".csv" else "qpos JSON",
+            "label": f"{_split_clip_name(path)[0]} · {'CSV' if path.suffix.lower() == '.csv' else 'qpos JSON'}",
+        }
+        for path in unique
+    ]
+
+
+def discover_motions(refs_roots: list[Path], robot: str, *, main_only: bool = True) -> list[dict]:
     """List robot-B motions.
 
     ``main_only`` keeps ``<clip>.qpos.json`` (pipeline default / minimal) and drops
     ``.raw`` / ``.post_*`` / experimental ``*_wrist_*`` sidecars.
     """
-    root = refs / "robot_b" / robot
-    if not root.is_dir():
-        return []
-
     rank = {
         ".qpos.json": 0,
         ".post_minimal.qpos.json": 1,
@@ -108,72 +142,78 @@ def discover_motions(refs: Path, robot: str, *, main_only: bool = True) -> list[
         ".post_none.qpos.json": 3,
         ".post_full.qpos.json": 4,
     }
-    paths = sorted(root.rglob("*.qpos.json"))
-
-    def sort_key(p: Path) -> tuple:
-        clip, suffix = _split_clip_name(p)
-        return (str(p.parent), clip, rank.get(suffix, 9), p.name)
-
     out: list[dict] = []
-    for path in sorted(paths, key=sort_key):
-        clip, suffix = _split_clip_name(path)
-        if main_only:
-            if suffix != ".qpos.json":
-                continue
+    for refs in refs_roots:
+        root = refs / "robot_b" / robot
+        if not root.is_dir():
+            continue
 
-            if "_wrist_" in clip:
-                continue
+        def sort_key(path: Path) -> tuple:
+            clip, suffix = _split_clip_name(path)
+            return (str(path.parent), clip, rank.get(suffix, 9), path.name)
 
-        out.append(_motion_meta(path, refs, robot))
+        for path in sorted(root.rglob("*.qpos.json"), key=sort_key):
+            clip, suffix = _split_clip_name(path)
+            if main_only:
+                if suffix != ".qpos.json":
+                    continue
+
+                if "_wrist_" in clip:
+                    continue
+
+            out.append(_motion_meta(path, refs, robot))
 
     return out
 
 
-def find_g1_motion(refs: Path, robot_motion: Path) -> Path | None:
+def find_g1_motion(robot_motion: Path) -> Path | None:
     clip, _suffix = _split_clip_name(robot_motion)
-    source = refs / "source" / "unitree_g1"
-    if not source.is_dir():
-        return None
+    ordered_roots = []
+    for refs in _ROBOT_REFS:
+        try:
+            robot_motion.relative_to(refs / "robot_b")
+            ordered_roots.append(refs)
+        except ValueError:
+            continue
 
-    try:
-        rel = robot_motion.relative_to(refs / "robot_b")
-        dataset = rel.parts[1] if len(rel.parts) > 2 else None
-    except ValueError:
-        dataset = robot_motion.parent.name
+    ordered_roots.extend(refs for refs in _ROBOT_REFS if refs not in ordered_roots)
+    for refs in ordered_roots:
+        source = refs / "source" / "unitree_g1"
+        if not source.is_dir():
+            continue
 
-    candidates: list[Path] = []
-    if dataset:
-        candidates.append(source / dataset / f"{clip}.qpos.json")
+        try:
+            rel = robot_motion.relative_to(refs / "robot_b")
+            dataset = rel.parts[1] if len(rel.parts) > 2 else None
+        except ValueError:
+            dataset = robot_motion.parent.name
 
-    candidates.extend(sorted(source.rglob(f"{clip}.qpos.json")))
-    for c in candidates:
-        if c.is_file():
-            return c
+        candidates: list[Path] = []
+        if dataset:
+            candidates.append(source / dataset / f"{clip}.qpos.json")
+
+        candidates.extend(sorted(source.rglob(f"{clip}.qpos.json")))
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
 
     return None
 
 
 def catalog(*, main_only: bool = True) -> dict:
     refs = _REFS
-    robots = discover_robots(refs)
-    by_robot = {name: discover_motions(refs, name, main_only=main_only) for name in robots}
-    source_dir = refs / "source" / "unitree_g1"
-    source_clips = (
-        sorted(
-            {
-                p.name[: -len(".qpos.json")]
-                for p in source_dir.rglob("*.qpos.json")
-                if p.name.endswith(".qpos.json")
-            }
-        )
-        if source_dir.is_dir()
-        else []
-    )
+    robots = sorted(set(discover_robots(_ROBOT_REFS)) | set(supported_target_robots()))
+    by_robot = {
+        name: discover_motions(_ROBOT_REFS, name, main_only=main_only) for name in robots
+    }
+    source_inputs = discover_source_inputs(_ROBOT_REFS)
     return {
         "refs": str(refs),
+        "robot_refs": [str(path) for path in _ROBOT_REFS],
         "robots": robots,
         "motions": by_robot,
-        "source_clips": source_clips,
+        "source_inputs": source_inputs,
+        "source_clips": sorted({item["clip"] for item in source_inputs}),
         "main_only": main_only,
         "defaults": {
             "robot": "unitree_h2" if "unitree_h2" in robots else (robots[0] if robots else ""),
@@ -218,7 +258,7 @@ def play(payload: dict) -> dict:
     if not robot or not motion.is_file():
         return {"ok": False, "error": "请选择有效的机器人与轨迹。"}
 
-    g1 = find_g1_motion(_REFS, motion)
+    g1 = find_g1_motion(motion)
     if g1 is None or not g1.is_file():
         return {
             "ok": False,
@@ -265,6 +305,78 @@ def play(payload: dict) -> dict:
         "g1": str(g1),
         "motion": str(motion),
         "cmd": " ".join(cmd),
+    }
+
+
+def convert(payload: dict) -> dict:
+    source = Path(str(payload.get("source", ""))).expanduser().resolve()
+    robot = str(payload.get("robot", "")).strip()
+    allowed_sources = {Path(item["path"]) for item in discover_source_inputs(_ROBOT_REFS)}
+    if source not in allowed_sources:
+        return {"ok": False, "error": "请选择列表中的有效 G1 输入轨迹。"}
+
+    if robot not in supported_target_robots():
+        return {"ok": False, "error": f"目标机器人不支持 SMPL-X 重定向：{robot}"}
+
+    if not CPP_CONVERTER.is_file():
+        return {
+            "ok": False,
+            "error": "纯 C++ 转换器尚未编译。请先在 IDE 中构建 gmr_robot_to_robot_cli。",
+        }
+
+    clip = re.sub(r"[^A-Za-z0-9_.-]+", "_", _split_clip_name(source)[0]).strip("._")
+    if not clip:
+        return {"ok": False, "error": "输入轨迹文件名无法生成有效 clip 名。"}
+
+    source_output = GUI_REFS / "source" / "unitree_g1" / "gui" / f"{clip}.qpos.json"
+    robot_output = GUI_REFS / "robot_b" / robot / "gui" / f"{clip}.qpos.json"
+    command = [
+        str(CPP_CONVERTER),
+        "--gmr_root",
+        str(REPO),
+        "--input",
+        str(source),
+        "--robot_b",
+        robot,
+        "--out_json",
+        str(robot_output),
+        "--dump_source_json",
+        str(source_output),
+        "--fast",
+    ]
+
+    if not _CONVERT_LOCK.acquire(blocking=False):
+        return {"ok": False, "error": "已有转换任务正在运行，请稍候。"}
+
+    try:
+        env = os.environ.copy()
+        library_dirs = [Path("/opt/robot/devel/x86_64_gcc114/lib"), Path("/opt/robot/devel/lib")]
+        available = [str(path) for path in library_dirs if path.is_dir()]
+        if available:
+            available.append(env.get("LD_LIBRARY_PATH", ""))
+            env["LD_LIBRARY_PATH"] = ":".join(available)
+
+        result = subprocess.run(
+            command,
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        _CONVERT_LOCK.release()
+
+    log = (result.stdout + "\n" + result.stderr).strip()
+    if result.returncode != 0:
+        return {"ok": False, "error": "纯 C++ 转换失败。", "log": log[-6000:]}
+
+    return {
+        "ok": True,
+        "robot": robot,
+        "source": str(source_output),
+        "motion": str(robot_output),
+        "log": log[-6000:],
     }
 
 
@@ -324,10 +436,13 @@ PAGE = r"""<!doctype html>
 </header>
 <main>
   <aside>
-    <label>Refs 根目录</label>
+    <label>结果目录（G1 source 使用第一项）</label>
     <input id="refs" readonly />
+    <label>G1 输入轨迹</label>
+    <select id="source" size="7" style="height:150px"></select>
     <label>Robot B</label>
     <select id="robot"></select>
+    <button id="convertPlay">纯 C++ 转换并播放</button>
     <label>搜索轨迹</label>
     <input id="q" placeholder="clip 名，例如 walk1" />
     <label>参考轨迹</label>
@@ -381,6 +496,18 @@ function fillRobots() {
   if (preferred && catalog.robots.includes(preferred)) el.value = preferred;
 }
 
+function fillSources() {
+  const el = document.getElementById('source');
+  const items = catalog.source_inputs || [];
+  el.innerHTML = items.map(item => `<option value="${esc(item.path)}">${esc(item.label)}</option>`).join('');
+  const preferred = localStorage.getItem('gmrCompareSource') || '';
+  if (preferred && items.some(item => item.path === preferred)) {
+    el.value = preferred;
+  } else if (items.length) {
+    el.value = items[0].path;
+  }
+}
+
 function fillMotions(keepPath) {
   const el = document.getElementById('motion');
   const items = filteredMotions();
@@ -413,16 +540,18 @@ function writeOut(obj) {
 async function loadCatalog() {
   const mainOnly = document.getElementById('mainOnly').checked;
   catalog = await api('/api/catalog?main_only=' + (mainOnly ? '1' : '0'));
-  document.getElementById('refs').value = catalog.refs;
+  document.getElementById('refs').value = (catalog.robot_refs || [catalog.refs]).join(' | ');
   document.getElementById('offsetY').value = catalog.defaults.offset_y ?? 1.2;
   document.getElementById('loop').checked = !!catalog.defaults.loop;
   document.getElementById('tint').checked = !!catalog.defaults.tint;
   fillRobots();
+  fillSources();
   fillMotions(localStorage.getItem('gmrCompareMotion') || '');
   const n = robotMotions().length;
   const src = (catalog.source_clips || []).length;
   writeOut({
     refs: catalog.refs,
+    robot_refs: catalog.robot_refs,
     robots: catalog.robots.length,
     selected_robot: document.getElementById('robot').value,
     motion_count: n,
@@ -434,6 +563,46 @@ async function loadCatalog() {
   document.getElementById('hint').textContent =
     `机器人 ${catalog.robots.length} · 当前可选轨迹 ${n}` +
     (src ? ` · G1 source ${src} 条` : '');
+}
+
+async function convertAndPlay() {
+  const button = document.getElementById('convertPlay');
+  const source = document.getElementById('source').value;
+  const robot = document.getElementById('robot').value;
+  if (!source || !robot) {
+    document.getElementById('hint').textContent = '请选择 G1 输入轨迹和 Robot B。';
+    return;
+  }
+
+  localStorage.setItem('gmrCompareSource', source);
+  localStorage.setItem('gmrCompareRobot', robot);
+  button.disabled = true;
+  button.textContent = '转换中…';
+  document.getElementById('hint').textContent = '正在运行纯 C++ pipeline…';
+  try {
+    const data = await api('/api/convert', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source, robot}),
+    });
+    writeOut(data);
+    if (!data.ok) {
+      document.getElementById('hint').textContent = data.error || '转换失败';
+      return;
+    }
+
+    await loadCatalog();
+    document.getElementById('robot').value = data.robot;
+    fillMotions(data.motion);
+    document.getElementById('motion').value = data.motion;
+    updateMeta();
+    await play();
+  } catch (error) {
+    document.getElementById('hint').textContent = `转换失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = '纯 C++ 转换并播放';
+  }
 }
 
 async function play() {
@@ -476,6 +645,7 @@ async function pollStatus() {
 }
 
 document.getElementById('play').onclick = play;
+document.getElementById('convertPlay').onclick = convertAndPlay;
 document.getElementById('stop').onclick = stopPlay;
 document.getElementById('refresh').onclick = loadCatalog;
 document.getElementById('mainOnly').onchange = loadCatalog;
@@ -488,6 +658,9 @@ document.getElementById('robot').onchange = () => {
 document.getElementById('motion').onchange = () => {
   localStorage.setItem('gmrCompareMotion', document.getElementById('motion').value);
   updateMeta();
+};
+document.getElementById('source').onchange = () => {
+  localStorage.setItem('gmrCompareSource', document.getElementById('source').value);
 };
 document.getElementById('q').oninput = () => fillMotions(document.getElementById('motion').value);
 
@@ -553,6 +726,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(play(self._read_json()))
             return
 
+        if parsed.path == "/api/convert":
+            self._json(convert(self._read_json()))
+            return
+
         if parsed.path == "/api/stop":
             self._json(stop_play())
             return
@@ -561,18 +738,34 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global _REFS
+    global _REFS, _ROBOT_REFS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--refs", type=Path, default=DEFAULT_REFS)
+    parser.add_argument(
+        "--robot-refs",
+        type=Path,
+        action="append",
+        default=[],
+        help="Additional result root containing robot_b/ (repeatable)",
+    )
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
     _REFS = args.refs.expanduser().resolve()
+    robot_refs = [_REFS]
+    automatic_contact_anchor = _REFS.with_name(f"{_REFS.name}_contact_anchor")
+    if automatic_contact_anchor.is_dir():
+        robot_refs.append(automatic_contact_anchor)
+
+    robot_refs.append(GUI_REFS)
+    robot_refs.extend(path.expanduser().resolve() for path in args.robot_refs)
+    _ROBOT_REFS = list(dict.fromkeys(robot_refs))
 
     server = StudioServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
-    print(f"[gmr-compare-studio] refs={_REFS}")
+    print(f"[gmr-compare-studio] source refs={_REFS}")
+    print(f"[gmr-compare-studio] robot refs={', '.join(map(str, _ROBOT_REFS))}")
     print(f"[gmr-compare-studio] open {url}")
     if not args.no_open:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()

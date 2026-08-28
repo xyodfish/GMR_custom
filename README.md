@@ -16,6 +16,7 @@
 - Joint-limit safety margin (`joint_limit_margin_deg`) that keeps committed hinge joints a configurable number of degrees away from their hard limits, improving trackability. Available in the trajectory-optimization retargeters (Python `OnlineBatchRetargeter` / `OnlineQpRetargeter`; C++ `OnlineQpRetargeter` and offline `BatchTrajectoryRetargeter`). See [`docs/retarget_methods_comparison.md`](docs/retarget_methods_comparison.md).
 - Decoupled Python contact/ground controls for old `contact_ground`, experimental `foot_ground_limit`, and `fix_robot_penetration` so each mode can be evaluated independently.
 - Offline contact-mode analysis tools for BVH retargeting, with CSV/JSON summaries for penetration, root lift, foot slip, and IK tracking metrics.
+- A pure C++ [robot-joint-trajectory to robot-joint-trajectory](docs/robot_joint_trajectory_retargeting.md) entry point: Unitree G1 qpos is converted to H2 and other targets through the canonical SMPL-X proxy, Batch TO, and contact-aware postprocessing without a Python or Puppet runtime dependency.
 
 > [!NOTE]
 > If you want this repo to support a new robot or a new human motion data format, send the robot files (`.xml`, `.urdf`, and meshes) / human motion data to <a href="mailto:lastyanjieze@gmail.com">Yanjie Ze</a> or create an issue, we will support it as soon as possible. And please make sure the robot files you sent can be open-sourced in this repo.

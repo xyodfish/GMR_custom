@@ -45,6 +45,8 @@ namespace gmr {
 
         /// Per-frame IK targets keyed by MuJoCo body id (table2 overwrites table1, matching Python).
         using FrameTargets = std::unordered_map<int, FrameTaskTarget>;
+        using FootContactFrame = std::unordered_map<std::string, bool>;
+        using FootContactSchedule = std::vector<FootContactFrame>;
 
         BatchTrajectoryRetargeter(const std::filesystem::path& robotModelPath, IkConfig ikConfig, BatchTrajectoryConfig config = {});
 
@@ -55,7 +57,8 @@ namespace gmr {
 
         /// Bootstrap with ``retargeter`` (per-frame IK), then optimize jointly.
         std::vector<Eigen::VectorXd> retargetBatch(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                   bool offsetToGround = false, const BatchIkBootstrapContext* ikBootstrap = nullptr);
+                                                   bool offsetToGround = false, const BatchIkBootstrapContext* ikBootstrap = nullptr,
+                                                   const FootContactSchedule* footContacts = nullptr);
 
         const BatchTrajectoryProfile& lastProfile() const { return lastProfile_; }
         int modelNq() const { return nq_; }
@@ -190,6 +193,7 @@ namespace gmr {
         std::vector<int> smoothQ_;
         std::unordered_map<int, int> qToOptV_;
         std::vector<int> footBodyIds_;
+        std::vector<std::string> footContactKeys_;
         std::unordered_map<std::string, Eigen::Vector3d> table1PosOffsets_;
         std::unordered_map<std::string, Eigen::Quaterniond> table1RotOffsets_;
         std::vector<std::vector<bool>> globalRefContact_;

@@ -508,11 +508,16 @@ namespace gmr {
 
     void BatchTrajectoryRetargeter::resolveFootBodyIds() {
         footBodyIds_.clear();
-        const char* names[] = {"left_ankle_roll_link", "right_ankle_roll_link"};
-        for (const char* name : names) {
-            const int id = mj_name2id(impl_->model.get(), mjOBJ_BODY, name);
+        footContactKeys_.clear();
+        const std::pair<const char*, const char*> feet[] = {
+            {"left_ankle_roll_link", "left_foot"},
+            {"right_ankle_roll_link", "right_foot"},
+        };
+        for (const auto& [bodyName, contactKey] : feet) {
+            const int id = mj_name2id(impl_->model.get(), mjOBJ_BODY, bodyName);
             if (id >= 0) {
                 footBodyIds_.push_back(id);
+                footContactKeys_.emplace_back(contactKey);
             }
         }
     }
@@ -520,6 +525,7 @@ namespace gmr {
     void BatchTrajectoryRetargeter::applyContactGroundConfig(const ContactGroundConfig& contactGround) {
         groundZ_ = contactGround.groundZ;
         footBodyIds_.clear();
+        footContactKeys_.clear();
         mjModel* model = impl_->model.get();
 
         auto resolveNames = [&](const std::vector<std::string>& names) {
@@ -527,6 +533,13 @@ namespace gmr {
                 const int id = mj_name2id(model, mjOBJ_BODY, name.c_str());
                 if (id >= 0) {
                     footBodyIds_.push_back(id);
+                    if (footContactKeys_.empty()) {
+                        footContactKeys_.push_back("left_foot");
+                    } else if (footContactKeys_.size() == 1) {
+                        footContactKeys_.push_back("right_foot");
+                    } else {
+                        footContactKeys_.push_back(name);
+                    }
                 }
             }
         };
@@ -887,6 +900,8 @@ namespace gmr {
         const int nFrames = static_cast<int>(qRef.size());
         const int nFeet   = static_cast<int>(footBodyIds_.size());
         globalRefFootPos_.assign(nFrames, std::vector<Eigen::Vector3d>(nFeet));
+        std::vector<Eigen::Vector3d> stanceAnchors(nFeet, Eigen::Vector3d::Zero());
+        std::vector<bool> anchorActive(nFeet, false);
 
         mjModel* model = impl_->model.get();
         mjData* data   = impl_->data.get();
@@ -895,7 +910,16 @@ namespace gmr {
             mj_forward(model, data);
             for (int f = 0; f < nFeet; ++f) {
                 const double* xpos      = &data->xpos[3 * footBodyIds_[f]];
-                globalRefFootPos_[t][f] = Eigen::Vector3d(xpos[0], xpos[1], xpos[2]);
+                const Eigen::Vector3d footPos(xpos[0], xpos[1], xpos[2]);
+                const bool contact = globalRefContact_.empty() || globalRefContact_[t][f];
+                if (contact && !anchorActive[f]) {
+                    stanceAnchors[f] = footPos;
+                    anchorActive[f]  = true;
+                } else if (!contact) {
+                    anchorActive[f] = false;
+                }
+
+                globalRefFootPos_[t][f] = contact ? stanceAnchors[f] : footPos;
             }
         }
     }
@@ -1638,7 +1662,8 @@ namespace gmr {
 
     std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::retargetBatch(const std::vector<HumanFrame>& humanFrames,
                                                                           Retargeter& retargeter, bool offsetToGround,
-                                                                          const BatchIkBootstrapContext* ikBootstrap) {
+                                                                          const BatchIkBootstrapContext* ikBootstrap,
+                                                                          const FootContactSchedule* footContacts) {
         lastProfile_ = {};
         if (humanFrames.empty()) {
             return {};
@@ -1668,7 +1693,24 @@ namespace gmr {
         lastProfile_.bootstrapMs           = elapsedMs(t0);
 
         if (config_.enableFootPenalties && !footBodyIds_.empty()) {
-            globalRefContact_ = batchContactMask(qInit);
+            if (footContacts != nullptr) {
+                if (footContacts->size() != humanFrames.size()) {
+                    throw std::runtime_error("Foot contact schedule must contain one entry per human frame.");
+                }
+
+                if (footContactKeys_.size() != 2) {
+                    throw std::runtime_error("Input foot contacts require exactly two configured robot foot bodies.");
+                }
+
+                globalRefContact_.assign(humanFrames.size(), std::vector<bool>(footBodyIds_.size(), false));
+                for (std::size_t t = 0; t < footContacts->size(); ++t) {
+                    for (std::size_t f = 0; f < footContactKeys_.size(); ++f) {
+                        globalRefContact_[t][f] = footContacts->at(t).at(footContactKeys_[f]);
+                    }
+                }
+            } else {
+                globalRefContact_ = batchContactMask(qInit);
+            }
         } else {
             globalRefContact_.clear();
         }

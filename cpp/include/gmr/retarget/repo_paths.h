@@ -10,10 +10,10 @@ namespace gmr {
     inline const std::unordered_map<std::string, std::string>& robotXmlMap() {
         static const std::unordered_map<std::string, std::string> kMap = {
             {"unitree_g1", "assets/unitree_g1/g1_mocap_29dof.xml"},
-
             {"unitree_g1_with_hands", "assets/unitree_g1/g1_mocap_29dof_with_hands.xml"},
             {"unitree_h1", "assets/unitree_h1/h1.xml"},
             {"unitree_h1_2", "assets/unitree_h1_2/h1_2_handless.xml"},
+            {"unitree_h2", "assets/unitree_h2/h2.xml"},
             {"booster_t1", "assets/booster_t1/T1_serial.xml"},
             {"booster_t1_29dof", "assets/booster_t1_29dof/t1_mocap.xml"},
             {"stanford_toddy", "assets/stanford_toddy/toddy_mocap.xml"},
@@ -28,6 +28,7 @@ namespace gmr {
             {"tienkung", "assets/tienkung/mjcf/tienkung.xml"},
             {"pal_talos", "assets/pal_talos/talos.xml"},
             {"fourier_gr3", "assets/fourier_gr3v2_1_1/mjcf/gr3v2_1_1_dummy_hand.xml"},
+            {"galbot_one_golf", "assets/galbot_one_golf/galbot_one_golf.xml"},
         };
         return kMap;
     }
@@ -58,6 +59,7 @@ namespace gmr {
             {"unitree_g1_with_hands", "general_motion_retargeting/ik_configs/smplx_to_g1.json"},
             {"unitree_h1", "general_motion_retargeting/ik_configs/smplx_to_h1.json"},
             {"unitree_h1_2", "general_motion_retargeting/ik_configs/smplx_to_h1_2.json"},
+            {"unitree_h2", "general_motion_retargeting/ik_configs/smplx_to_h2.json"},
             {"booster_t1", "general_motion_retargeting/ik_configs/smplx_to_t1.json"},
             {"booster_t1_29dof", "general_motion_retargeting/ik_configs/smplx_to_t1_29dof.json"},
             {"stanford_toddy", "general_motion_retargeting/ik_configs/smplx_to_toddy.json"},
@@ -71,6 +73,7 @@ namespace gmr {
             {"pnd_adam_lite", "general_motion_retargeting/ik_configs/smplx_to_adam.json"},
             {"tienkung", "general_motion_retargeting/ik_configs/smplx_to_tienkung.json"},
             {"fourier_gr3", "general_motion_retargeting/ik_configs/smplx_to_gr3.json"},
+            {"galbot_one_golf", "general_motion_retargeting/ik_configs/smplx_to_galbot_one_golf.json"},
         };
         return kMap;
     }

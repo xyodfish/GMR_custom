@@ -99,6 +99,7 @@ class SemanticSiteMap:
             raise ValueError("source_robot_reference_height_m must be positive")
 
         self.global_scale = self.canonical_height / self.source_height
+        self.scale_root_xy = bool(self.cfg.get("scale_root_xy", False))
         self.sites: list[SiteSpec] = []
         for name, spec in self.cfg["sites"].items():
             body = str(spec["source_body"])
@@ -155,12 +156,15 @@ class SemanticSiteMap:
             if root0 is None:
                 root0 = pelvis.copy()
 
-            # One global_scale on root-relative motion (preserves speed in height/s).
-            root0_scaled = root0 * np.array([1.0, 1.0, self.global_scale], dtype=np.float64)
+            scaled_pelvis = pelvis.copy()
+            scaled_pelvis[2] = root0[2] * self.global_scale + (pelvis[2] - root0[2]) * self.global_scale
+            if self.scale_root_xy:
+                scaled_pelvis[:2] = root0[:2] + (pelvis[:2] - root0[:2]) * self.global_scale
+
             scaled: dict[str, dict[str, list[float]]] = {}
             for name, pose in raw.items():
                 pos = np.asarray(pose["position"], dtype=np.float64)
-                world = root0_scaled + (pos - root0) * self.global_scale
+                world = scaled_pelvis + (pos - pelvis) * self.global_scale
                 quat = quat_normalize(np.asarray(pose["orientation"], dtype=np.float64))
                 if name in prev_quats:
                     quat = hemisphere_continue(prev_quats[name], quat)

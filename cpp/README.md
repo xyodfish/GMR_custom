@@ -12,6 +12,7 @@
   - `qp_solver` / `hqp_solver` / `qp_data`
 - 复用现有 `general_motion_retargeting/ik_configs/*.json` 的 IK config。
 - 单帧 retarget CLI：`gmr_retarget_cli`。
+- 纯 C++ 的 G1 关节轨迹到目标机器人轨迹 CLI：`gmr_robot_to_robot_cli`。
 - 带 YAML 运行配置的 MuJoCo viewer：`gmr_retarget_viewer`（仅渲染）。
 
 ## 依赖
@@ -29,6 +30,21 @@ cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
 cmake --build cpp/build -j
 export LD_LIBRARY_PATH=/opt/robot/devel/lib:$LD_LIBRARY_PATH
 ```
+
+## 机器人关节轨迹到机器人关节轨迹
+
+以下命令在一个 C++ 进程内完成 G1 轨迹读取、MuJoCo FK、canonical/contact、Batch TO 和接触感知后处理：
+
+```bash
+cpp/build/gmr_robot_to_robot_cli \
+  --gmr_root . \
+  --input /path/to/g1_motion.qpos.json \
+  --robot_b unitree_h2 \
+  --out_json output/h2_motion.qpos.json \
+  --fast
+```
+
+输入支持 G1 CSV、qpos JSON 和 C-order little-endian float32/float64 NPY。完整参数和 pipeline 见 [`docs/robot_joint_trajectory_retargeting.md`](../docs/robot_joint_trajectory_retargeting.md)。
 
 ## Batch TO（C++ 滑窗 GN）
 

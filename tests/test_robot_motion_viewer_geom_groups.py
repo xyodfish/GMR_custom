@@ -4,6 +4,7 @@ import mujoco as mj
 import numpy as np
 
 from general_motion_retargeting import ROBOT_BASE_DICT, ROBOT_XML_DICT
+from general_motion_retargeting.dual_robot_viewer import build_two_robot_model
 from general_motion_retargeting.robot_motion_viewer import (
     RobotMotionViewer,
     hide_collision_duplicate_geoms,
@@ -24,6 +25,30 @@ class RobotMotionViewerGeomGroupTest(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(len(robot_mesh_groups), 22)
         self.assertEqual(set(robot_mesh_groups), {0})
+
+        for name in (
+            "left_upper_arm_connector",
+            "left_forearm_connector",
+            "right_upper_arm_connector",
+            "right_forearm_connector",
+        ):
+            geom_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, name)
+            self.assertGreaterEqual(geom_id, 0)
+            self.assertEqual(int(model.geom_group[geom_id]), 0)
+
+    def test_galbot_tint_preserves_head_and_chassis_contrast(self):
+        model, _, _, _ = build_two_robot_model(
+            ROBOT_XML_DICT["unitree_g1"],
+            ROBOT_XML_DICT["galbot_one_golf"],
+        )
+
+        def brightness(name):
+            geom_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, f"b_{name}")
+            self.assertGreaterEqual(geom_id, 0)
+            return float(np.mean(model.geom_rgba[geom_id, :3]))
+
+        self.assertLess(brightness("head_neck_visual"), brightness("head_shell_visual"))
+        self.assertLess(brightness("chassis_inner_core"), brightness("chassis_visual"))
 
     def test_g1_still_hides_group_zero_collision_duplicates(self):
         model = mj.MjModel.from_xml_path(str(ROBOT_XML_DICT["unitree_g1"]))

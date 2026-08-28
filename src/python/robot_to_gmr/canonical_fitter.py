@@ -268,6 +268,12 @@ class CanonicalTrajectoryFitter:
             "right_wrist": {"position": right_wrist.tolist(), "orientation": right_wrist_quat.tolist()},
         }
 
+        if "head" in target:
+            out["head"] = {
+                "position": list(target["head"]["position"]),
+                "orientation": list(target["head"]["orientation"]),
+            }
+
         for name in CORE_BODIES:
             if name not in out:
                 raise RuntimeError(f"Canonical frame missing {name}")

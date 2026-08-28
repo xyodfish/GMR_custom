@@ -64,6 +64,7 @@ add_library(gmr_retarget_core STATIC
   src/retarget/contact_ground.cpp
   src/retarget/mujoco_collision_limit.cpp
   src/retarget/human_frame_io.cpp
+  src/retarget/robot_trajectory_pipeline.cpp
   src/retarget/retargeter.cpp
   src/retarget/retargeter_pinocchio.cpp
   src/retarget/retargeter_mujoco.cpp
@@ -87,6 +88,19 @@ target_link_libraries(gmr_retarget_core PUBLIC
   mujoco::mujoco
   glog::glog
 )
+
+if(yaml-cpp_FOUND)
+  if(TARGET yaml-cpp::yaml-cpp)
+    target_link_libraries(gmr_retarget_core PUBLIC yaml-cpp::yaml-cpp)
+  elseif(TARGET yaml-cpp)
+    target_link_libraries(gmr_retarget_core PUBLIC yaml-cpp)
+  else()
+    target_link_libraries(gmr_retarget_core PUBLIC yaml-cpp)
+  endif()
+else()
+  target_include_directories(gmr_retarget_core PUBLIC ${YAML_CPP_INCLUDE_DIR})
+  target_link_libraries(gmr_retarget_core PUBLIC ${YAML_CPP_LIBRARY})
+endif()
 
 if(OpenMP_CXX_FOUND)
   target_link_libraries(gmr_retarget_core PUBLIC OpenMP::OpenMP_CXX)
@@ -120,6 +134,14 @@ add_executable(gmr_online_qp_cli
   src/main_online_qp_cli.cpp
 )
 
+add_executable(gmr_robot_to_robot_cli
+  src/main_robot_trajectory_to_gmr.cpp
+)
+
+target_link_libraries(gmr_robot_to_robot_cli PRIVATE
+  gmr_retarget_core
+)
+
 target_link_libraries(gmr_online_qp_cli PRIVATE
   gmr_retarget_core
 )
@@ -140,17 +162,4 @@ else()
     mujoco::mujoco
     ${GLFW_LIBRARY}
   )
-endif()
-
-if(yaml-cpp_FOUND)
-  if(TARGET yaml-cpp::yaml-cpp)
-    target_link_libraries(gmr_retarget_viewer PRIVATE yaml-cpp::yaml-cpp)
-  elseif(TARGET yaml-cpp)
-    target_link_libraries(gmr_retarget_viewer PRIVATE yaml-cpp)
-  else()
-    target_link_libraries(gmr_retarget_viewer PRIVATE yaml-cpp)
-  endif()
-else()
-  target_include_directories(gmr_retarget_viewer PRIVATE ${YAML_CPP_INCLUDE_DIR})
-  target_link_libraries(gmr_retarget_viewer PRIVATE ${YAML_CPP_LIBRARY})
 endif()

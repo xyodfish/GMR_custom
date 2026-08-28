@@ -33,6 +33,60 @@ namespace gmr {
         std::vector<std::pair<std::vector<std::string>, std::vector<std::string>>> selfCollisionPairs;
     };
 
+    struct PlanarBaseConfig {
+        bool enabled = false;
+        std::string frameName;
+        std::string humanBody;
+        double groundZ = 0.0;
+        std::string yawFrame;
+        std::string positionSource;
+    };
+
+    struct MobileArmChainConfig {
+        std::string shoulderFrame;
+        std::string elbowFrame;
+        std::string wristFrame;
+        std::string orientationFrame;
+        std::string shoulderHumanBody;
+        std::string elbowHumanBody;
+        std::string wristHumanBody;
+        Eigen::Quaterniond elbowRotationOffset = Eigen::Quaterniond::Identity();
+        Eigen::Quaterniond wristRotationOffset = Eigen::Quaterniond::Identity();
+    };
+
+    struct MobileUpperBodyConfig {
+        bool enabled = false;
+        std::string torsoFrame;
+        std::string torsoHumanBody;
+        Eigen::Quaterniond torsoRotationOffset = Eigen::Quaterniond::Identity();
+        Eigen::Vector2d torsoLocalXy = Eigen::Vector2d::Zero();
+        double torsoHeightScale = 0.75;
+        Eigen::Vector2d torsoHeightRange = Eigen::Vector2d(0.72, 1.12);
+        Eigen::Vector3d torsoOrientationLimitDeg = Eigen::Vector3d(20.0, 20.0, 30.0);
+        double torsoPositionCost = 120.0;
+        double torsoOrientationCost = 30.0;
+        int torsoIterations = 20;
+        int torsoMinIterations = 4;
+        int initialTorsoIterations = 60;
+        int initialTorsoMinIterations = 30;
+        std::string headFrame;
+        std::string headHumanBody;
+        Eigen::Vector3d headOrientationLimitDeg = Eigen::Vector3d(30.0, 30.0, 60.0);
+        double headOrientationCost = 2.0;
+        double armPositionCost = 80.0;
+        double elbowOrientationCost = 0.2;
+        double wristOrientationCost = 0.25;
+        int armIterations = 15;
+        int armMinIterations = 8;
+        int initialArmIterations = 40;
+        int initialArmMinIterations = 20;
+        int armTargetPasses = 2;
+        double jointLimitMarginDeg = 2.0;
+        double postureCost = 0.05;
+        std::unordered_map<std::string, double> jointPostureCost;
+        std::vector<MobileArmChainConfig> armChains;
+    };
+
     struct IkConfig {
         std::string robotRootName;
         std::string humanRootName;
@@ -44,6 +98,8 @@ namespace gmr {
         std::vector<IkTaskEntry> tasksTable1;
         std::vector<IkTaskEntry> tasksTable2;
         CollisionAvoidanceConfig collisionAvoidance;
+        PlanarBaseConfig planarBase;
+        MobileUpperBodyConfig mobileUpperBody;
     };
 
     IkConfig loadIkConfig(const std::filesystem::path& configPath, double actualHumanHeight);
