@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+option(GMR_NATIVE_OPTIMIZATION "Optimize release binaries for the build machine CPU" ON)
+if(GMR_NATIVE_OPTIMIZATION AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options($<$<CONFIG:Release>:-march=native>)
+endif()
+
 set(GMR_THIRDPARTY_PREFIX "/opt/robot/devel" CACHE PATH "Third-party install prefix")
 set(GMR_MUJOCO_PREFIX "/opt/robot/devel" CACHE PATH "MuJoCo install prefix")
 list(PREPEND CMAKE_PREFIX_PATH "${GMR_THIRDPARTY_PREFIX}" "${GMR_MUJOCO_PREFIX}")

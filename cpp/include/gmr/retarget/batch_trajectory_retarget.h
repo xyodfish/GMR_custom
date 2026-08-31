@@ -36,6 +36,7 @@ namespace gmr {
             int bodyId       = -1;
             double posWeight = 0.0;
             double rotWeight = 0.0;
+            std::vector<int> activeColumns;
         };
         struct FrameTaskTarget {
             int bodyId                   = -1;
@@ -162,7 +163,8 @@ namespace gmr {
        private:
         void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;
         double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets, const Eigen::VectorXd& anchor,
-                          const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight, double wGmr) const;
+                          const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight, double wGmr,
+                          int firstVariableFrame = 0) const;
         Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter,
                                      const ContactGroundState& contactState);
         std::vector<Eigen::VectorXd> finalizeTrajectory(std::vector<Eigen::VectorXd> qOpt, Retargeter& retargeter,

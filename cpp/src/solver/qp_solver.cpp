@@ -62,8 +62,13 @@ const QPOutput& QPSolver::solve(const QPData& qpData) {
 const QPOutput& QPSolver::solveQpoases(const QPData& qpData) {
   const int nv = qpData.H.rows();
   const int nc = qpData.CI.rows();
-  output_.resize(nv, 0, nc);
-  output_.lambda.resize(nc);
+  const bool hasBounds = qpData.xLb.size() != 0 || qpData.xUb.size() != 0;
+  if (hasBounds && (qpData.xLb.size() != nv || qpData.xUb.size() != nv)) {
+    throw std::runtime_error("QP variable bounds must both match the number of variables.");
+  }
+
+  output_.resize(nv, 0, nc + (hasBounds ? nv : 0));
+  output_.lambda.resize(nc + (hasBounds ? nv : 0));
 
   if (!qpoasesInitialized_ || qpoasesNv_ != nv || qpoasesNc_ != nc) {
     qpoasesSolver_ = std::make_shared<qpOASES::SQProblem>(nv, nc);
@@ -74,8 +79,13 @@ const QPOutput& QPSolver::solveQpoases(const QPData& qpData) {
   }
 
   int nWSR = 100;
-  const qpOASES::returnValue ret = qpoasesSolver_->init(qpData.H.data(), qpData.g.data(), qpData.CI.data(), nullptr,
-                                                        nullptr, qpData.ciLb.data(), qpData.ciUb.data(), nWSR);
+  const double* xLb = hasBounds ? qpData.xLb.data() : nullptr;
+  const double* xUb = hasBounds ? qpData.xUb.data() : nullptr;
+  const double* ci = nc > 0 ? qpData.CI.data() : nullptr;
+  const double* ciLb = nc > 0 ? qpData.ciLb.data() : nullptr;
+  const double* ciUb = nc > 0 ? qpData.ciUb.data() : nullptr;
+  const qpOASES::returnValue ret = qpoasesSolver_->init(
+      qpData.H.data(), qpData.g.data(), ci, xLb, xUb, ciLb, ciUb, nWSR);
 
   if (ret == qpOASES::SUCCESSFUL_RETURN || ret == qpOASES::RET_MAX_NWSR_REACHED) {
     output_.status = ret == qpOASES::SUCCESSFUL_RETURN ? QPStatus::kOptimal : QPStatus::kMaxIterReached;
@@ -102,16 +112,23 @@ const QPOutput& QPSolver::solveDaqp(const QPData& qpData) {
 
   const int nv = qpData.H.rows();
   const int nc = qpData.CI.rows();
-  output_.resize(nv, 0, nc);
-  output_.lambda.resize(nc);
+  const bool hasBounds = qpData.xLb.size() != 0 || qpData.xUb.size() != 0;
+  if (hasBounds && (qpData.xLb.size() != nv || qpData.xUb.size() != nv)) {
+    throw std::runtime_error("QP variable bounds must both match the number of variables.");
+  }
+
+  const int ns = hasBounds ? nv : 0;
+  const int nt = ns + nc;
+  output_.resize(nv, 0, nt);
+  output_.lambda.resize(nt);
 
   DaqpState& st = *daqpState_;
   st.H.resize(static_cast<std::size_t>(nv * nv));
   st.f.resize(static_cast<std::size_t>(nv));
   st.A.resize(static_cast<std::size_t>(nc * nv));
-  st.bupper.resize(static_cast<std::size_t>(nc));
-  st.blower.resize(static_cast<std::size_t>(nc));
-  st.sense.assign(static_cast<std::size_t>(nc), 0);
+  st.bupper.resize(static_cast<std::size_t>(nt));
+  st.blower.resize(static_cast<std::size_t>(nt));
+  st.sense.assign(static_cast<std::size_t>(nt), 0);
 
   Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> Hmap(st.H.data(), nv, nv);
   Hmap = qpData.H;
@@ -119,22 +136,28 @@ const QPOutput& QPSolver::solveDaqp(const QPData& qpData) {
   fmap = qpData.g;
   Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> Amap(st.A.data(), nc, nv);
   Amap = qpData.CI;
-  Eigen::Map<Eigen::VectorXd> buMap(st.bupper.data(), nc);
-  buMap = qpData.ciUb;
-  Eigen::Map<Eigen::VectorXd> blMap(st.blower.data(), nc);
-  blMap = qpData.ciLb;
+  Eigen::Map<Eigen::VectorXd> buMap(st.bupper.data(), nt);
+  Eigen::Map<Eigen::VectorXd> blMap(st.blower.data(), nt);
+  if (hasBounds) {
+    buMap.head(ns) = qpData.xUb;
+    blMap.head(ns) = qpData.xLb;
+  }
+
+  if (nc > 0) {
+    buMap.tail(nc) = qpData.ciUb;
+    blMap.tail(nc) = qpData.ciLb;
+  }
 
   DAQPProblem problem{};
   problem.n = nv;
-  problem.m = nc;
-  problem.ms = 0;
+  problem.m = nt;
+  problem.ms = ns;
   problem.H = st.H.data();
   problem.f = st.f.data();
-  problem.A = st.A.data();
+  problem.A = nc > 0 ? st.A.data() : nullptr;
   problem.bupper = st.bupper.data();
   problem.blower = st.blower.data();
   problem.sense = st.sense.data();
-
   DAQPResult result{};
   result.x = output_.x.data();
   result.lam = output_.lambda.data();

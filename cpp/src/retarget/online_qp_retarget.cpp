@@ -49,7 +49,7 @@ namespace gmr {
         bc.torqueLimitGateMinOffFrames = config_.torqueLimitGateMinOffFrames;
         bc.torqueLimitGateFloor        = config_.torqueLimitGateFloor;
         bc.gnLineSearchAlphas          = {1.0, 0.5, 0.25, 0.1};
-        bc.gnLineSearchMode            = GnLineSearchMode::kBest;
+        bc.gnLineSearchMode            = GnLineSearchMode::kArmijo;
         bc.useBandedSolver             = false;
         bc.verbose                     = config_.verbose;
         return bc;

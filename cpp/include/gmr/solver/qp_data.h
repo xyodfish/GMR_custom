@@ -16,6 +16,8 @@ struct QPData {
   Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> CI;
   Vector ciLb;
   Vector ciUb;
+  Vector xLb;
+  Vector xUb;
 
   void reset(int nVar, int nIneq) {
     H.setZero(nVar, nVar);
@@ -23,6 +25,8 @@ struct QPData {
     CI.setZero(nIneq, nVar);
     ciLb.setZero(nIneq);
     ciUb.setZero(nIneq);
+    xLb.resize(0);
+    xUb.resize(0);
   }
 
   std::string toString() const {
@@ -32,6 +36,8 @@ struct QPData {
     oss << "CI:\n" << CI << "\n";
     oss << "ciLb:\n" << ciLb.transpose() << "\n";
     oss << "ciUb:\n" << ciUb.transpose() << "\n";
+    oss << "xLb:\n" << xLb.transpose() << "\n";
+    oss << "xUb:\n" << xUb.transpose() << "\n";
     return oss.str();
   }
 };

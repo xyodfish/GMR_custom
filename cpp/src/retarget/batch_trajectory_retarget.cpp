@@ -181,8 +181,8 @@ namespace gmr {
             table1RotOffsets_[task.humanBodyName] = task.rotOffset;
         }
 
-        buildTrackEntries();
         buildOptIndices();
+        buildTrackEntries();
         buildSmoothMappings();
         buildTorqueLimitJoints();
         resolveFootBodyIds();
@@ -221,9 +221,17 @@ namespace gmr {
         }
 
         trackEntries_.reserve(merged.size());
-        for (const auto& [name, entry] : merged) {
+        for (const auto& [name, mergedEntry] : merged) {
             (void)name;
-            trackEntries_.push_back(entry);
+            TrackEntry entry = mergedEntry;
+            for (int col = 0; col < static_cast<int>(optVidx_.size()); ++col) {
+                const int dofBodyId = impl_->model->dof_bodyid[optVidx_[col]];
+                if (bodyInSubtree(impl_->model.get(), entry.bodyId, dofBodyId)) {
+                    entry.activeColumns.push_back(col);
+                }
+            }
+
+            trackEntries_.push_back(std::move(entry));
         }
     }
 
@@ -854,8 +862,9 @@ namespace gmr {
 
     double BatchTrajectoryRetargeter::windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets,
                                                  const Eigen::VectorXd& anchor, const std::vector<Eigen::VectorXd>& qRef, int frameOffset,
-                                                 double anchorWeight, double wGmr) const {
+                                                 double anchorWeight, double wGmr, int firstVariableFrame) const {
         const int nFrames = static_cast<int>(qWin.size());
+        const int firstFrame = std::clamp(firstVariableFrame, 0, nFrames);
         double cost       = 0.0;
         double fkCost     = 0.0;
         double velCost    = 0.0;
@@ -881,32 +890,48 @@ namespace gmr {
             footRotError.assign(nFrames, std::vector<Eigen::Vector2d>(nFeet));
         }
 
-        for (int t = 0; t < nFrames; ++t) {
+        const int fkStartFrame = footActive && config_.wFootSlip > 0.0 && firstFrame > 0
+            ? firstFrame - 1
+            : firstFrame;
+        for (int t = fkStartFrame; t < nFrames; ++t) {
             mju_copy(data->qpos, qWin[t].data(), model->nq);
             mj_forward(model, data);
 
-            for (const auto& entry : trackEntries_) {
-                auto tgtIt = targets[t].find(entry.bodyId);
-                if (tgtIt == targets[t].end()) {
-                    continue;
-                }
-                const FrameTaskTarget& tgt = tgtIt->second;
-                const double* xpos         = &data->xpos[3 * entry.bodyId];
-                if (entry.posWeight > 0.0) {
-                    const Eigen::Vector3d e(xpos[0] - tgt.targetPos.x(), xpos[1] - tgt.targetPos.y(), xpos[2] - tgt.targetPos.z());
-                    fkCost += entry.posWeight * e.squaredNorm();
-                }
-                if (entry.rotWeight > 0.0) {
-                    const Eigen::Matrix3d Rbody = bodyRotation(data, entry.bodyId);
-                    Eigen::Quaterniond qBody(Rbody);
-                    qBody.normalize();
-                    const Eigen::Vector3d err = quatRotError(tgt.targetRot, qBody);
-                    fkCost += entry.rotWeight * err.squaredNorm();
+            if (t >= firstFrame) {
+                for (const auto& entry : trackEntries_) {
+                    auto tgtIt = targets[t].find(entry.bodyId);
+                    if (tgtIt == targets[t].end()) {
+                        continue;
+                    }
+
+                    const FrameTaskTarget& tgt = tgtIt->second;
+                    const double* xpos         = &data->xpos[3 * entry.bodyId];
+                    if (entry.posWeight > 0.0) {
+                        const Eigen::Vector3d e(
+                            xpos[0] - tgt.targetPos.x(),
+                            xpos[1] - tgt.targetPos.y(),
+                            xpos[2] - tgt.targetPos.z());
+                        fkCost += entry.posWeight * e.squaredNorm();
+                    }
+
+                    if (entry.rotWeight > 0.0) {
+                        const Eigen::Matrix3d Rbody = bodyRotation(data, entry.bodyId);
+                        Eigen::Quaterniond qBody(Rbody);
+                        qBody.normalize();
+                        const Eigen::Vector3d err = quatRotError(tgt.targetRot, qBody);
+                        fkCost += entry.rotWeight * err.squaredNorm();
+                    }
                 }
             }
 
             if (footActive) {
                 for (int f = 0; f < nFeet; ++f) {
+                    if (t < firstFrame) {
+                        const double* anchor = footPosition(data, f);
+                        footAnchorPos[t][f] = Eigen::Vector3d(anchor[0], anchor[1], anchor[2]);
+                        continue;
+                    }
+
                     const FootGroundSample sample = closestFootGroundSample(
                         model,
                         data,
@@ -934,7 +959,7 @@ namespace gmr {
 
         if (config_.wVelocity > 0.0 && nFrames >= 2 && !smoothV_.empty()) {
             const double weight = smoothingWeight(config_.wVelocity, motionDtForTorque_, 1);
-            for (int t = 1; t < nFrames; ++t) {
+            for (int t = std::max(1, firstFrame); t < nFrames; ++t) {
                 const Eigen::VectorXd velocity = configurationDifference(model, qWin[t - 1], qWin[t]);
                 for (int vi : smoothV_) {
                     const double e = velocity[optVidx_[vi]];
@@ -945,7 +970,7 @@ namespace gmr {
 
         if (config_.wAcceleration > 0.0 && nFrames >= 3 && !smoothV_.empty()) {
             const double weight = smoothingWeight(config_.wAcceleration, motionDtForTorque_, 2);
-            for (int t = 2; t < nFrames; ++t) {
+            for (int t = std::max(2, firstFrame); t < nFrames; ++t) {
                 const Eigen::VectorXd previousVelocity = configurationDifference(model, qWin[t - 2], qWin[t - 1]);
                 const Eigen::VectorXd currentVelocity = configurationDifference(model, qWin[t - 1], qWin[t]);
                 for (int vi : smoothV_) {
@@ -956,7 +981,7 @@ namespace gmr {
             }
         }
 
-        if (anchorWeight > 0.0) {
+        if (anchorWeight > 0.0 && firstFrame == 0) {
             const Eigen::VectorXd delta = configurationDifference(model, anchor, qWin[0]);
             for (int v : optVidx_) {
                 anchorCost += anchorWeight * delta[v] * delta[v];
@@ -965,7 +990,7 @@ namespace gmr {
         }
 
         if (wGmr > 0.0 && !qRef.empty()) {
-            for (int t = 0; t < nFrames; ++t) {
+            for (int t = firstFrame; t < nFrames; ++t) {
                 const Eigen::VectorXd error = configurationDifference(model, qRef[t], qWin[t]);
                 for (int v : optVidx_) {
                     gmrCost += wGmr * error[v] * error[v];
@@ -986,7 +1011,7 @@ namespace gmr {
 
         const bool useGlobalRefFoot = config_.wFootIkAnchor > 0.0 && !globalRefFootPos_.empty() && !qRef.empty();
 
-        for (int t = 0; t < nFrames; ++t) {
+        for (int t = firstFrame; t < nFrames; ++t) {
             const int tAbs = t + frameOffset;
             for (int f = 0; f < nFeet; ++f) {
                 bool contact = true;
@@ -1285,6 +1310,9 @@ namespace gmr {
         const int m                       = static_cast<int>(optVidx_.size());  // 每帧参与优化的速度自由度数量
         const int nvar = nFrames * m;  // QP 总变量数 QP 变量不是完整 qpos，而是窗口内每帧的优化 dof 增量：
         const double wGmr = qpOpts != nullptr ? qpOpts->wGmr : 0.0;
+        const int pinFrames = qpOpts != nullptr
+            ? std::max(0, std::min(qpOpts->pinFrames, nFrames - 1))
+            : 0;
 
         // 确保这些 buffer 的尺寸够当前窗口 nFrames用 可以复用内存
         ensureGnWorkspace(nFrames);
@@ -1296,7 +1324,6 @@ namespace gmr {
         motionDtForTorque_ = qpOpts != nullptr ? qpOpts->motionDt : config_.motionDt;  // 设置 torque limit 相关计算用的时间步长 dt。
 
         if (qpOpts != nullptr && (qpOpts->useJointLimits || qpOpts->useVelocityLimits)) {
-            const int pinFrames = std::max(0, std::min(qpOpts->pinFrames, nFrames - 1));
             const double dqLimit = qpOpts->useVelocityLimits
                                        ? qpOpts->dqMax * std::max(qpOpts->motionDt, 1e-6)
                                        : std::numeric_limits<double>::infinity();
@@ -1360,55 +1387,80 @@ namespace gmr {
         // 这里更准确是 constrained Gauss-Newton / SCP 外循环，而不是严格标准 SQP：
         // 每轮在当前 qWin 附近线性化运动学残差，构造一个凸 QP 子问题，
         // 解出窗口内各帧的增量后再积分回 qWin，并重复若干轮。
+        double cachedCost = std::numeric_limits<double>::quiet_NaN();
         for (int step = 0; step < config_.gnSteps; ++step) {
             ws.Hdense.setZero();
             ws.g.setZero();
 
             for (int t = 0; t < nFrames; ++t) {
+                if (t < pinFrames) {
+                    if (footActive && t == pinFrames - 1) {
+                        mju_copy(data->qpos, qWin[t].data(), model->nq);
+                        mj_forward(model, data);
+                        for (int f = 0; f < nFeet; ++f) {
+                            const double* anchorPosition = footPosition(data, f);
+                            ws.footAnchorPos[t][f] = Eigen::Vector3d(
+                                anchorPosition[0],
+                                anchorPosition[1],
+                                anchorPosition[2]);
+                        }
+                    }
+
+                    continue;
+                }
+
                 mju_copy(data->qpos, qWin[t].data(), model->nq);
                 mj_forward(model, data);
-                const int off = t * m;  // 这一帧在大 QP 变量里的偏移
+                const int off = t * m;
                 const int nv  = model->nv;
 
-                // 计算每个笛卡尔跟踪任务的误差和雅可比，并将其累加到 QP 的 Hessian 矩阵和梯度向量中
-                for (const auto& entry : trackEntries_) {
-                    auto tgtIt = targets[t].find(entry.bodyId);
-                    if (tgtIt == targets[t].end()) {
-                        continue;
-                    }
-                    const FrameTaskTarget& tgt = tgtIt->second;
-                    const double* xpos         = &data->xpos[3 * entry.bodyId];
-                    Eigen::Vector3d bodyPos(xpos[0], xpos[1], xpos[2]);
-
-                    if (entry.posWeight > 0.0) {
-                        const Eigen::Vector3d err = bodyPos - tgt.targetPos;
-                        mj_jac(model, data, ws.jacp.data(), nullptr, xpos, entry.bodyId);
-                        Eigen::MatrixXd J(3, m);
-                        for (int col = 0; col < m; ++col) {
-                            J.col(col) = mjJacColumn(ws.jacp.data(), nv, optVidx_[col]);
+                if (t >= pinFrames) {
+                    // 计算每个笛卡尔跟踪任务的误差和雅可比，并将其累加到 QP 的 Hessian 矩阵和梯度向量中
+                    for (const auto& entry : trackEntries_) {
+                        auto tgtIt = targets[t].find(entry.bodyId);
+                        if (tgtIt == targets[t].end()) {
+                            continue;
                         }
-                        const double w = entry.posWeight;
 
-                        // bodyPos(q + dq) ≈ bodyPos(q) + J * dq
-                        // err_new ≈ err + J * dq
-                        // GN近似
-                        ws.Hdense.block(off, off, m, m).noalias() += w * J.transpose() * J;
-                        ws.g.segment(off, m).noalias() += w * J.transpose() * err;
-                    }
+                        const FrameTaskTarget& tgt = tgtIt->second;
+                        const double* xpos         = &data->xpos[3 * entry.bodyId];
+                        Eigen::Vector3d bodyPos(xpos[0], xpos[1], xpos[2]);
+                        auto accumulateTask = [&](const double* jac, const Eigen::Vector3d& error, double weight) {
+                            const int k = static_cast<int>(entry.activeColumns.size());
+                            Eigen::Matrix<double, 3, Eigen::Dynamic> J(3, k);
+                            for (int a = 0; a < k; ++a) {
+                                const int col = entry.activeColumns[a];
+                                J.col(a) = mjJacColumn(jac, nv, optVidx_[col]);
+                                ws.g[off + col] += weight * J.col(a).dot(error);
+                            }
 
-                    if (entry.rotWeight > 0.0) {
-                        const Eigen::Matrix3d Rbody = bodyRotation(data, entry.bodyId);
-                        Eigen::Quaterniond qBody(Rbody);
-                        qBody.normalize();
-                        const Eigen::Vector3d err = quatRotError(tgt.targetRot, qBody);
-                        mj_jac(model, data, nullptr, ws.jacr.data(), xpos, entry.bodyId);
-                        Eigen::MatrixXd J(3, m);
-                        for (int col = 0; col < m; ++col) {
-                            J.col(col) = mjJacColumn(ws.jacr.data(), nv, optVidx_[col]);
+                            for (int a = 0; a < k; ++a) {
+                                const int row = entry.activeColumns[a];
+                                for (int b = 0; b < k; ++b) {
+                                    const int col = entry.activeColumns[b];
+                                    ws.Hdense(off + row, off + col) += weight * J.col(a).dot(J.col(b));
+                                }
+                            }
+                        };
+
+                        if (entry.posWeight > 0.0) {
+                            const Eigen::Vector3d err = bodyPos - tgt.targetPos;
+                            mj_jac(model, data, ws.jacp.data(), nullptr, xpos, entry.bodyId);
+
+                            // bodyPos(q + dq) ≈ bodyPos(q) + J * dq
+                            // err_new ≈ err + J * dq
+                            // GN近似
+                            accumulateTask(ws.jacp.data(), err, entry.posWeight);
                         }
-                        const double w = entry.rotWeight;
-                        ws.Hdense.block(off, off, m, m).noalias() += w * J.transpose() * J;
-                        ws.g.segment(off, m).noalias() += w * J.transpose() * err;
+
+                        if (entry.rotWeight > 0.0) {
+                            const Eigen::Matrix3d Rbody = bodyRotation(data, entry.bodyId);
+                            Eigen::Quaterniond qBody(Rbody);
+                            qBody.normalize();
+                            const Eigen::Vector3d err = quatRotError(tgt.targetRot, qBody);
+                            mj_jac(model, data, nullptr, ws.jacr.data(), xpos, entry.bodyId);
+                            accumulateTask(ws.jacr.data(), err, entry.rotWeight);
+                        }
                     }
                 }
 
@@ -1484,7 +1536,7 @@ namespace gmr {
             }
 
             // 将 anchor 约束累加到 QP 的 Hessian 矩阵和梯度向量中 只作用在窗口的第0帧
-            if (anchorWeight > 0.0) {
+            if (anchorWeight > 0.0 && pinFrames == 0) {
                 const Eigen::VectorXd error = configurationDifference(model, anchor, qWin[0]);
                 for (int vi = 0; vi < m; ++vi) {
                     const int v = optVidx_[vi];
@@ -1496,7 +1548,7 @@ namespace gmr {
             // 速度平滑项
             if (config_.wVelocity > 0.0 && nFrames >= 2 && !smoothV_.empty()) {
                 const double weight = smoothingWeight(config_.wVelocity, motionDtForTorque_, 1);
-                for (int t = 1; t < nFrames; ++t) {
+                for (int t = std::max(1, pinFrames); t < nFrames; ++t) {
                     const int offT  = t * m;
                     const int offM1 = (t - 1) * m;
                     const Eigen::VectorXd velocity = configurationDifference(model, qWin[t - 1], qWin[t]);
@@ -1508,11 +1560,13 @@ namespace gmr {
 
                         // H 相邻帧之间的 block coupling 抑制轨迹抖动
                         ws.Hdense(offT + vi, offT + vi) += w;
-                        ws.Hdense(offM1 + vi, offM1 + vi) += w;
-                        ws.Hdense(offT + vi, offM1 + vi) -= w;
-                        ws.Hdense(offM1 + vi, offT + vi) -= w;
                         ws.g[offT + vi] += w * e;
-                        ws.g[offM1 + vi] -= w * e;
+                        if (t > pinFrames) {
+                            ws.Hdense(offM1 + vi, offM1 + vi) += w;
+                            ws.Hdense(offT + vi, offM1 + vi) -= w;
+                            ws.Hdense(offM1 + vi, offT + vi) -= w;
+                            ws.g[offM1 + vi] -= w * e;
+                        }
                     }
                 }
             }
@@ -1520,7 +1574,7 @@ namespace gmr {
             // 加速度平滑项
             if (config_.wAcceleration > 0.0 && nFrames >= 3 && !smoothV_.empty()) {
                 const double weight = smoothingWeight(config_.wAcceleration, motionDtForTorque_, 2);
-                for (int t = 2; t < nFrames; ++t) {
+                for (int t = std::max(2, pinFrames); t < nFrames; ++t) {
                     const Eigen::VectorXd previousVelocity = configurationDifference(model, qWin[t - 2], qWin[t - 1]);
                     const Eigen::VectorXd currentVelocity = configurationDifference(model, qWin[t - 1], qWin[t]);
                     for (int vi : smoothV_) {
@@ -1531,17 +1585,25 @@ namespace gmr {
                         const int i2   = t * m + vi;
                         const double w = weight;
                         ws.Hdense(i2, i2) += w;
-                        ws.Hdense(i1, i1) += 4.0 * w;
-                        ws.Hdense(i0, i0) += w;
-                        ws.Hdense(i2, i1) -= 2.0 * w;
-                        ws.Hdense(i1, i2) -= 2.0 * w;
-                        ws.Hdense(i2, i0) += w;
-                        ws.Hdense(i0, i2) += w;
-                        ws.Hdense(i1, i0) -= 2.0 * w;
-                        ws.Hdense(i0, i1) -= 2.0 * w;
                         ws.g[i2] += w * e;
-                        ws.g[i1] -= 2.0 * w * e;
-                        ws.g[i0] += w * e;
+                        if (t - 1 >= pinFrames) {
+                            ws.Hdense(i1, i1) += 4.0 * w;
+                            ws.Hdense(i2, i1) -= 2.0 * w;
+                            ws.Hdense(i1, i2) -= 2.0 * w;
+                            ws.g[i1] -= 2.0 * w * e;
+                        }
+
+                        if (t - 2 >= pinFrames) {
+                            ws.Hdense(i0, i0) += w;
+                            ws.Hdense(i2, i0) += w;
+                            ws.Hdense(i0, i2) += w;
+                            ws.g[i0] += w * e;
+                        }
+
+                        if (t - 2 >= pinFrames && t - 1 >= pinFrames) {
+                            ws.Hdense(i1, i0) -= 2.0 * w;
+                            ws.Hdense(i0, i1) -= 2.0 * w;
+                        }
                     }
                 }
             }
@@ -1550,7 +1612,7 @@ namespace gmr {
             accumulateWindowTorqueLimitGn(qWin, m);
 
             if (footActive) {
-                for (int t = 0; t < nFrames; ++t) {
+                for (int t = pinFrames; t < nFrames; ++t) {
                     const int offT = t * m;
                     const int tAbs = t + frameOffset;
 
@@ -1656,21 +1718,23 @@ namespace gmr {
                                 ws.footAnchorPos[t][f].head<2>() - ws.footAnchorPos[t - 1][f].head<2>();
                             const int offPrev         = (t - 1) * m;
                             const Eigen::MatrixXd& Jt = ws.footJxy[t][f];
-                            const Eigen::MatrixXd& Jp = ws.footJxy[t - 1][f];
                             const double w = footContactActivation(tAbs, f) * config_.wFootSlip;
                             ws.Hdense.block(offT, offT, m, m).noalias() += w * Jt.transpose() * Jt;
-                            ws.Hdense.block(offPrev, offPrev, m, m).noalias() += w * Jp.transpose() * Jp;
-                            ws.Hdense.block(offT, offPrev, m, m).noalias() -= w * Jt.transpose() * Jp;
-                            ws.Hdense.block(offPrev, offT, m, m).noalias() -= w * Jp.transpose() * Jt;
                             ws.g.segment(offT, m).noalias() += w * Jt.transpose() * err;
-                            ws.g.segment(offPrev, m).noalias() -= w * Jp.transpose() * err;
+                            if (t > pinFrames) {
+                                const Eigen::MatrixXd& Jp = ws.footJxy[t - 1][f];
+                                ws.Hdense.block(offPrev, offPrev, m, m).noalias() += w * Jp.transpose() * Jp;
+                                ws.Hdense.block(offT, offPrev, m, m).noalias() -= w * Jt.transpose() * Jp;
+                                ws.Hdense.block(offPrev, offT, m, m).noalias() -= w * Jp.transpose() * Jt;
+                                ws.g.segment(offPrev, m).noalias() -= w * Jp.transpose() * err;
+                            }
                         }
                     }
                 }
             }
 
             if (qpOpts != nullptr && qpOpts->wGmr > 0.0) {
-                for (int t = 0; t < nFrames; ++t) {
+                for (int t = pinFrames; t < nFrames; ++t) {
                     const int off = t * m;
                     const Eigen::VectorXd error = configurationDifference(model, qRef[t], qWin[t]);
                     for (int vi = 0; vi < m; ++vi) {
@@ -1681,12 +1745,11 @@ namespace gmr {
                 }
             }
 
-            Eigen::MatrixXd Hreg = ws.Hdense + config_.gnDamping * Eigen::MatrixXd::Identity(nvar, nvar);
             if (qpOpts != nullptr) {
-                Hreg = 0.5 * (Hreg + Hreg.transpose()).eval();
-
-                Eigen::VectorXd lb = Eigen::VectorXd::Constant(nvar, -config_.gnMaxStep);
-                Eigen::VectorXd ub = Eigen::VectorXd::Constant(nvar, config_.gnMaxStep);
+                const int pinVars   = pinFrames * m;
+                const int nFree     = nvar - pinVars;
+                Eigen::VectorXd lb  = Eigen::VectorXd::Constant(nFree, -config_.gnMaxStep);
+                Eigen::VectorXd ub  = Eigen::VectorXd::Constant(nFree, config_.gnMaxStep);
 
                 struct HingePair {
                     int localV = 0;
@@ -1706,8 +1769,8 @@ namespace gmr {
                 if (qpOpts->useJointLimits) {
                     constexpr double kDeg2Rad = 0.017453292519943295;
                     const double marginRad    = std::max(0.0, qpOpts->jointLimitMarginDeg) * kDeg2Rad;
-                    for (int t = 0; t < nFrames; ++t) {
-                        const int off = t * m;
+                    for (int t = pinFrames; t < nFrames; ++t) {
+                        const int off = (t - pinFrames) * m;
                         for (const auto& hp : hingePairs) {
                             const int j = model->dof_jntid[optVidx_[hp.localV]];
                             if (model->jnt_limited[j] <= 0) {
@@ -1728,19 +1791,30 @@ namespace gmr {
                     }
                 }
 
-                const int pinFrames = std::max(0, std::min(qpOpts->pinFrames, nFrames - 1));
-                if (pinFrames > 0) {
-                    lb.head(pinFrames * m).setZero();
-                    ub.head(pinFrames * m).setZero();
-                }
-
-                std::vector<Eigen::VectorXd> gRows;
-                std::vector<double> hVals;
-                const double dt    = std::max(qpOpts->motionDt, 1e-6);
-                const double dqLim = qpOpts->dqMax * dt;
+                int nVel = 0;
                 if (qpOpts->useVelocityLimits) {
                     for (int t = pinFrames; t < nFrames; ++t) {
-                        const int off = t * m;
+                        if (t > 0 || qpOpts->qPrev != nullptr) {
+                            nVel += 2 * m;
+                        }
+                    }
+                }
+
+                gmr::solver::QPData qp;
+                qp.reset(nFree, nVel);
+                qp.H = ws.Hdense.bottomRightCorner(nFree, nFree);
+                qp.H.diagonal().array() += config_.gnDamping;
+                qp.H = 0.5 * (qp.H + qp.H.transpose()).eval();
+                qp.g = ws.g.tail(nFree);
+                qp.xLb = std::move(lb);
+                qp.xUb = std::move(ub);
+
+                const double dt    = std::max(qpOpts->motionDt, 1e-6);
+                const double dqLim = qpOpts->dqMax * dt;
+                int constraintRow  = 0;
+                if (qpOpts->useVelocityLimits) {
+                    for (int t = pinFrames; t < nFrames; ++t) {
+                        const int off = (t - pinFrames) * m;
                         const Eigen::VectorXd* qPrevious = t == 0 ? qpOpts->qPrev : &qWin[t - 1];
                         if (qPrevious == nullptr) {
                             continue;
@@ -1749,50 +1823,25 @@ namespace gmr {
                         const Eigen::VectorXd baseVelocity = configurationDifference(model, *qPrevious, qWin[t]);
                         for (int vi = 0; vi < m; ++vi) {
                             const int v = optVidx_[vi];
-                            if (t == 0) {
-                                Eigen::VectorXd rowP  = Eigen::VectorXd::Zero(nvar);
-                                Eigen::VectorXd rowM  = Eigen::VectorXd::Zero(nvar);
-                                rowP[off + vi] = 1.0;
-                                rowM[off + vi] = -1.0;
-                                gRows.push_back(rowP);
-                                hVals.push_back(dqLim - baseVelocity[v]);
-                                gRows.push_back(rowM);
-                                hVals.push_back(dqLim + baseVelocity[v]);
-                            } else {
-                                const int offM       = (t - 1) * m;
-                                Eigen::VectorXd rowP = Eigen::VectorXd::Zero(nvar);
-                                Eigen::VectorXd rowM = Eigen::VectorXd::Zero(nvar);
-                                rowP[off + vi]       = 1.0;
-                                rowP[offM + vi]      = -1.0;
-                                rowM[off + vi]       = -1.0;
-                                rowM[offM + vi]      = 1.0;
-                                gRows.push_back(rowP);
-                                hVals.push_back(dqLim - baseVelocity[v]);
-                                gRows.push_back(rowM);
-                                hVals.push_back(dqLim + baseVelocity[v]);
+                            qp.CI(constraintRow, off + vi)     = 1.0;
+                            qp.CI(constraintRow + 1, off + vi) = -1.0;
+                            if (t > pinFrames) {
+                                const int offPrevious = off - m;
+                                qp.CI(constraintRow, offPrevious + vi)     = -1.0;
+                                qp.CI(constraintRow + 1, offPrevious + vi) = 1.0;
                             }
+
+                            qp.ciLb[constraintRow]      = -1e20;
+                            qp.ciUb[constraintRow]      = dqLim - baseVelocity[v];
+                            qp.ciLb[constraintRow + 1]  = -1e20;
+                            qp.ciUb[constraintRow + 1]  = dqLim + baseVelocity[v];
+                            constraintRow += 2;
                         }
                     }
                 }
 
-                const int nBox  = nvar;
-                const int nVel  = static_cast<int>(gRows.size());
-                const int nIneq = nBox + nVel;
-                gmr::solver::QPData qp;
-                qp.reset(nvar, nIneq);
-                qp.H = Hreg;
-                qp.g = ws.g;
-                for (int i = 0; i < nvar; ++i) {
-                    qp.CI(i, i) = 1.0;
-                    qp.ciLb[i]  = lb[i];
-                    qp.ciUb[i]  = ub[i];
-                }
-                for (int r = 0; r < nVel; ++r) {
-                    qp.CI.row(nBox + r) = gRows[static_cast<std::size_t>(r)].transpose();
-                    qp.ciLb[nBox + r]   = -1e20;
-                    qp.ciUb[nBox + r]   = hVals[static_cast<std::size_t>(r)];
-                }
-
+                // Pinned history has a known zero increment. Eliminate it exactly instead
+                // of making the dense QP solver rediscover those zeros through box bounds.
                 gmr::solver::QPSolver solver(qpOpts->qpBackend);
                 const gmr::solver::QPOutput& out = solver.solve(qp);
                 if (out.status != gmr::solver::QPStatus::kOptimal &&
@@ -1806,21 +1855,26 @@ namespace gmr {
                 }
 
                 if (out.status == gmr::solver::QPStatus::kMaxIterReached) {
-                    const Eigen::VectorXd constraintValues = qp.CI * out.x;
-                    const double lowerViolation = (qp.ciLb - constraintValues).maxCoeff();
-                    const double upperViolation = (constraintValues - qp.ciUb).maxCoeff();
-                    if (std::max(lowerViolation, upperViolation) > 1e-6) {
+                    const double boundViolation = std::max(
+                        (qp.xLb - out.x).maxCoeff(),
+                        (out.x - qp.xUb).maxCoeff());
+                    double constraintViolation = 0.0;
+                    if (nVel > 0) {
+                        const Eigen::VectorXd constraintValues = qp.CI * out.x;
+                        constraintViolation = std::max(
+                            (qp.ciLb - constraintValues).maxCoeff(),
+                            (constraintValues - qp.ciUb).maxCoeff());
+                    }
+
+                    if (std::max(boundViolation, constraintViolation) > 1e-6) {
                         throw QpSolveError("Online QP reached its iteration limit with an infeasible solution.");
                     }
                 }
 
                 // QP backends return the constrained increment. applyGnStepToWindow()
                 // subtracts its input because unconstrained paths store H^-1 g.
-                ws.dqFlat = -out.x;
-
-                if (pinFrames > 0) {
-                    ws.dqFlat.head(pinFrames * m).setZero();
-                }
+                ws.dqFlat.setZero();
+                ws.dqFlat.tail(nFree) = -out.x;
             } else if (config_.useBandedSolver) {
                 ws.Hband.setZero();
                 const int bw = ws.Hband.bandwidth();
@@ -1831,45 +1885,72 @@ namespace gmr {
                 }
                 ws.Hband.solve(ws.g, config_.gnDamping, ws.dqFlat);
             } else {
+                const Eigen::MatrixXd Hreg =
+                    ws.Hdense + config_.gnDamping * Eigen::MatrixXd::Identity(nvar, nvar);
                 ws.dqFlat = Hreg.ldlt().solve(ws.g);
             }
             ws.dqFlat = ws.dqFlat.cwiseMax(-config_.gnMaxStep).cwiseMin(config_.gnMaxStep);
 
             const std::vector<double>& alphas = config_.gnLineSearchAlphas.empty() ? std::vector<double>{1.0} : config_.gnLineSearchAlphas;
+            const int lineSearchFirstFrame = config_.torqueLimitConstraint ? 0 : pinFrames;
 
             if (alphas.size() == 1) {
-                const double cost0 = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
+                const double cost0 = std::isfinite(cachedCost)
+                    ? cachedCost
+                    : windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr, lineSearchFirstFrame);
+                cachedCost = config_.torqueLimitConstraint
+                    ? std::numeric_limits<double>::quiet_NaN()
+                    : cost0;
                 std::vector<Eigen::VectorXd> trial = qWin;
                 applyGnStepToWindow(trial, ws.dqFlat, alphas.front());
-                if (windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr) < cost0) {
+                const double trialCost = windowCost(
+                    trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr, lineSearchFirstFrame);
+                if (trialCost < cost0) {
                     qWin = std::move(trial);
+                    cachedCost = config_.torqueLimitConstraint
+                        ? std::numeric_limits<double>::quiet_NaN()
+                        : trialCost;
                 }
 
             } else if (config_.gnLineSearchMode == GnLineSearchMode::kArmijo) {
-                const double cost0 = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
+                const double cost0 = std::isfinite(cachedCost)
+                    ? cachedCost
+                    : windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr, lineSearchFirstFrame);
+                cachedCost = config_.torqueLimitConstraint
+                    ? std::numeric_limits<double>::quiet_NaN()
+                    : cost0;
                 for (double alpha : alphas) {
                     std::vector<Eigen::VectorXd> trial = qWin;
                     applyGnStepToWindow(trial, ws.dqFlat, alpha);
-                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
+                    const double trialCost = windowCost(
+                        trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr, lineSearchFirstFrame);
                     if (trialCost < cost0) {
                         qWin = std::move(trial);
+                        cachedCost = config_.torqueLimitConstraint
+                            ? std::numeric_limits<double>::quiet_NaN()
+                            : trialCost;
                         break;
                     }
                 }
 
             } else {
                 std::vector<Eigen::VectorXd> bestQ = qWin;
-                double bestCost = windowCost(qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
+                double bestCost = windowCost(
+                    qWin, targets, anchor, qRef, frameOffset, anchorWeight, wGmr, lineSearchFirstFrame);
                 for (double alpha : alphas) {
                     std::vector<Eigen::VectorXd> trial = qWin;
                     applyGnStepToWindow(trial, ws.dqFlat, alpha);
-                    const double trialCost = windowCost(trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr);
+                    const double trialCost = windowCost(
+                        trial, targets, anchor, qRef, frameOffset, anchorWeight, wGmr, lineSearchFirstFrame);
                     if (trialCost < bestCost) {
                         bestCost = trialCost;
                         bestQ    = trial;
                     }
                 }
                 qWin = bestQ;
+                cachedCost = config_.torqueLimitConstraint
+                    ? std::numeric_limits<double>::quiet_NaN()
+                    : bestCost;
             }
         }
 

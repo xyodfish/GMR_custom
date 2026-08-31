@@ -82,6 +82,7 @@ namespace gmr {
         static const std::unordered_map<std::string, std::string> kMap = {
             {"unitree_g1", "general_motion_retargeting/ik_configs/bvh_lafan1_to_g1.json"},
             {"unitree_g1_with_hands", "general_motion_retargeting/ik_configs/bvh_lafan1_to_g1.json"},
+            {"unitree_h2", "general_motion_retargeting/ik_configs/bvh_lafan1_to_h2.json"},
             {"booster_t1_29dof", "general_motion_retargeting/ik_configs/bvh_lafan1_to_t1_29dof.json"},
             {"fourier_n1", "general_motion_retargeting/ik_configs/bvh_lafan1_to_n1.json"},
             {"stanford_toddy", "general_motion_retargeting/ik_configs/bvh_lafan1_to_toddy.json"},
