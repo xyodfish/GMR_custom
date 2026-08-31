@@ -138,7 +138,6 @@ class CanonicalTrajectoryFitter:
         self.height_threshold = float(contact.get("height_threshold_m", 0.04))
         self.speed_threshold = float(contact.get("speed_threshold_mps", 0.35))
         self.min_contact_frames = int(contact.get("min_contact_frames", 3))
-        self.lock_contact_z = bool(contact.get("lock_contact_z_to_ground", False))
         self.smooth_window = int(self.cfg.get("smoothing", {}).get("window", 5))
 
     def fit(
@@ -150,9 +149,9 @@ class CanonicalTrajectoryFitter:
             raise ValueError("Empty semantic frames")
 
         contacts = self.infer_contacts(semantic_frames, fps)
-        # Pass 1: per-frame IK. Pass 2: smooth targets, then re-fit so bone lengths stay fixed.
+        # Smooth targets, then re-fit so bone lengths stay fixed. Contact enforcement belongs
+        # to the target robot, where sole geometry and support constraints are known.
         smoothed_targets = self._smooth_frames(semantic_frames)
-        smoothed_targets = self._apply_contact_targets(smoothed_targets, contacts)
         fitted = [self._fit_frame(frame) for frame in smoothed_targets]
         quality = self._measure_quality(semantic_frames, fitted, contacts, fps)
         return fitted, contacts, quality
@@ -173,16 +172,16 @@ class CanonicalTrajectoryFitter:
                 vel[1:] = np.diff(pos, axis=0) / dt
                 vel[0] = vel[1]
 
-            speeds[name] = np.linalg.norm(vel[:, :2], axis=1)
+            speeds[name] = np.linalg.norm(vel, axis=1)
 
-        # Relative support: near the per-frame lower foot envelope (not absolute z).
+        # A flat ground plane must not follow both feet upward during a jump.
         stacked_z = np.stack([positions[name][:, 2] for name in self.foot_bodies], axis=1)
-        lower = np.min(stacked_z, axis=1)
+        ground_height = float(np.min(stacked_z))
         band = max(self.height_threshold, 0.025)
 
         raw = {name: np.zeros(n, dtype=bool) for name in self.foot_bodies}
         for name in self.foot_bodies:
-            near_lower = positions[name][:, 2] <= (lower + band)
+            near_lower = positions[name][:, 2] <= (ground_height + band)
             slow = speeds[name] < self.speed_threshold
             raw[name] = near_lower & slow
 
@@ -202,6 +201,20 @@ class CanonicalTrajectoryFitter:
 
                 if t - t0 < self.min_contact_frames:
                     arr[t0:t] = False
+
+            t = 0
+            while t < n:
+                if arr[t]:
+                    t += 1
+                    continue
+
+                t0 = t
+                while t < n and not arr[t]:
+                    t += 1
+
+                bounded = t0 > 0 and t < n and arr[t0 - 1] and arr[t]
+                if bounded and t - t0 < self.min_contact_frames:
+                    arr[t0:t] = True
 
         for t in range(n):
             contacts.append({name: bool(cleaned[name][t]) for name in self.foot_bodies})
@@ -311,38 +324,6 @@ class CanonicalTrajectoryFitter:
                 frame[b] = {"position": p.tolist(), "orientation": q.tolist()}
 
             out.append(frame)
-
-        return out
-
-    def _apply_contact_targets(
-        self,
-        frames: list[dict[str, dict[str, list[float]]]],
-        contacts: list[dict[str, bool]],
-    ) -> list[dict[str, dict[str, list[float]]]]:
-        out = []
-        for t, frame in enumerate(frames):
-            updated = {name: dict(pose) for name, pose in frame.items()}
-            for name in self.foot_bodies:
-                if not contacts[t].get(name, False):
-                    continue
-
-                pos = _as3(updated[name]["position"])
-                if t > 0 and contacts[t - 1].get(name, False):
-                    prev = _as3(out[t - 1][name]["position"])
-                    pos[0] = prev[0]
-                    pos[1] = prev[1]
-                    if self.lock_contact_z:
-                        pos[2] = prev[2]
-
-                if self.lock_contact_z and pos[2] < self.height_threshold:
-                    pos[2] = 0.0
-
-                updated[name] = {
-                    "position": pos.tolist(),
-                    "orientation": list(updated[name]["orientation"]),
-                }
-
-            out.append(updated)
 
         return out
 

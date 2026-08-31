@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -58,7 +60,7 @@ void printUsage() {
         << " [--postprocess none|minimal]"
         << " [--no_ground_align]"
         << " [--no_contact_ground]"
-        << " [--no_align_wrists]"
+        << " [--align_wrists]"
         << " [--joint_limit_margin_deg <value>]"
         << " [--dump_source_json <path>]"
         << " [--dump_human_json <path>]\n";
@@ -102,8 +104,8 @@ int main(int argc, char** argv) {
         const bool verbose = hasFlag(argc, argv, "--verbose");
         const bool contactGround = !hasFlag(argc, argv, "--no_contact_ground");
         const bool groundAlign = !hasFlag(argc, argv, "--no_ground_align");
-        const bool alignWrists = !hasFlag(argc, argv, "--no_align_wrists");
-        const std::string postprocess = getArg(argc, argv, "--postprocess", "minimal");
+        const bool alignWrists = hasFlag(argc, argv, "--align_wrists") && !hasFlag(argc, argv, "--no_align_wrists");
+        const std::string postprocess = getArg(argc, argv, "--postprocess", "none");
         if (postprocess != "none" && postprocess != "minimal") {
             throw std::runtime_error("--postprocess must be 'none' or 'minimal'.");
         }
@@ -166,12 +168,18 @@ int main(int argc, char** argv) {
             ikPath,
             ikConfig.humanRootName,
             contactOverrides);
+        ikOptions.contactGround.velWindow = std::max(
+            2,
+            static_cast<int>(std::lround(ikOptions.contactGround.velWindow * source.fps / 30.0)));
 
         gmr::BatchTrajectoryConfig batchConfig;
-        batchConfig.windowSize = 16;
-        batchConfig.windowStride = 8;
-        batchConfig.gnSteps = fast ? 2 : 3;
+        batchConfig.windowSize = std::max(3, static_cast<int>(std::lround(16.0 * source.fps / 30.0)));
+        batchConfig.windowStride = std::max(1, static_cast<int>(std::lround(8.0 * source.fps / 30.0)));
+        batchConfig.gnSteps = fast ? 2 : 4;
+        batchConfig.gnMaxStep = 0.12;
         batchConfig.motionDt = 1.0 / source.fps;
+        batchConfig.finalizeContact = false;
+        batchConfig.wFootHeight = 1000.0;
         batchConfig.parallelBootstrap = parallel;
         batchConfig.parallelFinalize = parallel;
         batchConfig.verbose = verbose;

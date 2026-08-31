@@ -18,12 +18,12 @@
     }
   },
   "profile": {
-    "bootstrap_ms": 269.11884,
-    "finalize_ms": 23.492416,
-    "optimize_ms": 456.245398,
-    "prepare_ms": 0.890197,
-    "total_ms": 755.063024,
-    "wall_ms": 755.285789
+    "bootstrap_ms": 270.196094,
+    "finalize_ms": 23.547266,
+    "optimize_ms": 488.504136,
+    "prepare_ms": 0.897448,
+    "total_ms": 788.490968,
+    "wall_ms": 850.719344
   },
   "qpos_frames": [
     [

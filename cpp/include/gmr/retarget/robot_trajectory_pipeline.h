@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -29,6 +30,61 @@ struct CanonicalRobotTrajectory {
     CanonicalFitQuality quality;
     double canonicalHeight = 1.8;
     double globalScale = 1.0;
+};
+
+/// Stateful source-robot FK mapper for causal robot-to-robot retargeting.
+/// It emits scaled semantic sites directly and deliberately skips canonical fitting,
+/// trajectory smoothing, contact lookahead, and ground postprocessing.
+class SourceRobotFrameMapper {
+   public:
+    SourceRobotFrameMapper(
+        const std::filesystem::path& mappingPath,
+        const std::filesystem::path& gmrRoot);
+    ~SourceRobotFrameMapper();
+
+    SourceRobotFrameMapper(const SourceRobotFrameMapper&) = delete;
+    SourceRobotFrameMapper& operator=(const SourceRobotFrameMapper&) = delete;
+
+    HumanFrame mapFrame(const Eigen::VectorXd& qpos);
+    const std::unordered_map<std::string, bool>& footContacts() const;
+    void reset();
+
+    double outputHeight() const;
+
+   private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+struct OnlineCanonicalOutput {
+    HumanFrame frame;
+    std::unordered_map<std::string, bool> footContacts;
+};
+
+/// Fixed-latency streaming counterpart of buildCanonicalRobotTrajectory().
+/// It preserves canonical torso/leg lengths and centered semantic smoothing, and emits confirmed contacts.
+class OnlineCanonicalFitter {
+   public:
+    OnlineCanonicalFitter(const std::filesystem::path& mappingPath, double fps);
+    ~OnlineCanonicalFitter();
+
+    OnlineCanonicalFitter(const OnlineCanonicalFitter&) = delete;
+    OnlineCanonicalFitter& operator=(const OnlineCanonicalFitter&) = delete;
+
+    void pushFrame(HumanFrame frame);
+    void pushFrame(
+        HumanFrame frame,
+        const std::unordered_map<std::string, bool>& sourceFootContacts);
+    bool canPop(bool flush = false) const;
+    OnlineCanonicalOutput popFrame(bool flush = false);
+    void reset();
+
+    int latencyFrames() const;
+    double canonicalHeight() const;
+
+   private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 SourceRobotTrajectory loadSourceRobotTrajectory(

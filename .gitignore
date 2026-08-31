@@ -113,3 +113,6 @@ yaml_to_flat_csv.py
 
 compute_rotation.py
 .codex
+
+output/robot_to_robot_gui/robot_b/*
+output/robot_to_robot_gui/source/*

@@ -3,6 +3,7 @@
 #include <deque>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,10 +31,18 @@ namespace gmr {
 
         /// Streaming causal API (one human frame in → one qpos out).
         Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, Retargeter& retargeter, bool offsetToGround = false);
+        Eigen::VectorXd retargetFrame(
+            const HumanFrame& humanFrame,
+            const ContactGroundState& contactState,
+            Retargeter& retargeter,
+            bool offsetToGround = false);
 
         /// Live arrival buffer: solver only sees frames that have been pushed.
         /// Lookahead waits for ``horizon`` arrived frames, then emits and pops the oldest frame.
         void pushArrivedFrame(const HumanFrame& humanFrame);
+        void pushArrivedFrame(
+            const HumanFrame& humanFrame,
+            const ContactGroundState& contactState);
         std::size_t arrivalBufferSize() const { return arrivalBuf_.size(); }
         /// Causal: buffer nonempty. Lookahead: full window or explicit flush.
         bool canStepArrived(bool flush = false) const;
@@ -51,8 +60,10 @@ namespace gmr {
 
        private:
         struct PreparedFrameTargets {
+            HumanFrame raw;
             HumanFrame prepared;
             BatchTrajectoryRetargeter::FrameTargets targets;
+            ContactGroundState contactState;
         };
 
         BatchTrajectoryConfig makeBatchConfig() const;
@@ -60,22 +71,28 @@ namespace gmr {
                                                                        int pinFrames) const;
         void syncBatchConfig();
         PreparedFrameTargets prepareFrameTargets(const HumanFrame& humanFrame, Retargeter& retargeter,
-                                                 bool offsetToGround);
-        std::vector<BatchTrajectoryRetargeter::FrameTargets> prepareWindowTargets(
-            const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter, bool offsetToGround);
-        Eigen::VectorXd seedCausalFrame(const HumanFrame& humanFrame, Retargeter& retargeter,
-                                        bool offsetToGround);
-        std::vector<Eigen::VectorXd> seedWindowFromCursor(const std::vector<HumanFrame>& humanFrames,
+                                                 bool offsetToGround,
+                                                 const ContactGroundState* contactState = nullptr);
+        Eigen::VectorXd retargetFrameImpl(
+            const HumanFrame& humanFrame,
+            const ContactGroundState* contactState,
+            Retargeter& retargeter,
+            bool offsetToGround);
+        Eigen::VectorXd seedCausalFrame(const PreparedFrameTargets& frame, Retargeter& retargeter);
+        std::vector<Eigen::VectorXd> seedWindowFromCursor(const std::vector<PreparedFrameTargets>& frames,
                                                           const Eigen::VectorXd& qStart, Retargeter& retargeter,
-                                                          bool offsetToGround, bool fullIkFirst);
+                                                          bool fullIkFirst);
         std::vector<Eigen::VectorXd> solveQpWindow(const std::vector<Eigen::VectorXd>& qInit,
                                                    const std::vector<BatchTrajectoryRetargeter::FrameTargets>& targets,
                                                    const std::vector<Eigen::VectorXd>& qRef,
+                                                   const std::vector<ContactGroundState>& contactStates,
                                                    const Eigen::VectorXd* qPrev, int pinFrames);
-        Eigen::VectorXd stepLookaheadWindow(const std::vector<HumanFrame>& windowFrames, Retargeter& retargeter,
-                                            bool offsetToGround);
+        Eigen::VectorXd stepLookaheadWindow(const std::vector<PreparedFrameTargets>& windowFrames,
+                                            Retargeter& retargeter);
         /// Write qpos, optionally finalize contact, then apply the configured joint-limit margin.
-        Eigen::VectorXd commitOutputQpos(Retargeter& retargeter, Eigen::VectorXd q);
+        Eigen::VectorXd commitOutputQpos(Retargeter& retargeter, Eigen::VectorXd q,
+                                         const ContactGroundState& contactState,
+                                         const Eigen::VectorXd* qPrevious);
         void appendCommittedQpos(const Eigen::VectorXd& q);
 
         OnlineQpConfig config_;
@@ -84,6 +101,7 @@ namespace gmr {
 
         std::deque<HumanFrame> preparedBuf_;
         std::deque<BatchTrajectoryRetargeter::FrameTargets> targetsBuf_;
+        std::deque<ContactGroundState> contactBuf_;
         std::deque<Eigen::VectorXd> qBuf_;
         std::deque<Eigen::VectorXd> qRefBuf_;
         int frameIndex_              = 0;
@@ -94,9 +112,12 @@ namespace gmr {
 
         // Live arrival buffer (true streaming).
         std::deque<HumanFrame> arrivalBuf_;
+        std::deque<std::optional<ContactGroundState>> arrivalContactBuf_;
+        std::deque<PreparedFrameTargets> arrivalPreparedBuf_;
         bool arrivalHasPrev_ = false;
         Eigen::VectorXd arrivalQPrev_;
         BatchTrajectoryRetargeter::FrameTargets arrivalPrevTargets_;
+        ContactGroundState arrivalPrevContactState_;
     };
 
 }  // namespace gmr

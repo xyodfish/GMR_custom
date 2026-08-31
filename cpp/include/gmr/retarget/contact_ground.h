@@ -14,6 +14,13 @@
 
 namespace gmr {
 
+    struct ContactGroundState {
+        std::unordered_map<std::string, bool> footContacts;
+        bool lowPose = false;
+
+        bool hasSupportContact() const;
+    };
+
     struct ContactGroundConfig {
         bool enabled = false;
         std::vector<std::string> footBodies;
@@ -28,6 +35,7 @@ namespace gmr {
         bool enableFootLock = true;
         double footLockEmaAlpha = 0.05;
         bool fixRobotPenetration = true;
+        bool snapSupportToGround = false;
         bool footGroundLimitEnabled = false;
         bool penetrationExcludeFeetWhenFootLimit = true;
         double penetrationMargin = 0.01;
@@ -58,9 +66,14 @@ namespace gmr {
         void setFps(double fps);
 
         HumanFrame processHumanFrame(const HumanFrame& humanData);
+        HumanFrame processHumanFrame(
+            const HumanFrame& humanData,
+            const ContactGroundState& contactState);
         double fixRobotPenetration(mjModel* model, mjData* data);
+        double fixRobotPenetration(mjModel* model, mjData* data, const ContactGroundState& state);
 
         const ContactGroundConfig& config() const { return config_; }
+        ContactGroundState state() const;
         bool isLowPose() const;
         double lastRootLift() const { return lastRootLift_; }
         void setLastRootLift(double lift) { lastRootLift_ = lift; }
@@ -74,11 +87,15 @@ namespace gmr {
         ContactGroundConfig config_;
         const mjModel* model_ = nullptr;
         double fps_ = 30.0;
+        double lpfAlphaAt30Fps_ = 0.3;
+        double footLockAlphaAt30Fps_ = 0.05;
 
         std::vector<int> footGeomIds_;
+        std::unordered_map<std::string, std::vector<int>> footGeomIdsByContact_;
         std::vector<int> trunkGeomIds_;
         std::vector<int> legGeomIds_;
         std::vector<int> armGeomIds_;
+        std::vector<int> legJointIds_;
         std::vector<int> groundGeomIds_;
         std::vector<int> lyingGroundGeomIds_;
         int floorGeomId_ = -1;
@@ -92,11 +109,16 @@ namespace gmr {
         std::unordered_map<std::string, bool> lastContacts_;
         std::unordered_map<std::string, Eigen::Vector3d> lockedFeet_;
         double groundAlignOffset_ = 0.0;
+        bool groundAlignInitialized_ = false;
         double lastHumanHipZ_ = std::numeric_limits<double>::infinity();
         double lastMinFootZ_ = std::numeric_limits<double>::infinity();
         double lastRootLift_ = 0.0;
 
-        std::pair<const std::vector<int>&, double> penetrationTargets() const;
+        std::pair<const std::vector<int>&, double> penetrationTargets(bool lowPose) const;
+        HumanFrame processHumanFrameImpl(
+            const HumanFrame& humanData,
+            const ContactGroundState* contactState);
+        void correctSwingFootPenetration(mjModel* model, mjData* data, const ContactGroundState& state);
         void cachePenetrationBodyNames();
     };
 

@@ -336,16 +336,16 @@ def _resolve_foot_body_ids(model) -> dict[str, int]:
     candidates = {
         "left_foot": (
             # Prefer bodies that typically carry sole collision / visual foot.
-            "left_ankle_pitch_link",
-            "left_foot_roll_link",
-            "left_ankle_roll_link",
-            "left_foot_pitch_link",
             "left_sole_link",
             "left_foot_link",
             "left_foot",
             "LeftFoot",
             "left_toe_link",
             "toeLeft",
+            "left_foot_roll_link",
+            "left_ankle_roll_link",
+            "left_foot_pitch_link",
+            "left_ankle_pitch_link",
             "leg_left_ankle_roll",
             "leg_left_ankle_pitch",
             "l_ankle_roll_link",
@@ -357,16 +357,16 @@ def _resolve_foot_body_ids(model) -> dict[str, int]:
             "left_ankle_link",
         ),
         "right_foot": (
-            "right_ankle_pitch_link",
-            "right_foot_roll_link",
-            "right_ankle_roll_link",
-            "right_foot_pitch_link",
             "right_sole_link",
             "right_foot_link",
             "right_foot",
             "RightFoot",
             "right_toe_link",
             "toeRight",
+            "right_foot_roll_link",
+            "right_ankle_roll_link",
+            "right_foot_pitch_link",
+            "right_ankle_pitch_link",
             "leg_right_ankle_roll",
             "leg_right_ankle_pitch",
             "r_ankle_roll_link",
@@ -612,8 +612,11 @@ def infer_foot_contacts_from_soles(
     model_xml: str,
     *,
     height_tol: float = 0.02,
+    fps: float = 30.0,
+    speed_threshold: float = 0.45,
+    min_contact_frames: int = 3,
 ) -> list[dict[str, bool]]:
-    """Mark a foot in contact when its sole is within ``height_tol`` of the lower sole."""
+    """Infer flat-ground foot contacts from sole height and foot speed."""
     import mujoco
 
     model = mujoco.MjModel.from_xml_path(model_xml)
@@ -630,19 +633,48 @@ def infer_foot_contacts_from_soles(
         "right_foot": [i for i in all_foot_geoms if _geom_side_label(model, i) == "right"],
     }
 
-    contacts: list[dict[str, bool]] = []
+    names = tuple(body_ids)
+    sole_z = np.empty((qpos.shape[0], len(names)), dtype=np.float64)
+    foot_pos = np.empty((qpos.shape[0], len(names), 3), dtype=np.float64)
     for t in range(qpos.shape[0]):
         data.qpos[:] = qpos[t]
         mujoco.mj_forward(model, data)
-        soles: dict[str, float] = {}
-        for name, body_id in body_ids.items():
+        for foot_index, (name, body_id) in enumerate(body_ids.items()):
             if geoms_by_side[name]:
-                soles[name] = _sole_z(model, data, geoms_by_side[name])
+                sole_z[t, foot_index] = _sole_z(model, data, geoms_by_side[name])
             else:
-                soles[name] = _mesh_sole_z_for_body(model, data, body_id)
+                sole_z[t, foot_index] = _mesh_sole_z_for_body(model, data, body_id)
 
-        z_min = min(soles.values())
-        contacts.append({name: (soles[name] - z_min) <= float(height_tol) for name in soles})
+            foot_pos[t, foot_index] = data.xpos[body_id]
+
+    speed = np.zeros((qpos.shape[0], len(names)), dtype=np.float64)
+    if qpos.shape[0] > 1:
+        speed[1:] = np.linalg.norm(np.diff(foot_pos, axis=0), axis=2) * float(fps)
+        speed[0] = speed[1]
+
+    ground_z = float(np.percentile(np.min(sole_z, axis=1), 5.0))
+    active = (sole_z <= ground_z + float(height_tol)) & (speed <= float(speed_threshold))
+    minimum = max(1, int(min_contact_frames))
+    for foot_index in range(len(names)):
+        begin = 0
+        while begin < qpos.shape[0]:
+            if not active[begin, foot_index]:
+                begin += 1
+                continue
+
+            end = begin + 1
+            while end < qpos.shape[0] and active[end, foot_index]:
+                end += 1
+
+            if end - begin < minimum:
+                active[begin:end, foot_index] = False
+
+            begin = end
+
+    contacts = [
+        {name: bool(active[t, foot_index]) for foot_index, name in enumerate(names)}
+        for t in range(qpos.shape[0])
+    ]
 
     return contacts
 

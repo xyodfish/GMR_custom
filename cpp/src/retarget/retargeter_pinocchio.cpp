@@ -295,12 +295,12 @@ namespace gmr {
                                          penetrationLyingFrames.end());
         }
 
-        const std::vector<pinocchio::FrameIndex>& activePenetrationFrames() const {
+        const std::vector<pinocchio::FrameIndex>& activePenetrationFrames(bool lowPose) const {
             if (!contactGround) {
                 static const std::vector<pinocchio::FrameIndex> kEmpty;
                 return kEmpty;
             }
-            if (contactGround->isLowPose()) {
+            if (lowPose) {
                 return penetrationLyingFrames;
             }
             if (contactGround->config().footGroundLimitEnabled &&
@@ -374,12 +374,12 @@ namespace gmr {
                                         penetrationLyingGeoms.end());
         }
 
-        const std::vector<pinocchio::GeomIndex>& activePenetrationGeoms() const {
+        const std::vector<pinocchio::GeomIndex>& activePenetrationGeoms(bool lowPose) const {
             if (!contactGround) {
                 static const std::vector<pinocchio::GeomIndex> kEmpty;
                 return kEmpty;
             }
-            if (contactGround->isLowPose()) {
+            if (lowPose) {
                 return penetrationLyingGeoms;
             }
             if (contactGround->config().footGroundLimitEnabled &&
@@ -438,7 +438,7 @@ namespace gmr {
         }
 
         /// Pinocchio-only clearance: lift free-flyer z so monitored body frames clear groundZ+margin.
-        void finalizeRobotState() {
+        void finalizeRobotState(const ContactGroundState* state = nullptr) {
             if (!contactGround || !contactGround->enabled() || !contactGround->config().fixRobotPenetration) {
                 if (contactGround) {
                     contactGround->setLastRootLift(0.0);
@@ -450,14 +450,17 @@ namespace gmr {
                 return;
             }
 
-            const auto& frames = activePenetrationFrames();
-            const auto& geoms  = activePenetrationGeoms();
+            const bool lowPose = state != nullptr ? state->lowPose : contactGround->isLowPose();
+            const auto& frames = activePenetrationFrames(lowPose);
+            const auto& geoms  = activePenetrationGeoms(lowPose);
             if (frames.empty() && geoms.empty()) {
                 contactGround->setLastRootLift(0.0);
                 return;
             }
 
-            const double margin      = contactGround->activePenetrationMargin();
+            const double margin      = lowPose
+                ? contactGround->config().lyingPenetrationMargin
+                : contactGround->config().penetrationMargin;
             const double groundZ     = contactGround->config().groundZ;
             const double footClear   = std::max(0.0, contactGround->config().pinocchioFootClearance);
             const int iterations     = std::max(1, contactGround->config().penetrationMaxIterations);
@@ -537,6 +540,18 @@ namespace gmr {
 
         HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround) const {
             return applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
+        }
+
+        HumanFrame prepareRetargetInput(
+            const HumanFrame& humanFrame,
+            const ContactGroundState& contactState,
+            bool offsetToGround) const {
+            HumanFrame prepared = prepareHumanFrame(humanFrame, offsetToGround);
+            if (contactGround && contactGround->enabled()) {
+                return contactGround->processHumanFrame(prepared, contactState);
+            }
+
+            return prepared;
         }
 
         HumanFrame applyContactGround(const HumanFrame& prepared) const {
@@ -726,6 +741,18 @@ namespace gmr {
             options.maxIterations = savedMaxIter;
             return qpos;
         }
+
+        Eigen::VectorXd retargetPreparedLightIkImpl(const HumanFrame& preparedFrame, int maxIterations) {
+            if (maxIterations <= 0) {
+                return qpos;
+            }
+
+            const int savedMaxIter = options.maxIterations;
+            options.maxIterations  = maxIterations;
+            retargetPrepared(preparedFrame, /*finalize=*/false);
+            options.maxIterations = savedMaxIter;
+            return qpos;
+        }
     };
 
     PinocchioRetargetBackend::PinocchioRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig,
@@ -746,6 +773,22 @@ namespace gmr {
         return impl_->prepareRetargetInput(humanFrame, offsetToGround);
     }
 
+    HumanFrame PinocchioRetargetBackend::prepareRetargetInput(
+        const HumanFrame& humanFrame,
+        const ContactGroundState& contactState,
+        bool offsetToGround) {
+        return impl_->prepareRetargetInput(humanFrame, contactState, offsetToGround);
+    }
+
+    Eigen::VectorXd PinocchioRetargetBackend::retargetPreparedFrame(const HumanFrame&, const HumanFrame& preparedFrame) {
+        return impl_->retargetPrepared(preparedFrame, /*finalize=*/false);
+    }
+
+    Eigen::VectorXd PinocchioRetargetBackend::retargetPreparedLightIk(const HumanFrame&, const HumanFrame& preparedFrame,
+                                                                      int maxIterations) {
+        return impl_->retargetPreparedLightIkImpl(preparedFrame, maxIterations);
+    }
+
     Eigen::VectorXd PinocchioRetargetBackend::retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
         return impl_->retargetLightIkImpl(humanFrame, offsetToGround, maxIterations);
     }
@@ -761,6 +804,16 @@ namespace gmr {
     }
 
     void PinocchioRetargetBackend::finalizeContact() { impl_->finalizeRobotState(); }
+
+    void PinocchioRetargetBackend::finalizeContact(const ContactGroundState& state) {
+        impl_->finalizeRobotState(&state);
+    }
+
+    ContactGroundState PinocchioRetargetBackend::contactGroundState() const {
+        return impl_->contactGround && impl_->contactGround->enabled()
+            ? impl_->contactGround->state()
+            : ContactGroundState{};
+    }
 
     const Eigen::VectorXd& PinocchioRetargetBackend::currentQpos() const { return impl_->qpos; }
 

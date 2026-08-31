@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -60,7 +61,6 @@ struct CanonicalConfig {
     double heightThreshold = 0.04;
     double speedThreshold = 0.35;
     int minContactFrames = 3;
-    bool lockContactZ = false;
     int smoothWindow = 5;
 };
 
@@ -115,7 +115,7 @@ std::filesystem::path resolveConfigPath(
     return std::filesystem::weakly_canonical(path);
 }
 
-std::vector<Eigen::VectorXd> parseJsonQpos(const std::filesystem::path& path) {
+std::vector<Eigen::VectorXd> parseJsonQpos(const std::filesystem::path& path, double* fpsMetadata = nullptr) {
     std::ifstream input(path);
     if (!input) {
         throw std::runtime_error("Failed to open qpos JSON: " + path.string());
@@ -123,6 +123,10 @@ std::vector<Eigen::VectorXd> parseJsonQpos(const std::filesystem::path& path) {
 
     nlohmann::json root;
     input >> root;
+    if (fpsMetadata != nullptr && root.is_object() && root.contains("fps")) {
+        *fpsMetadata = root.at("fps").get<double>();
+    }
+
     const nlohmann::json& frames = root.is_object() && root.contains("qpos_frames")
         ? root.at("qpos_frames")
         : root;
@@ -389,7 +393,19 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> twoBoneIk(
     return {mid, reachableTarget};
 }
 
-CanonicalConfig loadCanonicalConfig(const YAML::Node& cfg) {
+int frameCountAtFps(int framesAt30Fps, double fps, int minimum) {
+    const int intervalsAt30Fps = std::max(0, framesAt30Fps - 1);
+    return std::max(minimum, 1 + static_cast<int>(std::lround(intervalsAt30Fps * fps / 30.0)));
+}
+
+int oddWindowAtFps(int framesAt30Fps, double fps) {
+    const int oddFramesAt30Fps = std::max(1, framesAt30Fps + (framesAt30Fps % 2 == 0));
+    const int radiusAt30Fps = (oddFramesAt30Fps - 1) / 2;
+    const int radius = static_cast<int>(std::lround(radiusAt30Fps * fps / 30.0));
+    return 2 * radius + 1;
+}
+
+CanonicalConfig loadCanonicalConfig(const YAML::Node& cfg, double fps) {
     CanonicalConfig out;
     out.height = cfg["canonical_height_m"].as<double>();
     const YAML::Node bones = cfg["canonical_bones_m"];
@@ -403,10 +419,66 @@ CanonicalConfig loadCanonicalConfig(const YAML::Node& cfg) {
     out.footNames = contact["foot_bodies"].as<std::vector<std::string>>();
     out.heightThreshold = contact["height_threshold_m"].as<double>(0.04);
     out.speedThreshold = contact["speed_threshold_mps"].as<double>(0.35);
-    out.minContactFrames = contact["min_contact_frames"].as<int>(3);
-    out.lockContactZ = contact["lock_contact_z_to_ground"].as<bool>(false);
-    out.smoothWindow = cfg["smoothing"]["window"].as<int>(5);
+    out.minContactFrames = frameCountAtFps(contact["min_contact_frames"].as<int>(3), fps, 1);
+    out.smoothWindow = oddWindowAtFps(cfg["smoothing"]["window"].as<int>(5), fps);
+
     return out;
+}
+
+Contacts cleanContacts(
+    std::unordered_map<std::string, std::vector<bool>> active,
+    const CanonicalConfig& cfg,
+    int n) {
+    for (const std::string& name : cfg.footNames) {
+        std::vector<bool>& values = active.at(name);
+        int t = 0;
+        while (t < n) {
+            if (!values[t]) {
+                ++t;
+                continue;
+            }
+
+            const int begin = t;
+            while (t < n && values[t]) {
+                ++t;
+            }
+
+            if (t - begin < cfg.minContactFrames) {
+                std::fill(values.begin() + begin, values.begin() + t, false);
+            }
+
+        }
+
+        t = 0;
+        while (t < n) {
+            if (values[t]) {
+                ++t;
+                continue;
+            }
+
+            const int begin = t;
+            while (t < n && !values[t]) {
+                ++t;
+            }
+
+            const bool boundedByContact = begin > 0 && t < n && values[begin - 1] && values[t];
+            if (boundedByContact && t - begin < cfg.minContactFrames) {
+                std::fill(values.begin() + begin, values.begin() + t, true);
+            }
+
+        }
+
+    }
+
+    Contacts contacts(n);
+    for (int t = 0; t < n; ++t) {
+        for (const std::string& name : cfg.footNames) {
+            contacts[t][name] = active.at(name)[t];
+        }
+
+    }
+
+    return contacts;
 }
 
 Contacts inferContacts(const std::vector<HumanFrame>& frames, const CanonicalConfig& cfg, double fps) {
@@ -423,7 +495,7 @@ Contacts inferContacts(const std::vector<HumanFrame>& frames, const CanonicalCon
         auto& footSpeeds = speeds[name];
         footSpeeds.assign(n, 0.0);
         for (int t = 1; t < n; ++t) {
-            footSpeeds[t] = (values[t] - values[t - 1]).head<2>().norm() * fps;
+            footSpeeds[t] = (values[t] - values[t - 1]).norm() * fps;
         }
 
         if (n >= 2) {
@@ -437,46 +509,24 @@ Contacts inferContacts(const std::vector<HumanFrame>& frames, const CanonicalCon
         active[name].assign(n, false);
     }
 
+    double groundHeight = std::numeric_limits<double>::infinity();
     for (int t = 0; t < n; ++t) {
         double lower = std::numeric_limits<double>::infinity();
         for (const std::string& name : cfg.footNames) {
             lower = std::min(lower, positions.at(name)[t].z());
         }
 
+        groundHeight = std::min(groundHeight, lower);
+    }
+
+    for (int t = 0; t < n; ++t) {
         for (const std::string& name : cfg.footNames) {
-            active[name][t] = positions.at(name)[t].z() <= lower + band &&
+            active[name][t] = positions.at(name)[t].z() <= groundHeight + band &&
                 speeds.at(name)[t] < cfg.speedThreshold;
         }
     }
 
-    for (const std::string& name : cfg.footNames) {
-        std::vector<bool>& values = active[name];
-        int t = 0;
-        while (t < n) {
-            if (!values[t]) {
-                ++t;
-                continue;
-            }
-
-            const int begin = t;
-            while (t < n && values[t]) {
-                ++t;
-            }
-
-            if (t - begin < cfg.minContactFrames) {
-                std::fill(values.begin() + begin, values.begin() + t, false);
-            }
-        }
-    }
-
-    Contacts contacts(n);
-    for (int t = 0; t < n; ++t) {
-        for (const std::string& name : cfg.footNames) {
-            contacts[t][name] = active.at(name)[t];
-        }
-    }
-
-    return contacts;
+    return cleanContacts(std::move(active), cfg, n);
 }
 
 std::vector<HumanFrame> smoothFrames(const std::vector<HumanFrame>& frames, int window) {
@@ -530,32 +580,6 @@ std::vector<HumanFrame> smoothFrames(const std::vector<HumanFrame>& frames, int 
     }
 
     return out;
-}
-
-void applyContactTargets(
-    std::vector<HumanFrame>& frames,
-    const Contacts& contacts,
-    const CanonicalConfig& cfg) {
-    for (std::size_t t = 0; t < frames.size(); ++t) {
-        for (const std::string& name : cfg.footNames) {
-            if (!contacts[t].at(name)) {
-                continue;
-            }
-
-            Eigen::Vector3d& position = frames[t].at(name).position;
-            if (t > 0 && contacts[t - 1].at(name)) {
-                position.x() = frames[t - 1].at(name).position.x();
-                position.y() = frames[t - 1].at(name).position.y();
-                if (cfg.lockContactZ) {
-                    position.z() = frames[t - 1].at(name).position.z();
-                }
-            }
-
-            if (cfg.lockContactZ && position.z() < cfg.heightThreshold) {
-                position.z() = 0.0;
-            }
-        }
-    }
 }
 
 HumanFrame fitCanonicalFrame(const HumanFrame& target, const CanonicalConfig& cfg) {
@@ -694,28 +718,46 @@ bool sideMatches(const std::string& text, const std::string& side) {
     return side == "left" ? left : right;
 }
 
-std::unordered_map<std::string, int> resolveFootBodyIds(const mjModel* model) {
+struct FootReference {
+    int body = -1;
+    int site = -1;
+};
+
+Eigen::Vector3d footReferencePosition(const mjData* data, const FootReference& foot) {
+    const double* position = foot.site >= 0
+        ? &data->site_xpos[3 * foot.site]
+        : &data->xpos[3 * foot.body];
+    return Eigen::Vector3d(position[0], position[1], position[2]);
+}
+
+std::unordered_map<std::string, FootReference> resolveFootReferences(const mjModel* model) {
     const std::unordered_map<std::string, std::vector<std::string>> candidates = {
-        {"left_foot", {"left_ankle_pitch_link", "left_foot_roll_link", "left_ankle_roll_link",
-                       "left_foot_pitch_link", "left_sole_link", "left_foot_link", "left_foot",
-                       "LeftFoot", "left_toe_link", "toeLeft", "leg_left_ankle_roll",
+        {"left_foot", {"left_sole_link", "left_foot_link", "left_foot", "LeftFoot",
+                       "left_toe_link", "toeLeft", "left_foot_roll_link", "left_ankle_roll_link",
+                       "left_foot_pitch_link", "left_ankle_pitch_link", "leg_left_ankle_roll",
                        "leg_left_ankle_pitch", "l_ankle_roll_link", "l_ankle_pitch_link",
                        "ankle_roll_l_link", "ankle_pitch_l_link", "anklePitchLeft", "leg_l6_link",
                        "left_ankle_link"}},
-        {"right_foot", {"right_ankle_pitch_link", "right_foot_roll_link", "right_ankle_roll_link",
-                        "right_foot_pitch_link", "right_sole_link", "right_foot_link", "right_foot",
-                        "RightFoot", "right_toe_link", "toeRight", "leg_right_ankle_roll",
+        {"right_foot", {"right_sole_link", "right_foot_link", "right_foot", "RightFoot",
+                        "right_toe_link", "toeRight", "right_foot_roll_link", "right_ankle_roll_link",
+                        "right_foot_pitch_link", "right_ankle_pitch_link", "leg_right_ankle_roll",
                         "leg_right_ankle_pitch", "r_ankle_roll_link", "r_ankle_pitch_link",
                         "ankle_roll_r_link", "ankle_pitch_r_link", "anklePitchRight", "leg_r6_link",
                         "right_ankle_link"}},
     };
 
-    std::unordered_map<std::string, int> out;
+    std::unordered_map<std::string, FootReference> out;
     for (const auto& [key, names] : candidates) {
+        const int site = mj_name2id(model, mjOBJ_SITE, key.c_str());
+        if (site >= 0) {
+            out[key] = FootReference{model->site_bodyid[site], site};
+            continue;
+        }
+
         for (const std::string& name : names) {
             const int id = mj_name2id(model, mjOBJ_BODY, name.c_str());
             if (id >= 0) {
-                out[key] = id;
+                out[key] = FootReference{id, -1};
                 break;
             }
         }
@@ -731,7 +773,7 @@ std::unordered_map<std::string, int> resolveFootBodyIds(const mjModel* model) {
             if (sideMatches(name, side) &&
                 (name.find("foot") != std::string::npos || name.find("ankle") != std::string::npos ||
                  name.find("sole") != std::string::npos || name.find("toe") != std::string::npos)) {
-                out[key] = id;
+                out[key] = FootReference{id, -1};
                 break;
             }
         }
@@ -775,14 +817,14 @@ double measureStanceSlip(
     const std::vector<Eigen::VectorXd>& qpos,
     const Contacts& contacts,
     double fps,
-    const std::unordered_map<std::string, int>& footBodies) {
+    const std::unordered_map<std::string, FootReference>& feet) {
     std::unordered_map<std::string, Eigen::Vector2d> previous;
     std::vector<double> slips;
     for (std::size_t t = 0; t < qpos.size(); ++t) {
         mju_copy(data->qpos, qpos[t].data(), model->nq);
         mj_forward(model, data);
-        for (const auto& [name, body] : footBodies) {
-            const Eigen::Vector2d xy = bodyPosition(data, body).head<2>();
+        for (const auto& [name, foot] : feet) {
+            const Eigen::Vector2d xy = footReferencePosition(data, foot).head<2>();
             if (t > 0 && contacts[t].at(name) && contacts[t - 1].at(name) && previous.count(name) != 0) {
                 slips.push_back((xy - previous.at(name)).norm() * fps);
             }
@@ -803,7 +845,7 @@ void plantStanceFeet(
     mjData* data,
     std::vector<Eigen::VectorXd>& qpos,
     const Contacts& contacts,
-    const std::unordered_map<std::string, int>& footBodies) {
+    const std::unordered_map<std::string, FootReference>& feet) {
     std::vector<int> joints;
     std::vector<int> qIndices;
     std::vector<int> vIndices;
@@ -832,7 +874,7 @@ void plantStanceFeet(
     Jacobian jacp(3, model->nv);
     Jacobian jacr(3, model->nv);
     for (std::size_t t = 0; t < qpos.size(); ++t) {
-        for (const auto& [name, body] : footBodies) {
+        for (const auto& [name, foot] : feet) {
             if (!contacts[t].at(name)) {
                 hold.erase(name);
             }
@@ -840,9 +882,9 @@ void plantStanceFeet(
 
         mju_copy(data->qpos, qpos[t].data(), model->nq);
         mj_forward(model, data);
-        for (const auto& [name, body] : footBodies) {
+        for (const auto& [name, foot] : feet) {
             if (contacts[t].at(name) && hold.count(name) == 0) {
-                hold[name] = bodyPosition(data, body).head<2>();
+                hold[name] = footReferencePosition(data, foot).head<2>();
             }
         }
 
@@ -850,13 +892,14 @@ void plantStanceFeet(
             mj_forward(model, data);
             Eigen::VectorXd delta = Eigen::VectorXd::Zero(model->nv);
             int active = 0;
-            for (const auto& [name, body] : footBodies) {
+            for (const auto& [name, foot] : feet) {
                 if (!contacts[t].at(name) || hold.count(name) == 0) {
                     continue;
                 }
 
-                mj_jacBody(model, data, jacp.data(), jacr.data(), body);
-                const Eigen::Vector2d error = hold.at(name) - bodyPosition(data, body).head<2>();
+                const Eigen::Vector3d position = footReferencePosition(data, foot);
+                mj_jac(model, data, jacp.data(), jacr.data(), position.data(), foot.body);
+                const Eigen::Vector2d error = hold.at(name) - position.head<2>();
                 if (error.norm() < 1e-4) {
                     continue;
                 }
@@ -893,7 +936,8 @@ void flattenStanceFeet(
     mjData* data,
     std::vector<Eigen::VectorXd>& qpos,
     const Contacts& contacts,
-    const std::unordered_map<std::string, int>& footBodies) {
+    const std::unordered_map<std::string, FootReference>& feet,
+    double fps) {
     std::unordered_map<std::string, std::vector<int>> ankleJoints = {
         {"left_foot", resolveAnkleJoints(model, "left")},
         {"right_foot", resolveAnkleJoints(model, "right")},
@@ -906,20 +950,20 @@ void flattenStanceFeet(
         for (int iteration = 0; iteration < 10; ++iteration) {
             mj_forward(model, data);
             bool moved = false;
-            for (const auto& [name, body] : footBodies) {
+            for (const auto& [name, foot] : feet) {
                 const std::vector<int>& joints = ankleJoints.at(name);
                 if (!contacts[t].at(name) || joints.empty()) {
                     continue;
                 }
 
-                const double* matrix = &data->xmat[9 * body];
+                const double* matrix = &data->xmat[9 * foot.body];
                 const Eigen::Vector3d footZ(matrix[2], matrix[5], matrix[8]);
                 const Eigen::Vector3d error = footZ.cross(up);
                 if (error.norm() < 1e-4) {
                     continue;
                 }
 
-                mj_jacBody(model, data, nullptr, jacr.data(), body);
+                mj_jacBody(model, data, nullptr, jacr.data(), foot.body);
                 Eigen::MatrixXd j(3, joints.size());
                 for (std::size_t i = 0; i < joints.size(); ++i) {
                     j.col(i) = jacr.col(model->jnt_dofadr[joints[i]]);
@@ -942,7 +986,7 @@ void flattenStanceFeet(
         desired[t] = Eigen::Map<const Eigen::VectorXd>(data->qpos, model->nq);
     }
 
-    const int half = 4;
+    const int half = std::max(1, static_cast<int>(std::lround(4.0 * fps / 30.0)));
     for (const auto& [name, joints] : ankleJoints) {
         std::vector<int> contactFrames;
         for (std::size_t t = 0; t < contacts.size(); ++t) {
@@ -957,36 +1001,41 @@ void flattenStanceFeet(
 
         for (int joint : joints) {
             const int qadr = model->jnt_qposadr[joint];
-            std::vector<double> continuous(qpos.size());
-            for (std::size_t t = 0; t < qpos.size(); ++t) {
-                auto upper = std::lower_bound(contactFrames.begin(), contactFrames.end(), static_cast<int>(t));
-                if (upper == contactFrames.begin()) {
-                    continuous[t] = desired[*upper][qadr] - qpos[*upper][qadr];
-                } else if (upper == contactFrames.end()) {
-                    const int index = contactFrames.back();
-                    continuous[t] = desired[index][qadr] - qpos[index][qadr];
-                } else {
-                    const int right = *upper;
-                    const int left = *(upper - 1);
-                    const double alpha = static_cast<double>(static_cast<int>(t) - left) / (right - left);
-                    const double a = desired[left][qadr] - qpos[left][qadr];
-                    const double b = desired[right][qadr] - qpos[right][qadr];
-                    continuous[t] = a * (1.0 - alpha) + b * alpha;
-                }
-            }
-
-            std::vector<double> smoothed(qpos.size());
-            for (std::size_t t = 0; t < qpos.size(); ++t) {
-                double sum = 0.0;
-                for (int offset = -half; offset <= half; ++offset) {
-                    const int index = std::clamp(static_cast<int>(t) + offset, 0, static_cast<int>(qpos.size()) - 1);
-                    sum += continuous[index];
+            std::vector<double> smoothed(qpos.size(), 0.0);
+            int begin = 0;
+            while (begin < static_cast<int>(qpos.size())) {
+                while (begin < static_cast<int>(qpos.size()) && !contacts[begin].at(name)) {
+                    ++begin;
                 }
 
-                smoothed[t] = sum / 9.0;
+                if (begin == static_cast<int>(qpos.size())) {
+                    break;
+                }
+
+                int end = begin;
+                while (end + 1 < static_cast<int>(qpos.size()) && contacts[end + 1].at(name)) {
+                    ++end;
+                }
+
+                for (int t = begin; t <= end; ++t) {
+                    double sum = 0.0;
+                    int count = 0;
+                    for (int index = std::max(begin, t - half); index <= std::min(end, t + half); ++index) {
+                        sum += desired[index][qadr] - qpos[index][qadr];
+                        ++count;
+                    }
+
+                    smoothed[t] = sum / static_cast<double>(count);
+                }
+
+                begin = end + 1;
             }
 
             for (std::size_t t = 0; t < qpos.size(); ++t) {
+                if (!contacts[t].at(name)) {
+                    continue;
+                }
+
                 qpos[t][qadr] += smoothed[t];
                 if (model->jnt_limited[joint]) {
                     qpos[t][qadr] = std::clamp(
@@ -994,11 +1043,16 @@ void flattenStanceFeet(
                 }
             }
         }
+
     }
+
 }
 
-std::vector<int> footCollisionGeoms(const mjModel* model) {
-    std::vector<int> ids;
+std::unordered_map<std::string, std::vector<int>> footCollisionGeoms(const mjModel* model) {
+    std::unordered_map<std::string, std::vector<int>> ids = {
+        {"left_foot", {}},
+        {"right_foot", {}},
+    };
     for (int geom = 0; geom < model->ngeom; ++geom) {
         if (model->geom_type[geom] == mjGEOM_PLANE || model->geom_contype[geom] == 0) {
             continue;
@@ -1008,9 +1062,16 @@ std::vector<int> footCollisionGeoms(const mjModel* model) {
         const char* bodyRaw = mj_id2name(model, mjOBJ_BODY, model->geom_bodyid[geom]);
         const std::string text = std::string(geomRaw == nullptr ? "" : geomRaw) + " " +
             std::string(bodyRaw == nullptr ? "" : bodyRaw);
-        if (text.find("foot") != std::string::npos || text.find("toe") != std::string::npos ||
-            text.find("sole") != std::string::npos || text.find("ankle") != std::string::npos) {
-            ids.push_back(geom);
+        const bool isFoot = text.find("foot") != std::string::npos || text.find("toe") != std::string::npos ||
+            text.find("sole") != std::string::npos || text.find("ankle") != std::string::npos;
+        if (!isFoot) {
+            continue;
+        }
+
+        if (text.find("left") != std::string::npos) {
+            ids["left_foot"].push_back(geom);
+        } else if (text.find("right") != std::string::npos) {
+            ids["right_foot"].push_back(geom);
         }
     }
 
@@ -1057,61 +1118,112 @@ double geomSoleZ(const mjModel* model, const mjData* data, int geom) {
     }
 }
 
+Contacts inferSourceRobotContacts(
+    const mjModel* model,
+    mjData* data,
+    const std::vector<Eigen::VectorXd>& qpos,
+    const CanonicalConfig& cfg) {
+    constexpr double kContactMargin = 0.02;
+    const int floorGeom = mj_name2id(model, mjOBJ_GEOM, "floor");
+    const auto footGeoms = footCollisionGeoms(model);
+    if (floorGeom < 0) {
+        throw std::runtime_error("Source robot model is missing the floor geometry required for contact inference.");
+    }
+
+    std::unordered_map<std::string, std::vector<bool>> active;
+    for (const std::string& name : cfg.footNames) {
+        if (footGeoms.at(name).empty()) {
+            throw std::runtime_error("Source robot model has no collision geometry for " + name + ".");
+        }
+
+        active[name].resize(qpos.size());
+    }
+
+    for (std::size_t t = 0; t < qpos.size(); ++t) {
+        mju_copy(data->qpos, qpos[t].data(), model->nq);
+        mj_forward(model, data);
+        const double floorZ = data->geom_xpos[3 * floorGeom + 2];
+        for (const std::string& name : cfg.footNames) {
+            double soleZ = std::numeric_limits<double>::infinity();
+            for (int geom : footGeoms.at(name)) {
+                soleZ = std::min(soleZ, geomSoleZ(model, data, geom));
+            }
+
+            active[name][t] = soleZ <= floorZ + kContactMargin;
+        }
+
+    }
+
+    return cleanContacts(std::move(active), cfg, static_cast<int>(qpos.size()));
+}
+
 void snapToGround(
     const mjModel* model,
     mjData* data,
     std::vector<Eigen::VectorXd>& qpos,
     const Contacts& contacts,
-    const std::unordered_map<std::string, int>& footBodies) {
+    const std::unordered_map<std::string, FootReference>& feet) {
     if (model->nq < 7 || model->jnt_type[0] != mjJNT_FREE) {
         return;
     }
 
-    const std::vector<int> geoms = footCollisionGeoms(model);
-    std::vector<double> soleZ(qpos.size());
+    const auto geoms = footCollisionGeoms(model);
+    std::unordered_map<std::string, std::vector<double>> soleZByFoot;
+    for (const auto& [name, foot] : feet) {
+        soleZByFoot[name].resize(qpos.size());
+    }
+
+    std::vector<double> lowestSoleZ(qpos.size());
     for (std::size_t t = 0; t < qpos.size(); ++t) {
         mju_copy(data->qpos, qpos[t].data(), model->nq);
         mj_forward(model, data);
         double lower = std::numeric_limits<double>::infinity();
-        if (!geoms.empty()) {
-            for (int geom : geoms) {
-                lower = std::min(lower, geomSoleZ(model, data, geom));
+        for (const auto& [name, foot] : feet) {
+            double footLower = std::numeric_limits<double>::infinity();
+            const auto geomIt = geoms.find(name);
+            if (geomIt != geoms.end() && !geomIt->second.empty()) {
+                for (int geom : geomIt->second) {
+                    footLower = std::min(footLower, geomSoleZ(model, data, geom));
+                }
+            } else {
+                footLower = footReferencePosition(data, foot).z();
             }
-        } else {
-            for (const auto& [name, body] : footBodies) {
-                lower = std::min(lower, bodyPosition(data, body).z());
-            }
+
+            soleZByFoot[name][t] = footLower;
+            lower = std::min(lower, footLower);
         }
 
-        soleZ[t] = lower;
+        lowestSoleZ[t] = lower;
     }
 
-    std::vector<int> contactFrames;
+    int floorGeom = mj_name2id(model, mjOBJ_GEOM, "floor");
+    if (floorGeom < 0) {
+        for (int geom = 0; geom < model->ngeom; ++geom) {
+            if (model->geom_type[geom] == mjGEOM_PLANE) {
+                floorGeom = geom;
+                break;
+            }
+        }
+    }
+
+    const double floorZ = floorGeom >= 0 ? data->geom_xpos[3 * floorGeom + 2] : 0.0;
     for (std::size_t t = 0; t < contacts.size(); ++t) {
-        if (contacts[t].at("left_foot") || contacts[t].at("right_foot")) {
-            contactFrames.push_back(static_cast<int>(t));
-        }
-    }
-
-    if (contactFrames.empty()) {
-        return;
-    }
-
-    for (std::size_t t = 0; t < qpos.size(); ++t) {
-        auto upper = std::lower_bound(contactFrames.begin(), contactFrames.end(), static_cast<int>(t));
-        double correction = 0.0;
-        if (upper == contactFrames.begin()) {
-            correction = soleZ[*upper];
-        } else if (upper == contactFrames.end()) {
-            correction = soleZ[contactFrames.back()];
-        } else {
-            const int right = *upper;
-            const int left = *(upper - 1);
-            const double alpha = static_cast<double>(static_cast<int>(t) - left) / (right - left);
-            correction = soleZ[left] * (1.0 - alpha) + soleZ[right] * alpha;
+        double supportLower = std::numeric_limits<double>::infinity();
+        for (const auto& [name, values] : soleZByFoot) {
+            if (contacts[t].at(name)) {
+                supportLower = std::min(supportLower, values[t]);
+            }
         }
 
-        qpos[t][2] -= std::min(correction, soleZ[t]);
+        if (!std::isfinite(supportLower)) {
+            continue;
+        }
+
+        // Root-only grounding cannot lower a support foot through a swing foot that is
+        // already closer to the floor. The remaining support error belongs to leg IK.
+        const double correction = supportLower - floorZ;
+        const double lowestClearance = lowestSoleZ[t] - floorZ;
+        qpos[t][2] -= std::min(correction, lowestClearance);
     }
 }
 
@@ -1193,6 +1305,388 @@ nlohmann::json bodyStateJson(const HumanBodyState& state) {
 
 }  // namespace
 
+struct SourceRobotFrameMapper::Impl {
+    ModelPtr model;
+    DataPtr data;
+    std::vector<SiteSpec> sites;
+    double outputHeight = 1.8;
+    double scale = 1.0;
+    bool scaleRootXy = false;
+    bool rootInitialized = false;
+    Eigen::Vector3d root0 = Eigen::Vector3d::Zero();
+    std::unordered_map<std::string, Eigen::Quaterniond> previousQuaternions;
+    std::unordered_map<std::string, std::vector<int>> footGeoms;
+    std::unordered_map<std::string, bool> footContacts;
+    int floorGeom = -1;
+};
+
+SourceRobotFrameMapper::SourceRobotFrameMapper(
+    const std::filesystem::path& mappingPath,
+    const std::filesystem::path& gmrRoot)
+    : impl_(std::make_unique<Impl>()) {
+    if (!std::filesystem::is_regular_file(mappingPath)) {
+        throw std::runtime_error("Source mapping not found: " + mappingPath.string());
+    }
+
+    const YAML::Node yaml = YAML::LoadFile(mappingPath.string());
+    impl_->model = loadModel(resolveConfigPath(yaml, "robot_model", gmrRoot));
+    impl_->data.reset(mj_makeData(impl_->model.get()));
+    if (!impl_->data) {
+        throw std::runtime_error("Failed to allocate source MuJoCo data.");
+    }
+
+    impl_->outputHeight = yaml["canonical_height_m"].as<double>();
+    const double sourceHeight = yaml["source_robot_reference_height_m"].as<double>();
+    if (!std::isfinite(impl_->outputHeight) || impl_->outputHeight <= 0.0 ||
+        !std::isfinite(sourceHeight) || sourceHeight <= 0.0) {
+        throw std::runtime_error("Source and output reference heights must be positive and finite.");
+    }
+
+    impl_->scale = impl_->outputHeight / sourceHeight;
+    impl_->scaleRootXy = yaml["scale_root_xy"].as<bool>(false);
+    for (auto it = yaml["sites"].begin(); it != yaml["sites"].end(); ++it) {
+        SiteSpec site;
+        site.name = it->first.as<std::string>();
+        const YAML::Node spec = it->second;
+        const std::string bodyName = spec["source_body"].as<std::string>();
+        site.bodyId = mj_name2id(impl_->model.get(), mjOBJ_BODY, bodyName.c_str());
+        if (site.bodyId < 0) {
+            throw std::runtime_error(
+                "Unknown source body '" + bodyName + "' for site '" + site.name + "'.");
+        }
+
+        site.positionOffset = yamlVec3(
+            spec["position_offset_local"], site.name + ".position_offset_local");
+        site.orientationOffset = yamlQuat(
+            spec["orientation_offset_wxyz"], site.name + ".orientation_offset_wxyz");
+        impl_->sites.push_back(std::move(site));
+    }
+
+    if (std::none_of(
+            impl_->sites.begin(),
+            impl_->sites.end(),
+            [](const SiteSpec& site) { return site.name == "pelvis"; })) {
+        throw std::runtime_error("Source mapping is missing required semantic site: pelvis");
+    }
+
+    impl_->floorGeom = mj_name2id(impl_->model.get(), mjOBJ_GEOM, "floor");
+    impl_->footGeoms = footCollisionGeoms(impl_->model.get());
+    if (impl_->floorGeom < 0) {
+        throw std::runtime_error("Source robot model is missing the floor geometry required for contact inference.");
+    }
+
+    for (const std::string& name : yaml["contact"]["foot_bodies"].as<std::vector<std::string>>()) {
+        if (impl_->footGeoms.at(name).empty()) {
+            throw std::runtime_error("Source robot model has no collision geometry for " + name + ".");
+        }
+
+        impl_->footContacts[name] = false;
+    }
+}
+
+SourceRobotFrameMapper::~SourceRobotFrameMapper() = default;
+
+HumanFrame SourceRobotFrameMapper::mapFrame(const Eigen::VectorXd& qpos) {
+    if (qpos.size() != impl_->model->nq || !qpos.allFinite()) {
+        throw std::runtime_error("Live source qpos must match source model.nq and contain finite values.");
+    }
+
+    mju_copy(impl_->data->qpos, qpos.data(), impl_->model->nq);
+    mj_forward(impl_->model.get(), impl_->data.get());
+
+    constexpr double kContactMargin = 0.02;
+    const double floorZ = impl_->data->geom_xpos[3 * impl_->floorGeom + 2];
+    for (auto& [name, contact] : impl_->footContacts) {
+        double soleZ = std::numeric_limits<double>::infinity();
+        for (int geom : impl_->footGeoms.at(name)) {
+            soleZ = std::min(soleZ, geomSoleZ(impl_->model.get(), impl_->data.get(), geom));
+        }
+
+        contact = soleZ <= floorZ + kContactMargin;
+    }
+
+    HumanFrame raw;
+    for (const SiteSpec& site : impl_->sites) {
+        const Eigen::Quaterniond linkOrientation = bodyQuaternion(impl_->data.get(), site.bodyId);
+        HumanBodyState state;
+        state.position = bodyPosition(impl_->data.get(), site.bodyId) +
+            linkOrientation * site.positionOffset;
+        state.orientation = (linkOrientation * site.orientationOffset).normalized();
+        raw[site.name] = state;
+    }
+
+    const Eigen::Vector3d pelvis = raw.at("pelvis").position;
+    if (!impl_->rootInitialized) {
+        impl_->root0 = pelvis;
+        impl_->rootInitialized = true;
+    }
+
+    Eigen::Vector3d scaledPelvis = pelvis;
+    scaledPelvis.z() = impl_->root0.z() * impl_->scale +
+        (pelvis.z() - impl_->root0.z()) * impl_->scale;
+    if (impl_->scaleRootXy) {
+        scaledPelvis.head<2>() = impl_->root0.head<2>() +
+            (pelvis - impl_->root0).head<2>() * impl_->scale;
+    }
+
+    HumanFrame scaled;
+    for (auto& [name, state] : raw) {
+        state.position = scaledPelvis + (state.position - pelvis) * impl_->scale;
+        const auto previous = impl_->previousQuaternions.find(name);
+        if (previous != impl_->previousQuaternions.end() &&
+            previous->second.coeffs().dot(state.orientation.coeffs()) < 0.0) {
+            state.orientation.coeffs() *= -1.0;
+        }
+
+        impl_->previousQuaternions[name] = state.orientation;
+        scaled[name] = state;
+    }
+
+    return scaled;
+}
+
+const std::unordered_map<std::string, bool>& SourceRobotFrameMapper::footContacts() const {
+    return impl_->footContacts;
+}
+
+void SourceRobotFrameMapper::reset() {
+    impl_->rootInitialized = false;
+    impl_->root0.setZero();
+    impl_->previousQuaternions.clear();
+    for (auto& [name, contact] : impl_->footContacts) {
+        contact = false;
+    }
+
+}
+
+double SourceRobotFrameMapper::outputHeight() const {
+    return impl_->outputHeight;
+}
+
+struct OnlineCanonicalFitter::Impl {
+    struct Record {
+        std::size_t index = 0;
+        HumanFrame frame;
+        std::unordered_map<std::string, bool> rawContacts;
+        std::unordered_map<std::string, bool> confirmedContacts;
+    };
+
+    CanonicalConfig config;
+    double fps = 30.0;
+    int latency = 2;
+    std::size_t seen = 0;
+    std::size_t nextOutput = 0;
+    std::deque<Record> records;
+    std::unordered_map<std::string, int> contactRunLengths;
+    std::unordered_map<std::string, int> nonContactRunLengths;
+    std::unordered_map<std::string, bool> stableContacts;
+    std::unordered_map<std::string, Eigen::Quaterniond> previousOutputOrientations;
+    double groundHeight = std::numeric_limits<double>::infinity();
+
+    const Record& record(std::size_t index) const {
+        return records.at(index - records.front().index);
+    }
+
+    Record& record(std::size_t index) {
+        return records.at(index - records.front().index);
+    }
+};
+
+OnlineCanonicalFitter::OnlineCanonicalFitter(
+    const std::filesystem::path& mappingPath,
+    double fps)
+    : impl_(std::make_unique<Impl>()) {
+    if (!std::filesystem::is_regular_file(mappingPath)) {
+        throw std::runtime_error("Source mapping not found: " + mappingPath.string());
+    }
+
+    if (!std::isfinite(fps) || fps <= 0.0) {
+        throw std::runtime_error("Online canonical fps must be positive and finite.");
+    }
+
+    impl_->config = loadCanonicalConfig(YAML::LoadFile(mappingPath.string()), fps);
+    impl_->fps = fps;
+    impl_->latency = std::max(
+        impl_->config.smoothWindow / 2,
+        impl_->config.minContactFrames - 1);
+    reset();
+}
+
+OnlineCanonicalFitter::~OnlineCanonicalFitter() = default;
+
+void OnlineCanonicalFitter::pushFrame(HumanFrame frame) {
+    pushFrame(std::move(frame), {});
+}
+
+void OnlineCanonicalFitter::pushFrame(
+    HumanFrame frame,
+    const std::unordered_map<std::string, bool>& sourceFootContacts) {
+    Impl::Record record;
+    record.index = impl_->seen++;
+
+    if (!impl_->records.empty()) {
+        const HumanFrame& previous = impl_->records.back().frame;
+        for (auto& [name, state] : frame) {
+            const auto it = previous.find(name);
+            if (it != previous.end() && it->second.orientation.coeffs().dot(state.orientation.coeffs()) < 0.0) {
+                state.orientation.coeffs() *= -1.0;
+            }
+
+        }
+
+    }
+
+    double lower = std::numeric_limits<double>::infinity();
+    for (const std::string& name : impl_->config.footNames) {
+        lower = std::min(lower, frame.at(name).position.z());
+    }
+
+    impl_->groundHeight = std::min(impl_->groundHeight, lower);
+    const double band = std::max(impl_->config.heightThreshold, 0.025);
+    for (const std::string& name : impl_->config.footNames) {
+        double speed = 0.0;
+        if (!impl_->records.empty()) {
+            speed = (frame.at(name).position - impl_->records.back().frame.at(name).position)
+                .norm() * impl_->fps;
+        }
+
+        const bool active = sourceFootContacts.empty()
+            ? frame.at(name).position.z() <= impl_->groundHeight + band &&
+                speed < impl_->config.speedThreshold
+            : sourceFootContacts.at(name);
+        record.rawContacts[name] = active;
+        record.confirmedContacts[name] = false;
+    }
+
+    impl_->records.push_back(std::move(record));
+    impl_->records.back().frame = std::move(frame);
+
+    for (const std::string& name : impl_->config.footNames) {
+        const bool rawContact = impl_->records.back().rawContacts.at(name);
+        if (rawContact) {
+            impl_->nonContactRunLengths[name] = 0;
+            const int runLength = ++impl_->contactRunLengths[name];
+            if (impl_->stableContacts[name]) {
+                impl_->records.back().confirmedContacts[name] = true;
+            } else if (runLength >= impl_->config.minContactFrames) {
+                impl_->stableContacts[name] = true;
+                for (auto it = impl_->records.rbegin(); it != impl_->records.rend(); ++it) {
+                    if (!it->rawContacts.at(name)) {
+                        break;
+                    }
+
+                    it->confirmedContacts[name] = true;
+                }
+            }
+
+            continue;
+        }
+
+        impl_->contactRunLengths[name] = 0;
+        const int runLength = ++impl_->nonContactRunLengths[name];
+        if (impl_->stableContacts[name]) {
+            impl_->records.back().confirmedContacts[name] = true;
+            if (runLength >= impl_->config.minContactFrames) {
+                impl_->stableContacts[name] = false;
+                for (auto it = impl_->records.rbegin(); it != impl_->records.rend(); ++it) {
+                    if (it->rawContacts.at(name)) {
+                        break;
+                    }
+
+                    it->confirmedContacts[name] = false;
+                }
+            }
+
+        }
+
+    }
+
+}
+
+bool OnlineCanonicalFitter::canPop(bool flush) const {
+    if (impl_->nextOutput >= impl_->seen) {
+        return false;
+    }
+
+    return flush || impl_->nextOutput + static_cast<std::size_t>(impl_->latency) < impl_->seen;
+}
+
+OnlineCanonicalOutput OnlineCanonicalFitter::popFrame(bool flush) {
+    if (!canPop(flush)) {
+        throw std::runtime_error("Online canonical output is not ready.");
+    }
+
+    const std::size_t index = impl_->nextOutput;
+    const std::size_t half = static_cast<std::size_t>(impl_->config.smoothWindow / 2);
+    const std::size_t begin = index > half ? index - half : 0;
+    const std::size_t end = std::min(impl_->seen, index + half + 1);
+    HumanFrame target;
+    const HumanFrame& names = impl_->record(index).frame;
+    for (const auto& [name, unused] : names) {
+        HumanBodyState state;
+        Eigen::Vector4d quaternion = Eigen::Vector4d::Zero();
+        for (std::size_t t = begin; t < end; ++t) {
+            const HumanBodyState& sample = impl_->record(t).frame.at(name);
+            state.position += sample.position;
+            quaternion += Eigen::Vector4d(
+                sample.orientation.w(),
+                sample.orientation.x(),
+                sample.orientation.y(),
+                sample.orientation.z());
+        }
+
+        state.position /= static_cast<double>(end - begin);
+        quaternion /= static_cast<double>(end - begin);
+        state.orientation = Eigen::Quaterniond(
+            quaternion[0], quaternion[1], quaternion[2], quaternion[3]).normalized();
+        const auto previous = impl_->previousOutputOrientations.find(name);
+        if (previous != impl_->previousOutputOrientations.end() &&
+            previous->second.coeffs().dot(state.orientation.coeffs()) < 0.0) {
+            state.orientation.coeffs() *= -1.0;
+        }
+
+        impl_->previousOutputOrientations[name] = state.orientation;
+        target[name] = state;
+    }
+
+    const auto contacts = impl_->record(index).confirmedContacts;
+    OnlineCanonicalOutput output;
+    output.frame = fitCanonicalFrame(target, impl_->config);
+    output.footContacts = contacts;
+    ++impl_->nextOutput;
+
+    const std::size_t keepFrom = impl_->nextOutput > half ? impl_->nextOutput - half : 0;
+    while (!impl_->records.empty() && impl_->records.front().index < keepFrom) {
+        impl_->records.pop_front();
+    }
+
+    return output;
+}
+
+void OnlineCanonicalFitter::reset() {
+    impl_->seen = 0;
+    impl_->nextOutput = 0;
+    impl_->records.clear();
+    impl_->contactRunLengths.clear();
+    impl_->nonContactRunLengths.clear();
+    impl_->stableContacts.clear();
+    impl_->previousOutputOrientations.clear();
+    impl_->groundHeight = std::numeric_limits<double>::infinity();
+    for (const std::string& name : impl_->config.footNames) {
+        impl_->contactRunLengths[name] = 0;
+        impl_->nonContactRunLengths[name] = 0;
+        impl_->stableContacts[name] = false;
+    }
+}
+
+int OnlineCanonicalFitter::latencyFrames() const {
+    return impl_->latency;
+}
+
+double OnlineCanonicalFitter::canonicalHeight() const {
+    return impl_->config.height;
+}
+
 SourceRobotTrajectory loadSourceRobotTrajectory(
     const std::filesystem::path& inputPath,
     const std::filesystem::path& mappingPath,
@@ -1212,10 +1706,11 @@ SourceRobotTrajectory loadSourceRobotTrajectory(
     const ModelPtr model = loadModel(modelPath);
 
     std::vector<Eigen::VectorXd> frames;
+    double inputFps = 0.0;
     if (inputPath.extension() == ".csv") {
         frames = parseCsvQpos(inputPath);
     } else if (inputPath.extension() == ".json") {
-        frames = parseJsonQpos(inputPath);
+        frames = parseJsonQpos(inputPath, &inputFps);
     } else if (inputPath.extension() == ".npy") {
         frames = parseNpyQpos(inputPath);
     } else {
@@ -1227,7 +1722,9 @@ SourceRobotTrajectory loadSourceRobotTrajectory(
     }
 
     validateSourceFrames(frames, model->nq);
-    const double fps = fpsOverride > 0.0 ? fpsOverride : cfg["fps_default"].as<double>(30.0);
+    const double fps = fpsOverride > 0.0
+        ? fpsOverride
+        : (inputFps > 0.0 ? inputFps : cfg["fps_default"].as<double>(30.0));
     if (!std::isfinite(fps) || fps <= 0.0) {
         throw std::runtime_error("fps must be positive and finite.");
     }
@@ -1324,10 +1821,13 @@ CanonicalRobotTrajectory buildCanonicalRobotTrajectory(
         semanticFrames.push_back(std::move(scaled));
     }
 
-    const CanonicalConfig cfg = loadCanonicalConfig(yaml);
-    const Contacts contacts = inferContacts(semanticFrames, cfg, source.fps);
+    const CanonicalConfig cfg = loadCanonicalConfig(yaml, source.fps);
+    const Contacts contacts = inferSourceRobotContacts(
+        model.get(),
+        data.get(),
+        source.qposFrames,
+        cfg);
     std::vector<HumanFrame> targets = smoothFrames(semanticFrames, cfg.smoothWindow);
-    applyContactTargets(targets, contacts, cfg);
 
     std::vector<HumanFrame> fitted;
     fitted.reserve(targets.size());
@@ -1374,19 +1874,19 @@ RobotPostprocessResult postprocessRobotTrajectory(
         }
     }
 
-    const auto footBodies = resolveFootBodyIds(model.get());
+    const auto feet = resolveFootReferences(model.get());
     RobotPostprocessResult result;
     result.stanceSlipBeforeMps = measureStanceSlip(
-        model.get(), data.get(), qposFrames, contacts, fps, footBodies);
-    plantStanceFeet(model.get(), data.get(), qposFrames, contacts, footBodies);
-    flattenStanceFeet(model.get(), data.get(), qposFrames, contacts, footBodies);
-    snapToGround(model.get(), data.get(), qposFrames, contacts, footBodies);
+        model.get(), data.get(), qposFrames, contacts, fps, feet);
+    plantStanceFeet(model.get(), data.get(), qposFrames, contacts, feet);
+    flattenStanceFeet(model.get(), data.get(), qposFrames, contacts, feet, fps);
+    snapToGround(model.get(), data.get(), qposFrames, contacts, feet);
     if (alignWristsEnabled) {
         alignWrists(model.get(), data.get(), qposFrames);
     }
 
     result.stanceSlipAfterMps = measureStanceSlip(
-        model.get(), data.get(), qposFrames, contacts, fps, footBodies);
+        model.get(), data.get(), qposFrames, contacts, fps, feet);
     return result;
 }
 

@@ -94,6 +94,7 @@ namespace gmr {
             cfg.enableFootLock = j.value("enable_foot_lock", cfg.enableFootLock);
             cfg.footLockEmaAlpha = j.value("foot_lock_ema_alpha", cfg.footLockEmaAlpha);
             cfg.fixRobotPenetration = j.value("fix_robot_penetration", cfg.fixRobotPenetration);
+            cfg.snapSupportToGround = j.value("snap_support_to_ground", cfg.snapSupportToGround);
             cfg.footGroundLimitEnabled = j.value("foot_ground_limit_enabled", cfg.footGroundLimitEnabled);
             cfg.penetrationExcludeFeetWhenFootLimit =
                 j.value("penetration_exclude_feet_when_foot_limit", cfg.penetrationExcludeFeetWhenFootLimit);
@@ -113,6 +114,10 @@ namespace gmr {
             cfg.robotTrunkBodies = readStringArray(j, "robot_trunk_bodies");
             cfg.robotLegBodies = readStringArray(j, "robot_leg_bodies");
             cfg.robotArmBodies = readStringArray(j, "robot_arm_bodies");
+            if (cfg.footBodies.empty() && cfg.robotFootBodies.size() == 2) {
+                cfg.footBodies = {"left_foot", "right_foot"};
+            }
+
             return cfg;
         }
 

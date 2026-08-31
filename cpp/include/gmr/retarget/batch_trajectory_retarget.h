@@ -90,15 +90,23 @@ namespace gmr {
 
         void clearFootContactSchedule();
         void setFootContactFromQRef(const std::vector<Eigen::VectorXd>& qRef);
+        void setFootContactSchedule(const FootContactSchedule& contacts, const std::vector<Eigen::VectorXd>& qRef);
+        void commitFootContactAnchors(const ContactGroundState& contactState, const Eigen::VectorXd& q);
+        Eigen::VectorXd limitVelocityStep(const Eigen::VectorXd& qPrevious, const Eigen::VectorXd& q,
+                                          double maxVelocity, double dt) const;
 
        private:
         struct PreparedFrameTargets {
+            HumanFrame raw;
             HumanFrame prepared;
             FrameTargets targets;
+            ContactGroundState contactState;
         };
         struct PreparedBatchTargets {
+            std::vector<HumanFrame> raw;
             std::vector<HumanFrame> prepared;
             std::vector<FrameTargets> targets;
+            std::vector<ContactGroundState> contactStates;
         };
 
         void buildTrackEntries();
@@ -106,6 +114,7 @@ namespace gmr {
         void buildSmoothMappings();
         void buildTorqueLimitJoints();
         void resolveFootBodyIds();
+        void resolveFootCollisionGeomIds(const std::vector<std::string>& explicitGeomNames = {});
         void ensureGnWorkspace(int nFrames) const;
 
         double windowTorquePeakRatio(const std::vector<Eigen::VectorXd>& qWin) const;
@@ -117,12 +126,13 @@ namespace gmr {
         void accumulateWindowTorqueLimitGn(const std::vector<Eigen::VectorXd>& qWin, int m) const;
         double windowTorqueCost(const std::vector<Eigen::VectorXd>& qWin) const;
 
-        std::vector<Eigen::VectorXd> bootstrapQ(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter, bool offsetToGround,
-                                                const BatchIkBootstrapContext* ikBootstrap);
+        std::vector<Eigen::VectorXd> bootstrapQ(const PreparedBatchTargets& prepared, Retargeter& retargeter);
         PreparedFrameTargets prepareFrameTargets(const HumanFrame& humanFrame, Retargeter& retargeter,
-                                                 bool offsetToGround) const;
+                                                 bool offsetToGround,
+                                                 const ContactGroundState* contactState = nullptr) const;
         PreparedBatchTargets prepareBatchTargets(const std::vector<HumanFrame>& humanFrames, Retargeter& retargeter,
-                                                 bool offsetToGround) const;
+                                                 bool offsetToGround,
+                                                 const FootContactSchedule* footContacts = nullptr) const;
         std::vector<Eigen::VectorXd> loadQInitFromJson(const std::filesystem::path& path, std::size_t expectedFrames) const;
         std::vector<int> windowStarts(int nFrames) const;
         std::vector<std::vector<bool>> batchContactMask(const std::vector<Eigen::VectorXd>& qRef) const;
@@ -153,9 +163,10 @@ namespace gmr {
         void applyGnStepToWindow(std::vector<Eigen::VectorXd>& qWin, const Eigen::VectorXd& dqFlat, double alpha) const;
         double windowCost(const std::vector<Eigen::VectorXd>& qWin, const std::vector<FrameTargets>& targets, const Eigen::VectorXd& anchor,
                           const std::vector<Eigen::VectorXd>& qRef, int frameOffset, double anchorWeight, double wGmr) const;
-        Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter, const HumanFrame& prepared, bool offsetToGround);
+        Eigen::VectorXd finalizeQpos(const Eigen::VectorXd& qpos, Retargeter& retargeter,
+                                     const ContactGroundState& contactState);
         std::vector<Eigen::VectorXd> finalizeTrajectory(std::vector<Eigen::VectorXd> qOpt, Retargeter& retargeter,
-                                                        const std::vector<HumanFrame>& prepared, bool offsetToGround,
+                                                        const std::vector<ContactGroundState>& contactStates,
                                                         const BatchIkBootstrapContext* ikBootstrap);
 
         BatchTrajectoryConfig config_;
@@ -190,16 +201,24 @@ namespace gmr {
         std::vector<int> optVidx_;  // 每一帧里参与优化的 MuJoCo velocity dof index。
         std::vector<int> smoothQidx_;
         std::vector<int> smoothV_;
-        std::vector<int> smoothQ_;
         std::unordered_map<int, int> qToOptV_;
         std::vector<int> footBodyIds_;
+        std::vector<int> footSiteIds_;
+        std::vector<std::vector<int>> footCollisionGeomIds_;
+        int floorGeomId_ = -1;
+        bool useFootSitesForGround_ = false;
         std::vector<std::string> footContactKeys_;
         std::unordered_map<std::string, Eigen::Vector3d> table1PosOffsets_;
         std::unordered_map<std::string, Eigen::Quaterniond> table1RotOffsets_;
         std::vector<std::vector<bool>> globalRefContact_;
         std::vector<std::vector<Eigen::Vector3d>> globalRefFootPos_;
+        std::vector<Eigen::Vector3d> persistentFootAnchors_;
+        std::vector<bool> persistentFootAnchorActive_;
         double groundZ_ = 0.0;
         std::unique_ptr<ContactGroundPipeline> contactGroundPipeline_;
+
+        double footContactActivation(int frame, int foot) const;
+        const double* footPosition(const mjData* data, int footIndex) const;
     };
 
 }  // namespace gmr

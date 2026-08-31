@@ -27,10 +27,11 @@ namespace gmr {
         bool finalizeContact        = true;
         bool enableFootPenalties    = true;
         double wFootHeight          = 50.0;
+        double wFootOrientation     = 100.0;
         double wFootSlip            = 2000.0;
         double wFootIkAnchor        = 200.0;
         double wRootXyContact       = 100.0;
-        double wContactJointAnchor  = 400.0;
+        double wContactJointAnchor  = 0.0;
         double footContactMargin    = 0.02;
         // Keep committed hinge joints this many degrees away from hard limits (0 disables).
         double jointLimitMarginDeg  = 0.0;
@@ -42,7 +43,7 @@ namespace gmr {
         double torqueLimitMargin    = 0.1;
         double torqueLimitWeight    = 20.0;
         std::string torqueLimitScope = "upper";  // "upper" | "all"
-        double motionDt             = 1.0 / 30.0;  ///< frame dt for the torque barrier only
+        double motionDt             = 1.0 / 30.0;
         // Risk-driven gating: scale torqueLimitWeight by estimated headroom.
         std::string torqueLimitGateMode = "soft";  // "off" | "soft" | "hard"
         double torqueLimitGateROn       = 0.85;

@@ -23,11 +23,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import numpy as np
+
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "src" / "python"))
+
+from general_motion_retargeting.data_loader import load_robot_motion
+from robot_to_gmr import (
+    flatten_stance_feet_ik,
+    infer_foot_contacts_from_soles,
+    snap_robot_qpos_to_ground,
+)
+
 VIZ_SCRIPT = Path(__file__).resolve().parent / "vis_g1_robot_compare.py"
 CPP_CONVERTER = REPO / "cpp" / "build" / "gmr_robot_to_robot_cli"
+REALTIME_CPP_CONVERTER = REPO / "cpp" / "build" / "gmr_realtime_robot_to_robot_cli"
 DEFAULT_REFS = Path.home() / "Workspace" / "puppet" / "output" / "gmr_references"
 GUI_REFS = REPO / "output" / "robot_to_robot_gui"
+GMR_CG_BATCH = Path.home() / "Workspace" / "gmr_cg_batch"
+G1_MODEL = REPO / "assets" / "unitree_g1" / "g1_mocap_29dof.xml"
 HOST = "127.0.0.1"
 PORT = 8777
 
@@ -117,16 +132,49 @@ def discover_source_inputs(refs_roots: list[Path]) -> list[dict]:
     if csv_root.is_dir():
         candidates.extend(csv_root.glob("*.csv"))
 
+    if GMR_CG_BATCH.is_dir():
+        candidates.extend(GMR_CG_BATCH.rglob("*.pkl"))
+
     unique = sorted({path.resolve() for path in candidates if path.is_file()})
-    return [
-        {
-            "path": str(path),
-            "clip": _split_clip_name(path)[0],
-            "kind": "CSV" if path.suffix.lower() == ".csv" else "qpos JSON",
-            "label": f"{_split_clip_name(path)[0]} · {'CSV' if path.suffix.lower() == '.csv' else 'qpos JSON'}",
-        }
-        for path in unique
-    ]
+    out = []
+    for path in unique:
+        kind = {".csv": "CSV", ".pkl": "GMR PKL"}.get(path.suffix.lower(), "qpos JSON")
+        label = _split_clip_name(path)[0]
+        if path.suffix.lower() == ".pkl":
+            label = str(path.relative_to(GMR_CG_BATCH).with_suffix(""))
+
+        out.append({"path": str(path), "clip": _split_clip_name(path)[0], "kind": kind, "label": f"{label} · {kind}"})
+
+    return out
+
+
+def prepare_cpp_input(source: Path, output: Path) -> Path:
+    if source.suffix.lower() != ".pkl":
+        return source
+
+    _meta, fps, root_pos, root_rot, dof_pos, *_rest, qpos = load_robot_motion(source)
+    if qpos is None:
+        qpos = np.hstack([root_pos, root_rot, dof_pos])
+
+    qpos = np.asarray(qpos, dtype=float)
+    contacts = infer_foot_contacts_from_soles(qpos, str(G1_MODEL), fps=float(fps))
+    qpos = flatten_stance_feet_ik(qpos, str(G1_MODEL), contacts)
+    qpos = snap_robot_qpos_to_ground(qpos, str(G1_MODEL), contacts=contacts)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(
+            {
+                "robot": "unitree_g1",
+                "fps": float(fps),
+                "nq": int(qpos.shape[1]),
+                "num_frames": int(qpos.shape[0]),
+                "qpos_frames": qpos.tolist(),
+                "source_postprocess": "contact_aware_foot_comfort",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return output
 
 
 def discover_motions(refs_roots: list[Path], robot: str, *, main_only: bool = True) -> list[dict]:
@@ -309,8 +357,11 @@ def play(payload: dict) -> dict:
 
 
 def convert(payload: dict) -> dict:
+    global _PLAY_PROC
     source = Path(str(payload.get("source", ""))).expanduser().resolve()
     robot = str(payload.get("robot", "")).strip()
+    realtime = bool(payload.get("realtime", False))
+    online_canonical = realtime and bool(payload.get("online_canonical", False))
     allowed_sources = {Path(item["path"]) for item in discover_source_inputs(_ROBOT_REFS)}
     if source not in allowed_sources:
         return {"ok": False, "error": "请选择列表中的有效 G1 输入轨迹。"}
@@ -318,32 +369,97 @@ def convert(payload: dict) -> dict:
     if robot not in supported_target_robots():
         return {"ok": False, "error": f"目标机器人不支持 SMPL-X 重定向：{robot}"}
 
-    if not CPP_CONVERTER.is_file():
+    converter = REALTIME_CPP_CONVERTER if realtime else CPP_CONVERTER
+    if not converter.is_file():
+        target = converter.name
         return {
             "ok": False,
-            "error": "纯 C++ 转换器尚未编译。请先在 IDE 中构建 gmr_robot_to_robot_cli。",
+            "error": f"纯 C++ 转换器尚未编译。请先在 IDE 中构建 {target}。",
         }
 
-    clip = re.sub(r"[^A-Za-z0-9_.-]+", "_", _split_clip_name(source)[0]).strip("._")
+    clip_source = _split_clip_name(source)[0]
+    if source.suffix.lower() == ".pkl":
+        clip_source = str(source.relative_to(GMR_CG_BATCH).with_suffix(""))
+
+    clip = re.sub(r"[^A-Za-z0-9_.-]+", "_", clip_source).strip("._")
     if not clip:
         return {"ok": False, "error": "输入轨迹文件名无法生成有效 clip 名。"}
 
-    source_output = GUI_REFS / "source" / "unitree_g1" / "gui" / f"{clip}.qpos.json"
-    robot_output = GUI_REFS / "robot_b" / robot / "gui" / f"{clip}.qpos.json"
+    if online_canonical:
+        output_clip = f"{clip}_realtime_canonical"
+    elif realtime:
+        output_clip = f"{clip}_realtime"
+    else:
+        output_clip = clip
+
+    source_output = GUI_REFS / "source" / "unitree_g1" / "gui" / f"{output_clip}.qpos.json"
+    robot_output = GUI_REFS / "robot_b" / robot / "gui" / f"{output_clip}.qpos.json"
+    cpp_input = prepare_cpp_input(source, source_output)
     command = [
-        str(CPP_CONVERTER),
+        str(converter),
         "--gmr_root",
         str(REPO),
         "--input",
-        str(source),
+        str(cpp_input),
         "--robot_b",
         robot,
         "--out_json",
         str(robot_output),
         "--dump_source_json",
         str(source_output),
-        "--fast",
     ]
+    if not realtime:
+        command.append("--fast")
+
+    if realtime:
+        stop_play()
+        viewer_command = [
+            sys.executable,
+            str(VIZ_SCRIPT),
+            "--g1_motion",
+            str(cpp_input),
+            "--robot_b",
+            robot,
+            "--robot_b_motion",
+            str(robot_output),
+            "--offset_y",
+            str(float(payload.get("offset_y", 1.2))),
+            "--live_retarget",
+            "--realtime_cli",
+            str(REALTIME_CPP_CONVERTER),
+            "--dump_source_json",
+            str(source_output),
+        ]
+        if not bool(payload.get("loop", True)):
+            viewer_command.append("--no-loop")
+
+        if not bool(payload.get("tint", True)):
+            viewer_command.append("--no-tint")
+
+        if online_canonical:
+            viewer_command.append("--online_canonical")
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
+        _PLAY_PROC = subprocess.Popen(
+            viewer_command,
+            cwd=str(REPO),
+            env=env,
+            start_new_session=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return {
+            "ok": True,
+            "live": True,
+            "pid": _PLAY_PROC.pid,
+            "robot": robot,
+            "source": str(source_output),
+            "motion": str(robot_output),
+            "method": "realtime_online_canonical_qp_stream" if online_canonical else "realtime_direct_qp_stream",
+            "cmd": " ".join(viewer_command),
+        }
 
     if not _CONVERT_LOCK.acquire(blocking=False):
         return {"ok": False, "error": "已有转换任务正在运行，请稍候。"}
@@ -376,6 +492,7 @@ def convert(payload: dict) -> dict:
         "robot": robot,
         "source": str(source_output),
         "motion": str(robot_output),
+        "method": "realtime_direct_qp" if realtime else "canonical_batch",
         "log": log[-6000:],
     }
 
@@ -443,6 +560,8 @@ PAGE = r"""<!doctype html>
     <label>Robot B</label>
     <select id="robot"></select>
     <button id="convertPlay">纯 C++ 转换并播放</button>
+    <button id="realtimeConvertPlay">实时 Direct-QP 转换并播放</button>
+    <button id="onlineCanonicalPlay">实时 Canonical-QP 转换并播放</button>
     <label>搜索轨迹</label>
     <input id="q" placeholder="clip 名，例如 walk1" />
     <label>参考轨迹</label>
@@ -565,8 +684,11 @@ async function loadCatalog() {
     (src ? ` · G1 source ${src} 条` : '');
 }
 
-async function convertAndPlay() {
-  const button = document.getElementById('convertPlay');
+async function convertAndPlay(realtime, onlineCanonical = false) {
+  const buttonId = onlineCanonical
+    ? 'onlineCanonicalPlay'
+    : (realtime ? 'realtimeConvertPlay' : 'convertPlay');
+  const button = document.getElementById(buttonId);
   const source = document.getElementById('source').value;
   const robot = document.getElementById('robot').value;
   if (!source || !robot) {
@@ -578,16 +700,34 @@ async function convertAndPlay() {
   localStorage.setItem('gmrCompareRobot', robot);
   button.disabled = true;
   button.textContent = '转换中…';
-  document.getElementById('hint').textContent = '正在运行纯 C++ pipeline…';
+  document.getElementById('hint').textContent = onlineCanonical
+    ? '正在按帧运行 Online Canonical-QP…'
+    : (realtime ? '正在按帧运行实时 Direct-QP…' : '正在运行 canonical Batch pipeline…');
   try {
     const data = await api('/api/convert', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({source, robot}),
+      body: JSON.stringify({
+        source,
+        robot,
+        realtime,
+        online_canonical: onlineCanonical,
+        offset_y: Number(document.getElementById('offsetY').value || 1.2),
+        loop: document.getElementById('loop').checked,
+        tint: document.getElementById('tint').checked,
+      }),
     });
     writeOut(data);
     if (!data.ok) {
       document.getElementById('hint').textContent = data.error || '转换失败';
+      return;
+    }
+
+    if (data.live) {
+      document.getElementById('hint').textContent =
+        onlineCanonical
+          ? '实时窗口已启动：Canonical-QP 每产出一帧立即显示；整段结束后自动循环已缓存结果。'
+          : '实时窗口已启动：Direct-QP 每产出一帧立即显示；整段结束后自动循环已缓存结果。';
       return;
     }
 
@@ -601,7 +741,9 @@ async function convertAndPlay() {
     document.getElementById('hint').textContent = `转换失败：${error.message}`;
   } finally {
     button.disabled = false;
-    button.textContent = '纯 C++ 转换并播放';
+    button.textContent = onlineCanonical
+      ? '实时 Canonical-QP 转换并播放'
+      : (realtime ? '实时 Direct-QP 转换并播放' : '纯 C++ 转换并播放');
   }
 }
 
@@ -645,7 +787,9 @@ async function pollStatus() {
 }
 
 document.getElementById('play').onclick = play;
-document.getElementById('convertPlay').onclick = convertAndPlay;
+document.getElementById('convertPlay').onclick = () => convertAndPlay(false);
+document.getElementById('realtimeConvertPlay').onclick = () => convertAndPlay(true);
+document.getElementById('onlineCanonicalPlay').onclick = () => convertAndPlay(true, true);
 document.getElementById('stop').onclick = stopPlay;
 document.getElementById('refresh').onclick = loadCatalog;
 document.getElementById('mainOnly').onchange = loadCatalog;

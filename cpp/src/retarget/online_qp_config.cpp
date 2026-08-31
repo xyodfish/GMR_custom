@@ -20,7 +20,10 @@ namespace gmr {
             cfg.wAcceleration      = 6.0;
             cfg.wGmr               = 0.4;
             cfg.wFootSlip          = 2000.0;
-            cfg.wFootHeight        = 60.0;
+            // The Cartesian foot task targets the ankle body origin, whereas ground
+            // contact is defined at the sole collision geometry. Grounding therefore
+            // needs to dominate the conflicting ankle-origin position residual.
+            cfg.wFootHeight        = 1000.0;
             cfg.wFootIkAnchor      = 40.0;
             cfg.sqpIters           = 3;
             cfg.finalizeContact    = false;

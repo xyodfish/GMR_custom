@@ -54,11 +54,21 @@ namespace gmr {
         virtual HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const = 0;
         /// Scale/offset human frame plus contact-ground preprocessing (same as ``retargetFrame`` input).
         virtual HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false)    = 0;
+        /// Same preparation with externally established contact labels.
+        virtual HumanFrame prepareRetargetInput(
+            const HumanFrame& humanFrame,
+            const ContactGroundState& contactState,
+            bool offsetToGround = false) = 0;
+        virtual Eigen::VectorXd retargetPreparedFrame(const HumanFrame& rawFrame, const HumanFrame& preparedFrame) = 0;
+        virtual Eigen::VectorXd retargetPreparedLightIk(const HumanFrame& rawFrame, const HumanFrame& preparedFrame,
+                                                        int maxIterations) = 0;
         /// Few IK iterations from current ``qpos`` (Python ``_light_ik_warmstart``).
         virtual Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) = 0;
         virtual void setQpos(const Eigen::VectorXd& qpos)                                                     = 0;
         /// Apply contact-ground penetration fix on current qpos (no-op if disabled).
         virtual void finalizeContact()                                                                          = 0;
+        virtual void finalizeContact(const ContactGroundState& state)                                           = 0;
+        virtual ContactGroundState contactGroundState() const                                                   = 0;
 
         virtual const Eigen::VectorXd& currentQpos() const                               = 0;
         virtual bool hasRootFreeFlyer() const                                            = 0;
@@ -77,9 +87,18 @@ namespace gmr {
         Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
         HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false) override;
+        HumanFrame prepareRetargetInput(
+            const HumanFrame& humanFrame,
+            const ContactGroundState& contactState,
+            bool offsetToGround = false) override;
+        Eigen::VectorXd retargetPreparedFrame(const HumanFrame& rawFrame, const HumanFrame& preparedFrame) override;
+        Eigen::VectorXd retargetPreparedLightIk(const HumanFrame& rawFrame, const HumanFrame& preparedFrame,
+                                                int maxIterations) override;
         Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) override;
         void setQpos(const Eigen::VectorXd& qpos) override;
         void finalizeContact() override;
+        void finalizeContact(const ContactGroundState& state) override;
+        ContactGroundState contactGroundState() const override;
 
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;
@@ -102,9 +121,18 @@ namespace gmr {
         Eigen::VectorXd retargetFrame(const HumanFrame& humanFrame, bool offsetToGround = false) override;
         HumanFrame prepareHumanFrame(const HumanFrame& humanFrame, bool offsetToGround = false) const override;
         HumanFrame prepareRetargetInput(const HumanFrame& humanFrame, bool offsetToGround = false) override;
+        HumanFrame prepareRetargetInput(
+            const HumanFrame& humanFrame,
+            const ContactGroundState& contactState,
+            bool offsetToGround = false) override;
+        Eigen::VectorXd retargetPreparedFrame(const HumanFrame& rawFrame, const HumanFrame& preparedFrame) override;
+        Eigen::VectorXd retargetPreparedLightIk(const HumanFrame& rawFrame, const HumanFrame& preparedFrame,
+                                                int maxIterations) override;
         Eigen::VectorXd retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) override;
         void setQpos(const Eigen::VectorXd& qpos) override;
         void finalizeContact() override;
+        void finalizeContact(const ContactGroundState& state) override;
+        ContactGroundState contactGroundState() const override;
 
         const Eigen::VectorXd& currentQpos() const override;
         bool hasRootFreeFlyer() const override;

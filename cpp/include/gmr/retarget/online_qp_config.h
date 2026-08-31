@@ -24,10 +24,11 @@ namespace gmr {
         int lightIkIters           = 4;
         bool enableFootPenalties   = true;
         double wFootHeight         = 40.0;
+        double wFootOrientation    = 100.0;
         double wFootSlip           = 900.0;
         double wFootIkAnchor       = 30.0;
         double wRootXyContact      = 20.0;
-        double wContactJointAnchor = 40.0;
+        double wContactJointAnchor = 0.0;
         double dqMax               = 4.0;
         bool useJointLimits        = true;
         bool useVelocityLimits     = true;
@@ -48,7 +49,7 @@ namespace gmr {
         // Lookahead is a short arrival-buffer delay, not a full-sequence peek.
         bool useLookahead      = true;  // arrival-buffer lookahead (not full-sequence peek)
         std::string qpBackend  = "daqp";
-        bool finalizeContact   = true;
+        bool finalizeContact   = false;
         int bootstrapGmrFrames = 2;
         bool verbose           = false;
 

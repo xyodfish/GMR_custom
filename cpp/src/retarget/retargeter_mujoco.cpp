@@ -287,6 +287,18 @@ namespace gmr {
             return applyContactGround(prepareHumanFrame(humanFrame, offsetToGround));
         }
 
+        HumanFrame prepareRetargetInput(
+            const HumanFrame& humanFrame,
+            const ContactGroundState& contactState,
+            bool offsetToGround) const {
+            HumanFrame prepared = prepareHumanFrame(humanFrame, offsetToGround);
+            if (contactGround && contactGround->enabled()) {
+                return contactGround->processHumanFrame(prepared, contactState);
+            }
+
+            return prepared;
+        }
+
         HumanFrame applyContactGround(const HumanFrame& prepared) const {
             if (contactGround && contactGround->enabled()) {
                 return contactGround->processHumanFrame(prepared);
@@ -714,6 +726,19 @@ namespace gmr {
             options.maxIterations = savedMaxIter;
             return qpos;
         }
+
+        Eigen::VectorXd retargetPreparedLightIkImpl(const HumanFrame& rawFrame, const HumanFrame& preparedFrame,
+                                                     int maxIterations) {
+            if (maxIterations <= 0) {
+                return qpos;
+            }
+
+            const int savedMaxIter = options.maxIterations;
+            options.maxIterations  = maxIterations;
+            retargetPrepared(rawFrame, preparedFrame, /*finalize=*/false);
+            options.maxIterations = savedMaxIter;
+            return qpos;
+        }
     };
 
     MujocoRetargetBackend::MujocoRetargetBackend(const std::filesystem::path& robotModelPath, IkConfig ikConfig, RetargetOptions options)
@@ -741,6 +766,24 @@ namespace gmr {
         return impl_->prepareRetargetInput(humanFrame, offsetToGround);
     }
 
+    HumanFrame MujocoRetargetBackend::prepareRetargetInput(
+        const HumanFrame& humanFrame,
+        const ContactGroundState& contactState,
+        bool offsetToGround) {
+        return impl_->prepareRetargetInput(humanFrame, contactState, offsetToGround);
+    }
+
+    Eigen::VectorXd MujocoRetargetBackend::retargetPreparedFrame(const HumanFrame& rawFrame,
+                                                                  const HumanFrame& preparedFrame) {
+        return impl_->retargetPrepared(rawFrame, preparedFrame, /*finalize=*/false);
+    }
+
+    Eigen::VectorXd MujocoRetargetBackend::retargetPreparedLightIk(const HumanFrame& rawFrame,
+                                                                    const HumanFrame& preparedFrame,
+                                                                    int maxIterations) {
+        return impl_->retargetPreparedLightIkImpl(rawFrame, preparedFrame, maxIterations);
+    }
+
     Eigen::VectorXd MujocoRetargetBackend::retargetLightIk(const HumanFrame& humanFrame, bool offsetToGround, int maxIterations) {
         return impl_->retargetLightIkImpl(humanFrame, offsetToGround, maxIterations);
     }
@@ -759,6 +802,19 @@ namespace gmr {
 
     void MujocoRetargetBackend::finalizeContact() {
         impl_->finalizeRobotState();
+    }
+
+    void MujocoRetargetBackend::finalizeContact(const ContactGroundState& state) {
+        if (impl_->contactGround && impl_->contactGround->enabled()) {
+            impl_->contactGround->fixRobotPenetration(impl_->model.get(), impl_->data.get(), state);
+            impl_->syncQposFromData();
+        }
+    }
+
+    ContactGroundState MujocoRetargetBackend::contactGroundState() const {
+        return impl_->contactGround && impl_->contactGround->enabled()
+            ? impl_->contactGround->state()
+            : ContactGroundState{};
     }
 
     const Eigen::VectorXd& MujocoRetargetBackend::currentQpos() const {

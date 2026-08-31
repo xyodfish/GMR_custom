@@ -12,6 +12,7 @@
         "enable_foot_lock": true,
         "foot_lock_ema_alpha": 0.05,
         "fix_robot_penetration": true,
+        "snap_support_to_ground": false,
         "penetration_margin": 0.01,
         "lying_hip_height_threshold": 0.45,
         "low_pose_foot_height_threshold": 0.20,
@@ -31,6 +32,9 @@
     },
     "unitree_g1": {
         "enabled": true,
+        "snap_support_to_ground": true,
+        "penetration_margin": 0.002,
+        "penetration_max_iterations": 24,
         "pinocchio_foot_clearance": 0.05,
         "robot_foot_bodies": [
             "left_ankle_roll_link",
@@ -75,6 +79,9 @@
         "preset": "unitree_g1"
     },
     "unitree_h2": {
+        "snap_support_to_ground": true,
+        "penetration_margin": 0.002,
+        "penetration_max_iterations": 24,
         "robot_foot_bodies": [
             "left_ankle_roll_link",
             "right_ankle_roll_link"

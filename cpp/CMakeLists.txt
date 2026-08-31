@@ -142,6 +142,14 @@ target_link_libraries(gmr_robot_to_robot_cli PRIVATE
   gmr_retarget_core
 )
 
+add_executable(gmr_realtime_robot_to_robot_cli
+  src/main_realtime_robot_to_robot.cpp
+)
+
+target_link_libraries(gmr_realtime_robot_to_robot_cli PRIVATE
+  gmr_retarget_core
+)
+
 target_link_libraries(gmr_online_qp_cli PRIVATE
   gmr_retarget_core
 )
