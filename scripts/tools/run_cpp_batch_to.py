@@ -39,6 +39,11 @@ def main() -> None:
     parser.add_argument("--ceiling", action="store_true")
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--contact_ground", action="store_true")
+    parser.add_argument("--no_contact_ground", action="store_true")
+    parser.add_argument("--no_g1_bridge", action="store_true",
+                        help="H2+SMPL-X: skip the G1 bridge and use direct H2 retargeting.")
+    parser.add_argument("--dump_g1_bridge_json",
+                        help="H2+SMPL-X: also save the internal G1 bridge qpos JSON.")
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--human_json", default=None, help="Reuse/save intermediate human JSON.")
     args = parser.parse_args()
@@ -95,6 +100,12 @@ def main() -> None:
         cmd.append("--parallel")
     if args.contact_ground:
         cmd.append("--contact_ground")
+    if args.no_contact_ground:
+        cmd.append("--no_contact_ground")
+    if args.no_g1_bridge:
+        cmd.append("--no_g1_bridge")
+    if args.dump_g1_bridge_json:
+        cmd += ["--dump_g1_bridge_json", args.dump_g1_bridge_json]
     if args.benchmark:
         cmd.append("--benchmark")
 

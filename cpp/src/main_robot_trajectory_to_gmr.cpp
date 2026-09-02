@@ -190,17 +190,26 @@ int main(int argc, char** argv) {
             batchConfig.useBandedSolver = true;
         }
 
-        std::unique_ptr<gmr::Retargeter> retargeter = gmr::createRetargeter(
-            gmr::RetargetBackend::kMujoco,
-            robotXml,
-            ikConfig,
-            ikOptions);
-        retargeter->setMotionFps(source.fps);
+        std::unique_ptr<gmr::Retargeter> retargeter;
+        if (robot != "unitree_h2") {
+            retargeter = gmr::createRetargeter(
+                gmr::RetargetBackend::kMujoco,
+                robotXml,
+                ikConfig,
+                ikOptions);
+            retargeter->setMotionFps(source.fps);
+        }
 
         const auto begin = std::chrono::steady_clock::now();
         std::vector<Eigen::VectorXd> qpos;
         gmr::BatchTrajectoryProfile profile;
-        if (ikConfig.mobileUpperBody.enabled) {
+        if (robot == "unitree_h2") {
+            qpos = gmr::mapCompatibleRobotTrajectory(
+                source.qposFrames,
+                gmr::resolveRobotXml(gmrRoot, "unitree_g1"),
+                robotXml);
+            profile.nFrames = static_cast<int>(qpos.size());
+        } else if (ikConfig.mobileUpperBody.enabled) {
             qpos.reserve(canonical.sequence.frames.size());
             for (const gmr::HumanFrame& frame : canonical.sequence.frames) {
                 qpos.push_back(retargeter->retargetFrame(frame, false));
@@ -224,12 +233,13 @@ int main(int argc, char** argv) {
 
         const double wallMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - begin).count();
-        if (ikConfig.mobileUpperBody.enabled) {
+        if (robot == "unitree_h2" || ikConfig.mobileUpperBody.enabled) {
             profile.totalMs = wallMs;
         }
 
         gmr::RobotPostprocessResult postprocessResult;
-        const bool ranPostprocess = postprocess == "minimal" && retargeter->hasRootFreeFlyer();
+        const bool ranPostprocess = postprocess == "minimal" &&
+            (robot == "unitree_h2" || retargeter->hasRootFreeFlyer());
         if (ranPostprocess) {
             postprocessResult = gmr::postprocessRobotTrajectory(
                 qpos,
@@ -243,9 +253,11 @@ int main(int argc, char** argv) {
         output["robot"] = robot;
         output["source_robot"] = "unitree_g1";
         output["src_human"] = "smplx";
-        output["method"] = ikConfig.mobileUpperBody.enabled
-            ? "robot_to_robot_mobile_upper_body_cpp"
-            : "robot_to_robot_batch_trajectory_optimization_cpp";
+        output["method"] = robot == "unitree_h2"
+            ? "robot_to_robot_compatible_joint_map_cpp"
+            : (ikConfig.mobileUpperBody.enabled
+                ? "robot_to_robot_mobile_upper_body_cpp"
+                : "robot_to_robot_batch_trajectory_optimization_cpp");
         output["num_frames"] = qpos.size();
         output["fps"] = source.fps;
         output["nq"] = qpos.front().size();

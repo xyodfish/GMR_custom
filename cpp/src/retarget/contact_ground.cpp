@@ -484,16 +484,20 @@ namespace gmr {
                 data,
                 supportGeomIds,
                 floorGeomId_);
-            if (lowestSupport.distance > config_.penetrationMargin && model->nq >= 3) {
-                // Land the lowest support foot. Using the highest foot here would push
-                // the lower one through the floor before the leg IK even starts.
+            if (model->nq >= 3 &&
+                (lowestSupport.distance > config_.penetrationMargin + 1e-6 ||
+                    lowestSupport.distance < config_.penetrationMargin - 1e-6)) {
+                // Snap the lowest support foot to the target clearance (lift or lower root).
                 const double correction = config_.penetrationMargin - lowestSupport.distance;
                 data->qpos[2] += correction;
                 lastRootLift_ += correction;
                 mj_forward(model, data);
             }
 
-            correctSwingFootPenetration(model, data, state);
+            if (config_.correctSwingFootPenetration) {
+                correctSwingFootPenetration(model, data, state);
+            }
+
         }
 
         // The final root correction is one-sided: it can only remove penetration.

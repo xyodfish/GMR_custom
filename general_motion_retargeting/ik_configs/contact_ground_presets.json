@@ -79,12 +79,31 @@
         "preset": "unitree_g1"
     },
     "unitree_h2": {
+        "enabled": true,
         "snap_support_to_ground": true,
+        "correct_swing_foot_penetration": false,
         "penetration_margin": 0.002,
         "penetration_max_iterations": 24,
+        "pinocchio_foot_clearance": 0.05,
         "robot_foot_bodies": [
-            "left_ankle_roll_link",
-            "right_ankle_roll_link"
+            "left_ankle_pitch_link",
+            "right_ankle_pitch_link"
+        ],
+        "foot_collision_geoms": [
+            "left_foot1_collision",
+            "left_foot2_collision",
+            "left_foot3_collision",
+            "left_foot4_collision",
+            "left_foot5_collision",
+            "left_foot6_collision",
+            "left_foot7_collision",
+            "right_foot1_collision",
+            "right_foot2_collision",
+            "right_foot3_collision",
+            "right_foot4_collision",
+            "right_foot5_collision",
+            "right_foot6_collision",
+            "right_foot7_collision"
         ],
         "robot_trunk_bodies": [
             "pelvis",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Side-by-side G1 vs another GMR robot in one MuJoCo window.
+"""Side-by-side comparison of two GMR robot trajectories in one MuJoCo window.
 
 Example
 -------
@@ -16,6 +16,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import time
 
 import numpy as np
 
@@ -76,7 +77,8 @@ def _read_stream_frame(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--g1_motion", required=True, help="G1 motion (.qpos.json / .pkl)")
+    parser.add_argument("--g1_motion", required=True, help="Robot-A motion (.qpos.json / .pkl)")
+    parser.add_argument("--robot_a", default="unitree_g1", help="Robot-A key in ROBOT_XML_DICT")
     parser.add_argument("--robot_b", required=True, help="Target robot key in ROBOT_XML_DICT")
     parser.add_argument("--robot_b_motion", help="Target robot motion or live output path")
     parser.add_argument("--live_retarget", action="store_true")
@@ -87,18 +89,35 @@ def main() -> None:
     )
     parser.add_argument("--dump_source_json")
     parser.add_argument("--offset_y", type=float, default=1.2)
+    parser.add_argument(
+        "--playback_speed",
+        type=float,
+        default=1.0,
+        help="Playback rate multiplier (for example 0.25, 0.5, 1, or 2).",
+    )
     parser.add_argument("--loop", action="store_true", default=True)
     parser.add_argument("--no-loop", dest="loop", action="store_false")
     parser.add_argument("--record_video", action="store_true")
     parser.add_argument("--video_path", default="videos/g1_robot_compare.mp4")
     parser.add_argument("--no-tint", action="store_true")
+    parser.add_argument("--playback_control", help="Optional JSON playback command file.")
+    parser.add_argument("--playback_status", help="Optional JSON file for publishing playback progress.")
     args = parser.parse_args()
+
+    if args.robot_a not in ROBOT_XML_DICT:
+        raise SystemExit(f"Unknown robot_a={args.robot_a!r}. Keys: {sorted(ROBOT_XML_DICT)}")
 
     if args.robot_b not in ROBOT_XML_DICT:
         raise SystemExit(f"Unknown robot_b={args.robot_b!r}. Keys: {sorted(ROBOT_XML_DICT)}")
 
     if not args.robot_b_motion:
         raise SystemExit("--robot_b_motion is required")
+
+    if args.playback_speed <= 0.0:
+        raise SystemExit("--playback_speed must be greater than zero")
+
+    if args.live_retarget and args.robot_a != "unitree_g1":
+        raise SystemExit("--live_retarget requires --robot_a unitree_g1")
 
     q_g1, fps_g1 = _source_qpos_fps(args.g1_motion)
     fps = fps_g1
@@ -118,19 +137,55 @@ def main() -> None:
     else:
         mode = "file playback"
 
-    print(f"[g1-robot] {mode} frames={n} @ {fps:.0f}Hz | G1 | {args.robot_b} +Y={args.offset_y}")
-    print("[g1-robot] Close the window to exit.")
+    print(
+        f"[robot-compare] {mode} frames={n} @ {fps:.0f}Hz "
+        f"({args.playback_speed:g}x playback) | "
+        f"{args.robot_a} | {args.robot_b} +Y={args.offset_y}"
+    )
+    print("[robot-compare] Close the window to exit.")
 
     tint = None if args.no_tint else (0.35, 0.55, 0.95, 1.0)
     viewer = TwoRobotMotionViewer(
-        "unitree_g1",
+        args.robot_a,
         args.robot_b,
-        motion_fps=fps,
+        motion_fps=fps * args.playback_speed,
         offset_b=(0.0, float(args.offset_y), 0.0),
         tint_b=tint,
         record_video=args.record_video,
         video_path=args.video_path,
     )
+
+    playback_control = pathlib.Path(args.playback_control) if args.playback_control else None
+    playback_status = pathlib.Path(args.playback_status) if args.playback_status else None
+    last_command_id = -1
+
+    def read_playback_command() -> dict:
+        if playback_control is None:
+            return {"command_id": -1, "paused": False, "seek_frame": None}
+
+        try:
+            return json.loads(playback_control.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"command_id": -1, "paused": False, "seek_frame": None}
+
+    def write_playback_status(frame: int, total_frames: int, paused: bool) -> None:
+        if playback_status is None:
+            return
+
+        payload = {"frame": frame, "total_frames": total_frames, "paused": paused}
+        temporary = playback_status.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps(payload), encoding="utf-8")
+            temporary.replace(playback_status)
+        except OSError:
+            pass
+
+    def wait_until_playing() -> bool:
+        while bool(read_playback_command().get("paused", False)) and viewer.viewer.is_running():
+            viewer.viewer.sync()
+            time.sleep(0.03)
+
+        return viewer.viewer.is_running()
 
     process = None
     live_frames: list[np.ndarray] = []
@@ -177,6 +232,9 @@ def main() -> None:
                 if not viewer.viewer.is_running():
                     break
 
+                if not wait_until_playing():
+                    break
+
                 viewer.step(
                     q_g1[source_idx],
                     initial_target,
@@ -186,6 +244,9 @@ def main() -> None:
 
             for idx in range(n):
                 if not viewer.viewer.is_running():
+                    break
+
+                if not wait_until_playing():
                     break
 
                 if idx == 0:
@@ -220,6 +281,14 @@ def main() -> None:
             assert q_b is not None
             n = min(len(q_g1), len(q_b))
             timeline_frames = n + playback_latency
+            command = read_playback_command()
+            command_id = int(command.get("command_id", -1))
+            seek_frame = command.get("seek_frame")
+            if command_id != last_command_id:
+                last_command_id = command_id
+                if seek_frame is not None:
+                    idx = min(max(0, int(seek_frame)), timeline_frames - 1)
+
             if idx >= timeline_frames:
                 if args.loop:
                     idx = 0
@@ -235,12 +304,32 @@ def main() -> None:
                 target_idx = idx - playback_latency
                 target_qpos = q_b[target_idx]
 
+            paused = bool(command.get("paused", False))
             viewer.step(
                 q_g1[source_idx],
                 target_qpos,
-                rate_limit=True,
+                rate_limit=not paused,
                 follow_camera=True,
             )
+            write_playback_status(idx, timeline_frames, paused)
+            if paused:
+                while viewer.viewer.is_running():
+                    viewer.viewer.sync()
+                    time.sleep(0.03)
+                    command = read_playback_command()
+                    command_id = int(command.get("command_id", -1))
+                    seek_frame = command.get("seek_frame")
+                    if command_id != last_command_id:
+                        last_command_id = command_id
+                        if seek_frame is not None:
+                            idx = min(max(0, int(seek_frame)), timeline_frames - 1)
+                            break
+
+                    if not bool(command.get("paused", False)):
+                        break
+
+                continue
+
             idx += 1
     finally:
         if process is not None and process.poll() is None:

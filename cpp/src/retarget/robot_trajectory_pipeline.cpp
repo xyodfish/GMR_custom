@@ -1118,6 +1118,24 @@ double geomSoleZ(const mjModel* model, const mjData* data, int geom) {
     }
 }
 
+double lowestFootClearance(
+    const mjModel* model,
+    mjData* data,
+    const std::unordered_map<std::string, std::vector<int>>& footGeoms,
+    int floor) {
+    double clearance = std::numeric_limits<double>::infinity();
+    mjtNum fromTo[6];
+    for (const auto& entry : footGeoms) {
+        for (int geom : entry.second) {
+            clearance = std::min(
+                clearance,
+                static_cast<double>(mj_geomDistance(model, data, geom, floor, 10.0, fromTo)));
+        }
+    }
+
+    return clearance;
+}
+
 Contacts inferSourceRobotContacts(
     const mjModel* model,
     mjData* data,
@@ -1730,6 +1748,141 @@ SourceRobotTrajectory loadSourceRobotTrajectory(
     }
 
     return {std::move(frames), fps, inputPath.stem().string()};
+}
+
+struct CompatibleRobotMapper::Impl {
+    struct JointCopy {
+        int sourceQpos = -1;
+        int targetQpos = -1;
+        int targetJoint = -1;
+    };
+
+    ModelPtr sourceModel;
+    ModelPtr targetModel;
+    DataPtr sourceData;
+    DataPtr targetData;
+    std::vector<JointCopy> joints;
+    int sourceFloor = -1;
+    int targetFloor = -1;
+    std::unordered_map<std::string, std::vector<int>> sourceFootGeoms;
+    std::unordered_map<std::string, std::vector<int>> targetFootGeoms;
+};
+
+CompatibleRobotMapper::CompatibleRobotMapper(
+    const std::filesystem::path& sourceModelPath,
+    const std::filesystem::path& targetModelPath)
+    : impl_(std::make_unique<Impl>()) {
+    impl_->sourceModel = loadModel(sourceModelPath);
+    impl_->targetModel = loadModel(targetModelPath);
+    impl_->sourceData.reset(mj_makeData(impl_->sourceModel.get()));
+    impl_->targetData.reset(mj_makeData(impl_->targetModel.get()));
+    if (!impl_->sourceData || !impl_->targetData) {
+        throw std::runtime_error("Failed to allocate compatible robot mapping data.");
+    }
+
+    if (impl_->sourceModel->njnt == 0 || impl_->targetModel->njnt == 0 ||
+        impl_->sourceModel->jnt_type[0] != mjJNT_FREE || impl_->targetModel->jnt_type[0] != mjJNT_FREE ||
+        impl_->sourceModel->jnt_qposadr[0] != 0 || impl_->targetModel->jnt_qposadr[0] != 0) {
+        throw std::runtime_error("Compatible robot mapping requires a leading floating-base joint.");
+    }
+
+    for (int targetJoint = 1; targetJoint < impl_->targetModel->njnt; ++targetJoint) {
+        if (impl_->targetModel->jnt_type[targetJoint] != mjJNT_HINGE) {
+            throw std::runtime_error("Compatible robot mapping only supports one-DoF target joints.");
+        }
+
+        const char* name = mj_id2name(impl_->targetModel.get(), mjOBJ_JOINT, targetJoint);
+        const int sourceJoint = name == nullptr
+            ? -1
+            : mj_name2id(impl_->sourceModel.get(), mjOBJ_JOINT, name);
+        if (sourceJoint < 0 || impl_->sourceModel->jnt_type[sourceJoint] != mjJNT_HINGE) {
+            throw std::runtime_error(
+                "Source robot is missing compatible target joint: " +
+                std::string(name == nullptr ? "<unnamed>" : name));
+        }
+
+        const Eigen::Vector3d sourceAxis = Eigen::Map<const Eigen::Vector3d>(
+            &impl_->sourceModel->jnt_axis[3 * sourceJoint]);
+        const Eigen::Vector3d targetAxis = Eigen::Map<const Eigen::Vector3d>(
+            &impl_->targetModel->jnt_axis[3 * targetJoint]);
+        if (sourceAxis.dot(targetAxis) < 1.0 - 1e-8) {
+            throw std::runtime_error("Compatible joint axis mismatch: " + std::string(name));
+        }
+
+        impl_->joints.push_back({
+            impl_->sourceModel->jnt_qposadr[sourceJoint],
+            impl_->targetModel->jnt_qposadr[targetJoint],
+            targetJoint});
+    }
+
+    impl_->sourceFloor = mj_name2id(impl_->sourceModel.get(), mjOBJ_GEOM, "floor");
+    impl_->targetFloor = mj_name2id(impl_->targetModel.get(), mjOBJ_GEOM, "floor");
+    impl_->sourceFootGeoms = footCollisionGeoms(impl_->sourceModel.get());
+    impl_->targetFootGeoms = footCollisionGeoms(impl_->targetModel.get());
+    if (impl_->sourceFloor < 0 || impl_->targetFloor < 0 ||
+        impl_->sourceFootGeoms.at("left_foot").empty() || impl_->sourceFootGeoms.at("right_foot").empty() ||
+        impl_->targetFootGeoms.at("left_foot").empty() || impl_->targetFootGeoms.at("right_foot").empty()) {
+        throw std::runtime_error("Compatible robot mapping requires floor and bilateral foot collision geometry.");
+    }
+}
+
+CompatibleRobotMapper::~CompatibleRobotMapper() = default;
+
+Eigen::VectorXd CompatibleRobotMapper::mapFrame(const Eigen::VectorXd& source) {
+    if (source.size() != impl_->sourceModel->nq || !source.allFinite()) {
+        throw std::runtime_error("Source qpos does not match the compatible source model.");
+    }
+
+    Eigen::VectorXd target = Eigen::Map<const Eigen::VectorXd>(
+        impl_->targetModel->qpos0,
+        impl_->targetModel->nq);
+    target.head<7>() = source.head<7>();
+    for (const Impl::JointCopy& joint : impl_->joints) {
+        double value = source[joint.sourceQpos];
+        if (impl_->targetModel->jnt_limited[joint.targetJoint]) {
+            value = std::clamp(
+                value,
+                impl_->targetModel->jnt_range[2 * joint.targetJoint],
+                impl_->targetModel->jnt_range[2 * joint.targetJoint + 1]);
+        }
+
+        target[joint.targetQpos] = value;
+    }
+
+    mju_copy(impl_->sourceData->qpos, source.data(), impl_->sourceModel->nq);
+    mju_copy(impl_->targetData->qpos, target.data(), impl_->targetModel->nq);
+    mj_forward(impl_->sourceModel.get(), impl_->sourceData.get());
+    mj_forward(impl_->targetModel.get(), impl_->targetData.get());
+    const double sourceClearance = lowestFootClearance(
+        impl_->sourceModel.get(),
+        impl_->sourceData.get(),
+        impl_->sourceFootGeoms,
+        impl_->sourceFloor);
+    const double targetClearance = lowestFootClearance(
+        impl_->targetModel.get(),
+        impl_->targetData.get(),
+        impl_->targetFootGeoms,
+        impl_->targetFloor);
+    if (!std::isfinite(sourceClearance) || !std::isfinite(targetClearance)) {
+        throw std::runtime_error("Failed to measure compatible robot foot clearance.");
+    }
+
+    target[2] += sourceClearance - targetClearance;
+    return target;
+}
+
+std::vector<Eigen::VectorXd> mapCompatibleRobotTrajectory(
+    const std::vector<Eigen::VectorXd>& sourceQpos,
+    const std::filesystem::path& sourceModelPath,
+    const std::filesystem::path& targetModelPath) {
+    CompatibleRobotMapper mapper(sourceModelPath, targetModelPath);
+    std::vector<Eigen::VectorXd> output;
+    output.reserve(sourceQpos.size());
+    for (const Eigen::VectorXd& source : sourceQpos) {
+        output.push_back(mapper.mapFrame(source));
+    }
+
+    return output;
 }
 
 CanonicalRobotTrajectory buildCanonicalRobotTrajectory(

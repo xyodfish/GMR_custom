@@ -110,6 +110,7 @@ int main(int argc, char** argv) {
         const std::string robot = getArg(argc, argv, "--robot_b", "unitree_h2");
         const std::string mode = getArg(argc, argv, "--mode", "lookahead");
         const bool useOnlineCanonical = hasFlag(argc, argv, "--online_canonical");
+        const bool useCompatibleJointMap = robot == "unitree_h2";
         const bool streamJsonl = hasFlag(argc, argv, "--stream_jsonl");
         if (inputPath.empty() || outputPath.empty()) {
             printUsage();
@@ -209,8 +210,10 @@ int main(int argc, char** argv) {
         std::vector<Eigen::VectorXd> outputFrames;
         outputFrames.reserve(source.qposFrames.size());
         const int pipelineLatencyFrames =
-            (canonicalFitter ? canonicalFitter->latencyFrames() : 0) +
-            (qpConfig.useLookahead ? qpConfig.horizon - 1 : 0);
+            useCompatibleJointMap
+                ? 0
+                : (canonicalFitter ? canonicalFitter->latencyFrames() : 0) +
+                    (qpConfig.useLookahead ? qpConfig.horizon - 1 : 0);
         auto appendOutput = [&](Eigen::VectorXd q) {
             outputFrames.push_back(std::move(q));
             if (streamJsonl) {
@@ -257,51 +260,61 @@ int main(int argc, char** argv) {
                 std::chrono::steady_clock::now() - solveBegin).count();
         };
 
-        for (const Eigen::VectorXd& sourceQpos : source.qposFrames) {
-            const auto mapBegin = std::chrono::steady_clock::now();
-            gmr::HumanFrame frame = sourceMapper.mapFrame(sourceQpos);
-            mappingMs += std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - mapBegin).count();
+        if (useCompatibleJointMap) {
+            gmr::CompatibleRobotMapper mapper(
+                gmr::resolveRobotXml(gmrRoot, "unitree_g1"),
+                robotXml);
+            for (const Eigen::VectorXd& sourceQpos : source.qposFrames) {
+                const auto mapBegin = std::chrono::steady_clock::now();
+                appendOutput(mapper.mapFrame(sourceQpos));
+                mappingMs += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - mapBegin).count();
+            }
+        } else {
+            for (const Eigen::VectorXd& sourceQpos : source.qposFrames) {
+                const auto mapBegin = std::chrono::steady_clock::now();
+                gmr::HumanFrame frame = sourceMapper.mapFrame(sourceQpos);
+                mappingMs += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - mapBegin).count();
+
+                if (canonicalFitter) {
+                    const auto canonicalBegin = std::chrono::steady_clock::now();
+                    canonicalFitter->pushFrame(std::move(frame), sourceMapper.footContacts());
+                    canonicalMs += std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - canonicalBegin).count();
+                    while (canonicalFitter->canPop(false)) {
+                        const auto popBegin = std::chrono::steady_clock::now();
+                        gmr::OnlineCanonicalOutput output = canonicalFitter->popFrame(false);
+                        canonicalMs += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - popBegin).count();
+                        const gmr::ContactGroundState contactState{output.footContacts, false};
+                        submitFrame(output.frame, &contactState);
+                    }
+                } else {
+                    submitFrame(frame, nullptr);
+                }
+            }
 
             if (canonicalFitter) {
-                const auto canonicalBegin = std::chrono::steady_clock::now();
-                canonicalFitter->pushFrame(std::move(frame), sourceMapper.footContacts());
-                canonicalMs += std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - canonicalBegin).count();
-                while (canonicalFitter->canPop(false)) {
+                while (canonicalFitter->canPop(true)) {
                     const auto popBegin = std::chrono::steady_clock::now();
-                    gmr::OnlineCanonicalOutput output = canonicalFitter->popFrame(false);
+                    gmr::OnlineCanonicalOutput output = canonicalFitter->popFrame(true);
                     canonicalMs += std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - popBegin).count();
                     const gmr::ContactGroundState contactState{output.footContacts, false};
                     submitFrame(output.frame, &contactState);
                 }
-
-            } else {
-                submitFrame(frame, nullptr);
-            }
-        }
-
-        if (canonicalFitter) {
-            while (canonicalFitter->canPop(true)) {
-                const auto popBegin = std::chrono::steady_clock::now();
-                gmr::OnlineCanonicalOutput output = canonicalFitter->popFrame(true);
-                canonicalMs += std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - popBegin).count();
-                const gmr::ContactGroundState contactState{output.footContacts, false};
-                submitFrame(output.frame, &contactState);
             }
 
-        }
+            if (qpConfig.useLookahead) {
+                const auto flushBegin = std::chrono::steady_clock::now();
+                while (onlineQp.canStepArrived(true)) {
+                    appendOutput(onlineQp.stepArrived(*retargeter, false, true));
+                }
 
-        if (qpConfig.useLookahead) {
-            const auto flushBegin = std::chrono::steady_clock::now();
-            while (onlineQp.canStepArrived(true)) {
-                appendOutput(onlineQp.stepArrived(*retargeter, false, true));
+                solveMs += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - flushBegin).count();
             }
-
-            solveMs += std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - flushBegin).count();
         }
 
         if (outputFrames.size() != source.qposFrames.size()) {
@@ -314,9 +327,11 @@ int main(int argc, char** argv) {
         nlohmann::json output;
         output["robot"] = robot;
         output["source_robot"] = "unitree_g1";
-        output["method"] = useOnlineCanonical
-            ? "online_canonical_robot_to_robot_qp_cpp"
-            : "direct_robot_to_robot_online_qp_cpp";
+        output["method"] = useCompatibleJointMap
+            ? "realtime_compatible_joint_map_cpp"
+            : (useOnlineCanonical
+                ? "online_canonical_robot_to_robot_qp_cpp"
+                : "direct_robot_to_robot_online_qp_cpp");
         output["mode"] = mode;
         output["fps"] = source.fps;
         output["num_frames"] = outputFrames.size();
@@ -334,10 +349,11 @@ int main(int argc, char** argv) {
             {"qp_fallback_count", onlineQp.qpFallbackCount()},
         };
         output["config"] = {
-            {"canonical_fit", useOnlineCanonical},
+            {"canonical_fit", useOnlineCanonical && !useCompatibleJointMap},
+            {"compatible_joint_map", useCompatibleJointMap},
             {"canonical_latency_frames", canonicalFitter ? canonicalFitter->latencyFrames() : 0},
             {"pipeline_latency_frames", pipelineLatencyFrames},
-            {"trajectory_smoothing", useOnlineCanonical},
+            {"trajectory_smoothing", useOnlineCanonical && !useCompatibleJointMap},
             {"horizon", qpConfig.horizon},
             {"velocity_weight", qpConfig.wVelocity},
             {"acceleration_weight", qpConfig.wAcceleration},

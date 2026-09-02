@@ -29,6 +29,21 @@ namespace gmr {
         ContactGroundConfig contactGround;
     };
 
+    struct BatchTrackingQuality {
+        double positionMeanM = 0.0;
+        double positionP95M = 0.0;
+        double positionMaxM = 0.0;
+        double rotationMeanDeg = 0.0;
+        double rotationP95Deg = 0.0;
+        double rotationMaxDeg = 0.0;
+        int positionSamples = 0;
+        int rotationSamples = 0;
+        int worstPositionFrame = -1;
+        int worstRotationFrame = -1;
+        std::string worstPositionBody;
+        std::string worstRotationBody;
+    };
+
     /// Offline sliding-window batch GN trajectory optimization (MuJoCo FK costs).
     class BatchTrajectoryRetargeter {
        public:
@@ -62,6 +77,7 @@ namespace gmr {
                                                    const FootContactSchedule* footContacts = nullptr);
 
         const BatchTrajectoryProfile& lastProfile() const { return lastProfile_; }
+        const BatchTrackingQuality& lastTrackingQuality() const { return lastTrackingQuality_; }
         int modelNq() const { return nq_; }
 
         BatchTrajectoryConfig& config() { return config_; }
@@ -170,10 +186,14 @@ namespace gmr {
         std::vector<Eigen::VectorXd> finalizeTrajectory(std::vector<Eigen::VectorXd> qOpt, Retargeter& retargeter,
                                                         const std::vector<ContactGroundState>& contactStates,
                                                         const BatchIkBootstrapContext* ikBootstrap);
+        BatchTrackingQuality measureTrackingQuality(
+            const std::vector<Eigen::VectorXd>& q,
+            const std::vector<FrameTargets>& targets) const;
 
         BatchTrajectoryConfig config_;
         IkConfig ikConfig_;
         BatchTrajectoryProfile lastProfile_;
+        BatchTrackingQuality lastTrackingQuality_;
 
         struct Impl;
         struct GnWorkspace;

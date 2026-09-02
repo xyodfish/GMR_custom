@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
@@ -2133,11 +2134,78 @@ namespace gmr {
         }
     }
 
+    BatchTrackingQuality BatchTrajectoryRetargeter::measureTrackingQuality(
+        const std::vector<Eigen::VectorXd>& q,
+        const std::vector<FrameTargets>& targets) const {
+        BatchTrackingQuality quality;
+        std::vector<double> positionErrors;
+        std::vector<double> rotationErrors;
+        positionErrors.reserve(q.size() * trackEntries_.size());
+        rotationErrors.reserve(q.size() * trackEntries_.size());
+
+        mjModel* model = impl_->model.get();
+        mjData* data = impl_->data.get();
+        for (std::size_t frame = 0; frame < q.size(); ++frame) {
+            mju_copy(data->qpos, q[frame].data(), model->nq);
+            mj_forward(model, data);
+
+            for (const TrackEntry& entry : trackEntries_) {
+                const auto targetIt = targets[frame].find(entry.bodyId);
+                if (targetIt == targets[frame].end()) {
+                    continue;
+                }
+
+                const FrameTaskTarget& target = targetIt->second;
+                if (entry.posWeight > 0.0) {
+                    const Eigen::Map<const Eigen::Vector3d> position(&data->xpos[3 * entry.bodyId]);
+                    const double error = (position - target.targetPos).norm();
+                    positionErrors.push_back(error);
+                    if (error > quality.positionMaxM) {
+                        quality.positionMaxM = error;
+                        quality.worstPositionFrame = static_cast<int>(frame);
+                        quality.worstPositionBody = mj_id2name(model, mjOBJ_BODY, entry.bodyId);
+                    }
+                }
+
+                if (entry.rotWeight > 0.0) {
+                    const Eigen::Quaterniond rotation(bodyRotation(data, entry.bodyId));
+                    const double error = quatRotError(target.targetRot, rotation).norm() * 180.0 / M_PI;
+                    rotationErrors.push_back(error);
+                    if (error > quality.rotationMaxDeg) {
+                        quality.rotationMaxDeg = error;
+                        quality.worstRotationFrame = static_cast<int>(frame);
+                        quality.worstRotationBody = mj_id2name(model, mjOBJ_BODY, entry.bodyId);
+                    }
+                }
+            }
+        }
+
+        const auto summarize = [](std::vector<double>& errors, double* mean, double* p95) {
+            if (errors.empty()) {
+                return;
+            }
+
+            *mean = std::accumulate(errors.begin(), errors.end(), 0.0) /
+                static_cast<double>(errors.size());
+            const std::size_t p95Index = static_cast<std::size_t>(
+                std::floor(0.95 * static_cast<double>(errors.size() - 1)));
+            std::nth_element(errors.begin(), errors.begin() + p95Index, errors.end());
+            *p95 = errors[p95Index];
+        };
+
+        quality.positionSamples = static_cast<int>(positionErrors.size());
+        quality.rotationSamples = static_cast<int>(rotationErrors.size());
+        summarize(positionErrors, &quality.positionMeanM, &quality.positionP95M);
+        summarize(rotationErrors, &quality.rotationMeanDeg, &quality.rotationP95Deg);
+        return quality;
+    }
+
     std::vector<Eigen::VectorXd> BatchTrajectoryRetargeter::retargetBatch(const std::vector<HumanFrame>& humanFrames,
                                                                           Retargeter& retargeter, bool offsetToGround,
                                                                           const BatchIkBootstrapContext* ikBootstrap,
                                                                           const FootContactSchedule* footContacts) {
         lastProfile_ = {};
+        lastTrackingQuality_ = {};
         if (humanFrames.empty()) {
             return {};
         }
@@ -2206,6 +2274,7 @@ namespace gmr {
         std::vector<Eigen::VectorXd> qOut =
             finalizeTrajectory(std::move(qOpt), retargeter, prepared.contactStates, ikBootstrap);
         lastProfile_.finalizeMs = elapsedMs(t0);
+        lastTrackingQuality_ = measureTrackingQuality(qOut, prepared.targets);
 
         lastProfile_.nFrames = static_cast<int>(humanFrames.size());
         lastProfile_.totalMs = elapsedMs(tTotal);

@@ -116,3 +116,5 @@ compute_rotation.py
 
 output/robot_to_robot_gui/robot_b/*
 output/robot_to_robot_gui/source/*
+output/*
+videos/*

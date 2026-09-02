@@ -95,6 +95,8 @@ namespace gmr {
             cfg.footLockEmaAlpha = j.value("foot_lock_ema_alpha", cfg.footLockEmaAlpha);
             cfg.fixRobotPenetration = j.value("fix_robot_penetration", cfg.fixRobotPenetration);
             cfg.snapSupportToGround = j.value("snap_support_to_ground", cfg.snapSupportToGround);
+            cfg.correctSwingFootPenetration =
+                j.value("correct_swing_foot_penetration", cfg.correctSwingFootPenetration);
             cfg.footGroundLimitEnabled = j.value("foot_ground_limit_enabled", cfg.footGroundLimitEnabled);
             cfg.penetrationExcludeFeetWhenFootLimit =
                 j.value("penetration_exclude_feet_when_foot_limit", cfg.penetrationExcludeFeetWhenFootLimit);

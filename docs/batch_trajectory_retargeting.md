@@ -193,6 +193,23 @@ python scripts/tools/run_cpp_batch_to.py \
   --out_json output/cxk_ball_batch_cpp.json
 ```
 
+当输入为 SMPL-X 且目标为 `unitree_h2` 时，C++ CLI 默认在同一进程内执行
+`SMPL-X → G1 Batch TO → H2 同名关节映射`。G1/H2 共享 29 个同名、同轴关节；
+映射保留 floating-base 姿态与关节角，按 H2 限位裁剪，并仅调整 root Z
+使两台机器人的实际脚底碰撞净空一致。这避免了把 G1 放大为不可达的人体骨架后，
+H2 IK 通过倾斜 pelvis 折中脚底和躯干目标。中间 G1 文件仍可选导出用于调试。
+调试直接 SMPL-X→H2 路径时可传 `--no_g1_bridge`。
+
+实时查看 G1 bridge 与 H2 的并排效果：
+
+```bash
+python scripts/viz/smplx_h2_compare_gui.py
+```
+
+网页默认索引 `~/Workspace/data/**/*_stageii.npz`，支持关键词搜索、最大帧数、
+Fast/Quality 档位以及缓存结果重播。一次转换会生成 G1、SMPL-X→H2 和独立
+G1→H2 converter 三条轨迹，并提供 `G1 ↔ H2`、`H2 ↔ H2` 两种 MuJoCo 实时渲染。
+
 或先导出 JSON 再调用 `gmr_batch_to_cli`（JSON 含 `src_human` / `actual_human_height` 时 CLI 可自动读取）：
 
 ```bash

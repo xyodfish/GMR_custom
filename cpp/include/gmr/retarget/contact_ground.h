@@ -36,6 +36,7 @@ namespace gmr {
         double footLockEmaAlpha = 0.05;
         bool fixRobotPenetration = true;
         bool snapSupportToGround = false;
+        bool correctSwingFootPenetration = true;
         bool footGroundLimitEnabled = false;
         bool penetrationExcludeFeetWhenFootLimit = true;
         double penetrationMargin = 0.01;

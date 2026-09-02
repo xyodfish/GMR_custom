@@ -94,6 +94,30 @@ SourceRobotTrajectory loadSourceRobotTrajectory(
     double fpsOverride = 0.0,
     int maxFrames = 0);
 
+/// Stateful one-frame mapper for robots with identical named one-DoF joints.
+class CompatibleRobotMapper {
+   public:
+    CompatibleRobotMapper(
+        const std::filesystem::path& sourceModelPath,
+        const std::filesystem::path& targetModelPath);
+    ~CompatibleRobotMapper();
+
+    CompatibleRobotMapper(const CompatibleRobotMapper&) = delete;
+    CompatibleRobotMapper& operator=(const CompatibleRobotMapper&) = delete;
+
+    Eigen::VectorXd mapFrame(const Eigen::VectorXd& sourceQpos);
+
+   private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+/// Copy a trajectory with CompatibleRobotMapper.
+std::vector<Eigen::VectorXd> mapCompatibleRobotTrajectory(
+    const std::vector<Eigen::VectorXd>& sourceQpos,
+    const std::filesystem::path& sourceModelPath,
+    const std::filesystem::path& targetModelPath);
+
 CanonicalRobotTrajectory buildCanonicalRobotTrajectory(
     const SourceRobotTrajectory& source,
     const std::filesystem::path& mappingPath,

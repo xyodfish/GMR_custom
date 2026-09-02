@@ -15,8 +15,16 @@
 #include "gmr/retarget/ik_config.h"
 #include "gmr/retarget/repo_paths.h"
 #include "gmr/retarget/retargeter.h"
+#include "gmr/retarget/robot_trajectory_pipeline.h"
 
 namespace {
+
+    void applyRobotToRobotBatchTuning(gmr::BatchTrajectoryConfig& batchCfg, bool fast) {
+        batchCfg.finalizeContact = false;
+        batchCfg.wFootHeight     = 1000.0;
+        batchCfg.gnMaxStep       = 0.12;
+        batchCfg.gnSteps         = fast ? 2 : 4;
+    }
 
     std::string getArg(int argc, char** argv, const std::string& name, const std::string& defaultValue = "") {
         for (int i = 1; i + 1 < argc; ++i) {
@@ -34,6 +42,15 @@ namespace {
             }
         }
         return false;
+    }
+
+    nlohmann::json qposJson(const std::vector<Eigen::VectorXd>& frames) {
+        nlohmann::json out = nlohmann::json::array();
+        for (const Eigen::VectorXd& q : frames) {
+            out.push_back(std::vector<double>(q.data(), q.data() + q.size()));
+        }
+
+        return out;
     }
 
     void printUsage() {
@@ -70,6 +87,9 @@ namespace {
                   << " [--solver daqp|qpoases]"
                   << " [--max_frames N]"
                   << " [--benchmark]"
+                  << " [--no_finalize_contact]"
+                  << " [--no_g1_bridge]"
+                  << " [--dump_g1_bridge_json <path>]"
                   << "\n"
                   << "  Or use scripts/tools/run_cpp_batch_to.py --input_file <.pt|.npz|.bvh> ...\n";
     }
@@ -102,6 +122,7 @@ int main(int argc, char** argv) {
         const bool noParallel          = hasFlag(argc, argv, "--no_parallel");
         const bool enableParallel      = hasFlag(argc, argv, "--parallel");
         const bool offsetToGround      = hasFlag(argc, argv, "--offset_to_ground");
+        const std::filesystem::path dumpG1BridgeJson(getArg(argc, argv, "--dump_g1_bridge_json"));
 
         const gmr::HumanFrameSequence sequence = gmr::loadHumanFrameSequence(humanJson);
         if (sequence.frames.empty()) {
@@ -156,6 +177,10 @@ int main(int argc, char** argv) {
         if (noFootPenalties) {
             batchCfg.enableFootPenalties = false;
         }
+        const bool noFinalizeContact = hasFlag(argc, argv, "--no_finalize_contact");
+        if (noFinalizeContact) {
+            batchCfg.finalizeContact = false;
+        }
         if (noParallel) {
             batchCfg.parallelBootstrap = false;
             batchCfg.parallelFinalize  = false;
@@ -203,44 +228,124 @@ int main(int argc, char** argv) {
             batchCfg.motionDt = 1.0 / sequence.fps;
         }
 
-        std::unique_ptr<gmr::Retargeter> ikRetargeter =
-            gmr::createRetargeter(backend, robotXml, ikConfig, ikOpts);
-
-        gmr::BatchTrajectoryRetargeter batchTo(robotXml, ikConfig, batchCfg);
-
-        if (sequence.fps > 0) {
-            ikRetargeter->setMotionFps(sequence.fps);
-            ikOpts.motionFps = sequence.fps;
-        }
-
-        gmr::BatchIkBootstrapContext ikBootstrap{backend, ikOpts, ikOpts.contactGround};
-
         std::size_t frameCount = sequence.frames.size();
         if (maxFramesInput > 0) {
             frameCount = std::min(frameCount, static_cast<std::size_t>(maxFramesInput));
         }
+
+        const auto t0 = std::chrono::steady_clock::now();
+        bool usedG1Bridge = false;
+        gmr::BatchTrajectoryProfile g1Profile;
+        gmr::BatchTrackingQuality g1TrackingQuality;
+        std::vector<Eigen::VectorXd> g1BridgeQpos;
+        std::vector<Eigen::VectorXd> compatibleBridgeQpos;
         std::vector<gmr::HumanFrame> frames(sequence.frames.begin(), sequence.frames.begin() + frameCount);
         gmr::BatchTrajectoryRetargeter::FootContactSchedule footContacts;
         if (!sequence.footContacts.empty()) {
             footContacts.assign(sequence.footContacts.begin(), sequence.footContacts.begin() + frameCount);
         }
 
-        const auto t0 = std::chrono::steady_clock::now();
-        const auto* footContactSchedule = footContacts.empty() ? nullptr : &footContacts;
-        std::vector<Eigen::VectorXd> qBatch =
-            batchTo.retargetBatch(frames, *ikRetargeter, offsetToGround, &ikBootstrap, footContactSchedule);
+        const bool h2SmplxG1Bridge = robot == "unitree_h2" && srcHuman == "smplx" &&
+            !hasFlag(argc, argv, "--no_g1_bridge");
+        if (h2SmplxG1Bridge) {
+            const std::filesystem::path g1Xml = gmr::resolveRobotXml(gmrRoot, "unitree_g1");
+            const std::filesystem::path g1IkPath =
+                gmr::resolveIkConfig(gmrRoot, srcHuman, "unitree_g1");
+            const gmr::IkConfig g1IkConfig = gmr::loadIkConfig(g1IkPath, actualHumanHeight);
+
+            gmr::RetargetOptions g1IkOpts = ikOpts;
+            g1IkOpts.contactGround = gmr::buildContactGroundConfig(
+                gmrRoot,
+                "unitree_g1",
+                g1IkPath,
+                g1IkConfig.humanRootName,
+                cgCli);
+            std::unique_ptr<gmr::Retargeter> g1Retargeter =
+                gmr::createRetargeter(backend, g1Xml, g1IkConfig, g1IkOpts);
+            if (sequence.fps > 0.0) {
+                g1Retargeter->setMotionFps(sequence.fps);
+            }
+
+            gmr::BatchTrajectoryConfig g1BatchCfg = batchCfg;
+            g1BatchCfg.qInitJsonPath.clear();
+            gmr::BatchTrajectoryRetargeter g1Batch(g1Xml, g1IkConfig, g1BatchCfg);
+            gmr::BatchIkBootstrapContext g1Bootstrap{
+                backend,
+                g1IkOpts,
+                g1IkOpts.contactGround};
+            const auto* sourceContacts = footContacts.empty() ? nullptr : &footContacts;
+            g1BridgeQpos = g1Batch.retargetBatch(
+                frames,
+                *g1Retargeter,
+                offsetToGround,
+                &g1Bootstrap,
+                sourceContacts);
+            g1Profile = g1Batch.lastProfile();
+            g1TrackingQuality = g1Batch.lastTrackingQuality();
+            compatibleBridgeQpos = gmr::mapCompatibleRobotTrajectory(
+                g1BridgeQpos,
+                g1Xml,
+                robotXml);
+            usedG1Bridge = true;
+        } else if (robot == "unitree_h2") {
+            applyRobotToRobotBatchTuning(batchCfg, fast);
+        }
+
+        if (!dumpG1BridgeJson.empty() && !usedG1Bridge) {
+            throw std::runtime_error("--dump_g1_bridge_json requires SMPL-X input and robot=unitree_h2.");
+        }
+
+        std::vector<Eigen::VectorXd> qBatch;
+        gmr::BatchTrajectoryProfile prof;
+        double lastTorqueGate = 0.0;
+        double meanTorqueGate = 0.0;
+        double lastTorquePeakRatio = 0.0;
+        double maxTorquePeakRatio = 0.0;
+        if (usedG1Bridge) {
+            qBatch = std::move(compatibleBridgeQpos);
+            prof.nFrames = static_cast<int>(qBatch.size());
+        } else {
+            ikOpts.contactGround =
+                gmr::buildContactGroundConfig(gmrRoot, robot, ikPath, ikConfig.humanRootName, cgCli);
+            std::unique_ptr<gmr::Retargeter> ikRetargeter =
+                gmr::createRetargeter(backend, robotXml, ikConfig, ikOpts);
+            gmr::BatchTrajectoryRetargeter batchTo(robotXml, ikConfig, batchCfg);
+            if (sequence.fps > 0) {
+                ikRetargeter->setMotionFps(sequence.fps);
+                ikOpts.motionFps = sequence.fps;
+            }
+
+            gmr::BatchIkBootstrapContext ikBootstrap{backend, ikOpts, ikOpts.contactGround};
+            const auto* footContactSchedule = footContacts.empty() ? nullptr : &footContacts;
+            qBatch = batchTo.retargetBatch(
+                frames,
+                *ikRetargeter,
+                offsetToGround,
+                &ikBootstrap,
+                footContactSchedule);
+            prof = batchTo.lastProfile();
+            lastTorqueGate = batchTo.lastTorqueGate();
+            meanTorqueGate = batchTo.meanTorqueGate();
+            lastTorquePeakRatio = batchTo.lastTorquePeakRatio();
+            maxTorquePeakRatio = batchTo.maxTorquePeakRatio();
+        }
+
         const double wallMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-
-        const gmr::BatchTrajectoryProfile prof = batchTo.lastProfile();
+        if (usedG1Bridge) {
+            prof.totalMs = wallMs;
+        }
 
         nlohmann::json out;
         out["robot"]      = robot;
         out["src_human"]  = srcHuman;
-        out["method"]     = "batch_trajectory_optimization_gn_cpp";
+        out["method"]     = usedG1Bridge
+            ? "batch_trajectory_optimization_gn_cpp_smplx_via_g1_joint_map"
+            : "batch_trajectory_optimization_gn_cpp";
+        out["g1_bridge"] = usedG1Bridge;
         out["num_frames"] = frameCount;
         out["fps"]        = sequence.fps;
-        out["nq"]         = batchTo.modelNq();
+        out["nq"]         = qBatch.front().size();
         out["profile"]    = {{"prepare_ms", prof.prepareMs},
                              {"bootstrap_ms", prof.bootstrapMs},
                              {"optimize_ms", prof.optimizeMs},
@@ -249,10 +354,55 @@ int main(int argc, char** argv) {
                              {"ms_per_frame", prof.msPerFrame()},
                              {"effective_fps", prof.effectiveFps()},
                              {"wall_ms", wallMs}};
-        out["torque_gate"] = {{"last_gate", batchTo.lastTorqueGate()},
-                              {"mean_gate", batchTo.meanTorqueGate()},
-                              {"last_peak_ratio", batchTo.lastTorquePeakRatio()},
-                              {"max_peak_ratio", batchTo.maxTorquePeakRatio()}};
+        if (usedG1Bridge) {
+            out["g1_bridge_profile"] = {
+                {"prepare_ms", g1Profile.prepareMs},
+                {"bootstrap_ms", g1Profile.bootstrapMs},
+                {"optimize_ms", g1Profile.optimizeMs},
+                {"finalize_ms", g1Profile.finalizeMs},
+                {"total_ms", g1Profile.totalMs}};
+            out["g1_tracking_quality"] = {
+                {"position_mean_m", g1TrackingQuality.positionMeanM},
+                {"position_p95_m", g1TrackingQuality.positionP95M},
+                {"position_max_m", g1TrackingQuality.positionMaxM},
+                {"rotation_mean_deg", g1TrackingQuality.rotationMeanDeg},
+                {"rotation_p95_deg", g1TrackingQuality.rotationP95Deg},
+                {"rotation_max_deg", g1TrackingQuality.rotationMaxDeg},
+                {"position_samples", g1TrackingQuality.positionSamples},
+                {"rotation_samples", g1TrackingQuality.rotationSamples},
+                {"worst_position_frame", g1TrackingQuality.worstPositionFrame},
+                {"worst_rotation_frame", g1TrackingQuality.worstRotationFrame},
+                {"worst_position_body", g1TrackingQuality.worstPositionBody},
+                {"worst_rotation_body", g1TrackingQuality.worstRotationBody}};
+        }
+
+        if (!dumpG1BridgeJson.empty()) {
+            nlohmann::json g1Out;
+            g1Out["robot"] = "unitree_g1";
+            g1Out["src_human"] = srcHuman;
+            g1Out["method"] = "batch_trajectory_optimization_gn_cpp_h2_bridge_source";
+            g1Out["num_frames"] = g1BridgeQpos.size();
+            g1Out["fps"] = sequence.fps;
+            g1Out["nq"] = g1BridgeQpos.front().size();
+            g1Out["tracking_quality"] = out["g1_tracking_quality"];
+            g1Out["qpos_frames"] = qposJson(g1BridgeQpos);
+
+            if (!dumpG1BridgeJson.parent_path().empty()) {
+                std::filesystem::create_directories(dumpG1BridgeJson.parent_path());
+            }
+
+            std::ofstream g1File(dumpG1BridgeJson);
+            if (!g1File) {
+                throw std::runtime_error("Failed to open G1 bridge JSON: " + dumpG1BridgeJson.string());
+            }
+
+            g1File << g1Out.dump(2) << '\n';
+        }
+
+        out["torque_gate"] = {{"last_gate", lastTorqueGate},
+                              {"mean_gate", meanTorqueGate},
+                              {"last_peak_ratio", lastTorquePeakRatio},
+                              {"max_peak_ratio", maxTorquePeakRatio}};
         out["config"] = {{"window_size", batchCfg.windowSize},
                          {"window_stride", batchCfg.windowStride},
                          {"gn_steps", batchCfg.gnSteps},
@@ -261,12 +411,7 @@ int main(int argc, char** argv) {
                          {"ceiling", ceiling},
                          {"enable_foot_penalties", batchCfg.enableFootPenalties}};
 
-        nlohmann::json qFrames = nlohmann::json::array();
-        for (const auto& q : qBatch) {
-            std::vector<double> row(q.data(), q.data() + q.size());
-            qFrames.push_back(row);
-        }
-        out["qpos_frames"] = qFrames;
+        out["qpos_frames"] = qposJson(qBatch);
 
         std::ofstream ofs(outJson);
         ofs << out.dump(2) << std::endl;
